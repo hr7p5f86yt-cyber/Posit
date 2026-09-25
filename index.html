@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>Posit</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#15181d">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Posit">
+<link rel="manifest" href="./manifest.webmanifest">
+<link rel="apple-touch-icon" href="./icon-180.png">
+<link rel="stylesheet" href="./style.css">
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/"
+  }
+}
+</script>
+</head>
+<body>
+
+<canvas id="view"></canvas>
+
+<header id="topbar">
+  <span id="title">Posit</span>
+  <span id="status">起動中…</span>
+  <div class="spacer"></div>
+  <button id="btnMirror" class="ghost" title="左右反転">⇄</button>
+  <button id="btnReset" class="ghost" title="全身リセット">⟲</button>
+</header>
+
+<section id="panel" class="collapsed">
+  <div id="handle"><span></span></div>
+
+  <div id="jointHead">
+    <strong id="selName">体のパーツをタップして選択</strong>
+    <button id="btnResetJoint" class="ghost small">戻す</button>
+  </div>
+
+  <div id="sliders">
+    <label class="row"><span class="lbl">前後</span>
+      <input type="range" id="axX" min="-180" max="180" step="1" value="0">
+      <output id="outX">0°</output></label>
+    <label class="row"><span class="lbl">ひねり</span>
+      <input type="range" id="axY" min="-180" max="180" step="1" value="0">
+      <output id="outY">0°</output></label>
+    <label class="row"><span class="lbl">左右</span>
+      <input type="range" id="axZ" min="-180" max="180" step="1" value="0">
+      <output id="outZ">0°</output></label>
+  </div>
+
+  <div id="scroll">
+    <details open>
+      <summary>表示</summary>
+      <div class="sub">表示するモデル</div>
+      <div class="chips" id="viewChips"></div>
+      <div class="sub">素体の質感</div>
+      <div class="chips" id="matChips"></div>
+      <label class="row"><span class="lbl">素体の透明</span>
+        <input type="range" id="skinOpacity" min="0.08" max="1" step="0.01" value="1"><output id="outOpacity">100%</output></label>
+      <label class="row toggle"><span class="lbl">簡易骨格を重ねる</span>
+        <input type="checkbox" id="boneView"></label>
+      <p class="note">骨格モデルを読み込んでいなくても、モデル自身のボーンから簡易的な骨組みを描けます。</p>
+    </details>
+
+    <details>
+      <summary>関節を選ぶ</summary>
+      <div id="jointList"></div>
+    </details>
+
+    <details>
+      <summary>ライトと影</summary>
+      <label class="row"><span class="lbl">方位</span>
+        <input type="range" id="lightAz" min="-180" max="180" step="1" value="35"><output id="outAz">35°</output></label>
+      <label class="row"><span class="lbl">高さ</span>
+        <input type="range" id="lightEl" min="-10" max="85" step="1" value="45"><output id="outEl">45°</output></label>
+      <label class="row"><span class="lbl">強さ</span>
+        <input type="range" id="lightInt" min="0" max="6" step="0.05" value="2.4"><output id="outInt">2.40</output></label>
+      <label class="row"><span class="lbl">補助光</span>
+        <input type="range" id="fillInt" min="0" max="2" step="0.01" value="0.35"><output id="outFill">0.35</output></label>
+      <label class="row"><span class="lbl">影のぼけ</span>
+        <input type="range" id="shadowSoft" min="0" max="12" step="0.5" value="3"><output id="outSoft">3.0</output></label>
+      <label class="row"><span class="lbl">露出</span>
+        <input type="range" id="exposure" min="0.3" max="2.2" step="0.01" value="1"><output id="outExp">1.00</output></label>
+      <label class="row"><span class="lbl">環境光</span>
+        <input type="range" id="envInt" min="0" max="1.6" step="0.01" value="0.55"><output id="outEnv">0.55</output></label>
+    </details>
+
+    <details>
+      <summary>カメラと床</summary>
+      <label class="row"><span class="lbl">レンズ</span>
+        <input type="range" id="lens" min="18" max="135" step="1" value="40"><output id="outLens">40mm</output></label>
+      <label class="row toggle"><span class="lbl">床グリッド</span>
+        <input type="checkbox" id="gridOn" checked></label>
+      <label class="row toggle"><span class="lbl">可動域を制限</span>
+        <input type="checkbox" id="limitsOn" checked></label>
+      <button id="btnFrame" class="wide">全体を表示</button>
+    </details>
+
+    <details>
+      <summary>モデル</summary>
+      <div id="slotRows"></div>
+      <button id="btnSample" class="wide ghost">サンプル素体を読み込む</button>
+      <input type="file" id="file" accept=".glb,.gltf,.fbx" hidden>
+      <p class="note">GLB / FBX を読み込めます。Mixamo から書き出した FBX はそのまま使えます。テクスチャが別ファイルの .gltf は 1 ファイルの .glb にしてください。3 つのスロットはリグが違っていても構いません。同じ関節角度がそれぞれに適用されます。</p>
+      <div id="boneReport" class="note"></div>
+    </details>
+  </div>
+</section>
+
+<script type="module" src="./app.js"></script>
+</body>
+</html>
