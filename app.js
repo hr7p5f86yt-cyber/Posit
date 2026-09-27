@@ -1,11 +1,11 @@
 // app.js — 画面まわりの配線
 import { Viewer, SLOTS, VIEW_MODES, MATERIAL_MODES, THREE_REVISION } from './viewer.js';
-import { JOINTS, JOINT_BY_KEY, JOINT_GROUPS } from './bones.js';
-import { POSE_CATEGORIES, POSE_PRESETS, POSES_BY_CATEGORY, toSpec } from './poses.js';
+import { JOINTS, JOINT_BY_KEY, JOINT_GROUPS, jointLabel } from './bones.js';
+import { POSE_CATEGORIES, POSE_PRESETS, toSpec } from './poses.js';
 import { PoseHistory, relativeTime, HISTORY_LIMIT } from './history.js';
 import { CroquisSession, CROQUIS_SECONDS, CROQUIS_COUNTS } from './croquis.js';
 
-export const BUILD = '2026-09-27c';
+export const BUILD = '2026-09-27d';
 
 const SAMPLE_URL = 'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r169/examples/models/gltf/Xbot.glb';
 const SETTINGS_KEY = 'posit.settings.v1';
@@ -16,17 +16,16 @@ const $ = id => document.getElementById(id);
 mark('モジュール読込');
 const viewer = new Viewer($('view'));
 const history = new PoseHistory();
-window.__positViewer = viewer;   // 画面から状態を確認するための入口
+window.__positViewer = viewer;
 mark('シーン作成');
 
 let pendingSlot = 'skin';
-let poseCategory = null;                 // null = すべて
+let poseCategory = null;
 const settings = loadSettings();
 
 function loadSettings() {
   try {
-    const raw = localStorage.getItem(SETTINGS_KEY);
-    const s = raw ? JSON.parse(raw) : {};
+    const s = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
     return {
       seconds: CROQUIS_SECONDS.includes(s.seconds) ? s.seconds : 30,
       count: CROQUIS_COUNTS.includes(s.count) ? s.count : 10,
@@ -40,47 +39,79 @@ function saveSettings() {
   try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch (e) { /* 続行 */ }
 }
 
+// ---- 元に戻す -------------------------------------------------------------
+
+const undoStack = [];
+function snapshot() {
+  undoStack.push(viewer.allAngles());
+  if (undoStack.length > 30) undoStack.shift();
+  $('btnUndo').disabled = false;
+}
+$('btnUndo').addEventListener('click', () => {
+  const prev = undoStack.pop();
+  if (!prev) return;
+  viewer.setAngles(prev);
+  syncSliders();
+  $('btnUndo').disabled = !undoStack.length;
+});
+$('btnUndo').disabled = true;
+
+// ---- タブ -----------------------------------------------------------------
+
+function showTab(name) {
+  for (const b of document.querySelectorAll('#tabbar button')) {
+    b.classList.toggle('on', b.dataset.tab === name);
+  }
+  for (const p of document.querySelectorAll('.page')) {
+    p.hidden = p.dataset.page !== name;
+  }
+  document.body.classList.remove('collapsed');
+}
+for (const b of document.querySelectorAll('#tabbar button')) {
+  b.addEventListener('click', () => showTab(b.dataset.tab));
+}
+
+const toggleSheet = () => document.body.classList.toggle('collapsed');
+$('grip').addEventListener('click', toggleSheet);
+$('btnCollapse').addEventListener('click', toggleSheet);
+
 // ---- 状態表示 --------------------------------------------------------------
 
-viewer.onStatus = msg => { $('status').textContent = msg; };
 let toastTimer = null;
 function showToast(msg) {
   const el = $('toast');
   el.textContent = msg;
   el.hidden = false;
-  el.classList.add('show');
+  requestAnimationFrame(() => el.classList.add('show'));
   if (toastTimer) clearTimeout(toastTimer);
   toastTimer = setTimeout(() => {
     el.classList.remove('show');
-    setTimeout(() => { el.hidden = true; }, 250);
+    setTimeout(() => { el.hidden = true; }, 220);
   }, 2800);
 }
 
-viewer.onNotice = msg => {
-  if (!msg) return;
-  $('viewNote').textContent = msg;
-  showToast(msg);
-};
+viewer.onStatus = msg => { if (msg && !/読み込み中/.test(msg)) showToast(msg); };
+viewer.onNotice = msg => { if (msg) { $('viewNote').textContent = msg; showToast(msg); } };
 viewer.onSlotsChanged = () => { buildSlotRows(); buildViewChips(); markMissingJoints(); };
 
 viewer.onSelect = key => {
-  const j = key ? JOINT_BY_KEY[key] : null;
-  $('selName').textContent = j
-    ? (j.side ? `${j.side === 'L' ? '左' : '右'}${j.name}` : j.name)
-    : '体のパーツをタップして選択';
-  $('btnResetJoint').disabled = !j;
+  const label = key ? jointLabel(key) : '';
+  $('selBadge').textContent = label;
+  $('selName').textContent = label || '選択なし';
+  $('btnResetJoint').disabled = !key;
   syncSliders();
   for (const el of document.querySelectorAll('.chip.j')) {
     el.classList.toggle('on', el.dataset.key === key);
   }
+  if (key) showTab('joint');
 };
 
 // ---- スライダ --------------------------------------------------------------
 
 const AXES = [
-  { axis: 'x', input: 'axX', out: 'outX', lo: 0, hi: 1 },
-  { axis: 'y', input: 'axY', out: 'outY', lo: 2, hi: 3 },
-  { axis: 'z', input: 'axZ', out: 'outZ', lo: 4, hi: 5 },
+  { axis: 'x', input: 'axX', out: 'outX', lab: 'labX', lo: 0, hi: 1, ai: 0 },
+  { axis: 'y', input: 'axY', out: 'outY', lab: 'labY', lo: 2, hi: 3, ai: 1 },
+  { axis: 'z', input: 'axZ', out: 'outZ', lab: 'labZ', lo: 4, hi: 5, ai: 2 },
 ];
 
 function syncSliders() {
@@ -90,6 +121,7 @@ function syncSliders() {
   const usable = !!(j && viewer.hasJoint(key));
   for (const spec of AXES) {
     const el = $(spec.input);
+    $(spec.lab).textContent = j ? j.axes[spec.ai] : ['前後', 'ひねり', '左右'][spec.ai];
     if (j && viewer.limitsEnabled) {
       el.min = j.limits[spec.lo];
       el.max = j.limits[spec.hi];
@@ -102,44 +134,43 @@ function syncSliders() {
   }
 }
 
+let dragging = false;
 for (const spec of AXES) {
-  $(spec.input).addEventListener('input', e => {
+  const el = $(spec.input);
+  el.addEventListener('input', e => {
     if (!viewer.selected) return;
+    if (!dragging) { dragging = true; snapshot(); }
     viewer.setAngle(viewer.selected, spec.axis, parseFloat(e.target.value));
     const a = viewer.getAngles(viewer.selected);
     $(spec.out).textContent = `${Math.round(a[spec.axis])}°`;
   });
+  el.addEventListener('change', () => { dragging = false; });
 }
 
-// ---- ポーズプリセット ------------------------------------------------------
+// ---- ポーズ ---------------------------------------------------------------
 
 function buildPoseCats() {
   const wrap = $('poseCats');
   wrap.innerHTML = '';
-  const all = document.createElement('button');
-  all.className = 'chip cat' + (poseCategory === null ? ' on' : '');
-  all.textContent = 'すべて';
-  all.addEventListener('click', () => { poseCategory = null; buildPoseCats(); buildPoseList(); });
-  wrap.appendChild(all);
-  for (const c of POSE_CATEGORIES) {
+  const mk = (label, key) => {
     const b = document.createElement('button');
-    b.className = 'chip cat' + (poseCategory === c.key ? ' on' : '');
-    b.textContent = c.name;
-    b.addEventListener('click', () => { poseCategory = c.key; buildPoseCats(); buildPoseList(); });
+    b.className = 'chip cat' + (poseCategory === key ? ' on' : '');
+    b.textContent = label;
+    b.addEventListener('click', () => { poseCategory = key; buildPoseCats(); buildPoseList(); });
     wrap.appendChild(b);
-  }
+  };
+  mk('すべて', null);
+  for (const c of POSE_CATEGORIES) mk(c.name, c.key);
 }
 
-function currentPoses() {
-  return poseCategory ? POSE_PRESETS.filter(p => p.category === poseCategory) : POSE_PRESETS;
-}
+const currentPoses = () =>
+  poseCategory ? POSE_PRESETS.filter(p => p.category === poseCategory) : POSE_PRESETS;
 
 function buildPoseList() {
   const wrap = $('poseList');
   wrap.innerHTML = '';
   for (const p of currentPoses()) {
     const b = document.createElement('button');
-    b.className = 'chip';
     b.textContent = p.name;
     b.addEventListener('click', () => applyPose(p));
     wrap.appendChild(b);
@@ -147,10 +178,12 @@ function buildPoseList() {
 }
 
 function applyPose(pose) {
+  snapshot();
   viewer.applyPose(pose.spec);
   history.add({ poseId: pose.id, name: pose.name, spec: pose.spec });
   buildHistory();
   syncSliders();
+  showToast(pose.name);
 }
 
 $('btnRandomPose').addEventListener('click', () => {
@@ -161,6 +194,17 @@ $('btnRandomPose').addEventListener('click', () => {
   applyPose(list[Math.floor(Math.random() * list.length)]);
 });
 
+for (const b of document.querySelectorAll('#poseSeg button')) {
+  b.addEventListener('click', () => {
+    for (const x of document.querySelectorAll('#poseSeg button')) x.classList.remove('on');
+    b.classList.add('on');
+    const preset = b.dataset.seg === 'preset';
+    $('presetWrap').hidden = !preset;
+    $('historyWrap').hidden = preset;
+    $('btnRandomPose').parentElement.hidden = !preset;
+  });
+}
+
 // ---- 履歴 -----------------------------------------------------------------
 
 function buildHistory() {
@@ -168,8 +212,8 @@ function buildHistory() {
   wrap.innerHTML = '';
   if (!history.items.length) {
     const p = document.createElement('p');
-    p.className = 'note';
-    p.textContent = 'まだありません。プリセットを選ぶかクロッキーを回すと、ここに最大' + HISTORY_LIMIT + '件たまります。';
+    p.className = 'hint';
+    p.textContent = `まだありません。プリセットを選ぶかクロッキーを回すと、ここに最大${HISTORY_LIMIT}件たまります。`;
     wrap.appendChild(p);
     return;
   }
@@ -177,21 +221,21 @@ function buildHistory() {
     const b = document.createElement('button');
     b.className = 'hist';
     const nm = document.createElement('span');
-    nm.className = 'nm';
-    nm.textContent = it.name;
+    nm.className = 'nm'; nm.textContent = it.name;
     const tm = document.createElement('span');
-    tm.className = 'tm';
-    tm.textContent = relativeTime(it.at);
+    tm.className = 'tm'; tm.textContent = relativeTime(it.at);
     b.append(nm, tm);
-    b.addEventListener('click', () => { viewer.applyPose(it.spec); syncSliders(); });
+    b.addEventListener('click', () => {
+      snapshot();
+      viewer.applyPose(it.spec);
+      syncSliders();
+      showToast(it.name);
+    });
     wrap.appendChild(b);
   }
 }
 
-$('btnClearHistory').addEventListener('click', () => {
-  history.clear();
-  buildHistory();
-});
+$('btnClearHistory').addEventListener('click', () => { history.clear(); buildHistory(); });
 
 // ---- クロッキー ------------------------------------------------------------
 
@@ -245,37 +289,37 @@ function stopCroquis() {
 
 $('btnCroquis').addEventListener('click', () => startCroquis());
 $('cqSkip').addEventListener('click', () => croquis.skip());
-$('cqStop').addEventListener('click', () => { croquis.finish(); });
+$('cqStop').addEventListener('click', () => croquis.finish());
 $('cqPause').addEventListener('click', () => {
   croquis.togglePause();
   $('cqPause').textContent = croquis.paused ? '再開' : '一時停止';
 });
 $('cqDoneClose').addEventListener('click', () => { $('cqDone').hidden = true; });
 
-function buildChoiceChips(wrapId, options, isOn, onPick) {
+function buildChips(wrapId, options, isOn, onPick, cls) {
   const wrap = $(wrapId);
   wrap.innerHTML = '';
   for (const opt of options) {
     const b = document.createElement('button');
-    b.className = 'chip' + (isOn(opt) ? ' on' : '');
+    b.className = (cls || 'chip') + (isOn(opt) ? ' on' : '');
     b.textContent = opt.label;
-    b.addEventListener('click', () => { onPick(opt); });
+    b.addEventListener('click', () => onPick(opt));
     wrap.appendChild(b);
   }
 }
 
 function buildCroquisChips() {
-  buildChoiceChips('cqSeconds',
+  buildChips('cqSeconds',
     CROQUIS_SECONDS.map(s => ({ value: s, label: s >= 60 ? `${s / 60}分` : `${s}秒` })),
     o => settings.seconds === o.value,
     o => { settings.seconds = o.value; saveSettings(); buildCroquisChips(); });
 
-  buildChoiceChips('cqCounts',
+  buildChips('cqCounts',
     CROQUIS_COUNTS.map(c => ({ value: c, label: c === 0 ? '制限なし' : `${c}枚` })),
     o => settings.count === o.value,
     o => { settings.count = o.value; saveSettings(); buildCroquisChips(); });
 
-  buildChoiceChips('cqCats',
+  buildChips('cqCats',
     POSE_CATEGORIES.map(c => ({ value: c.key, label: c.name })),
     o => settings.cqCats.includes(o.value),
     o => {
@@ -283,7 +327,7 @@ function buildCroquisChips() {
       if (i >= 0) settings.cqCats.splice(i, 1); else settings.cqCats.push(o.value);
       saveSettings();
       buildCroquisChips();
-    });
+    }, '');
 }
 
 // ---- 関節一覧 --------------------------------------------------------------
@@ -294,8 +338,7 @@ function buildJointList() {
   for (const g of JOINT_GROUPS) {
     const box = document.createElement('div');
     const t = document.createElement('div');
-    t.className = 'group-title';
-    t.textContent = g.title;
+    t.className = 'group-title'; t.textContent = g.title;
     box.appendChild(t);
     const chips = document.createElement('div');
     chips.className = 'group-chips';
@@ -317,46 +360,31 @@ function markMissingJoints() {
     el.classList.toggle('missing', !viewer.hasJoint(el.dataset.key));
   }
   const info = viewer.slotInfo().filter(s => s.loaded);
-  if (!info.length) { $('boneReport').textContent = ''; return; }
-  $('boneReport').textContent = info.map(s => s.posable
+  $('boneReport').textContent = info.length ? info.map(s => s.posable
     ? `${s.name}: ボーン ${s.boneCount} 本・関節 ${s.jointCount}/${JOINTS.length}`
-    : `${s.name}: スキン情報なし（表示のみ）`).join(' ／ ');
+    : `${s.name}: スキン情報なし（表示のみ）`).join(' ／ ') : '';
 }
 
-// ---- 表示モード・質感 ------------------------------------------------------
+// ---- 表示まわり ------------------------------------------------------------
 
 function buildViewChips() {
-  const wrap = $('viewChips');
-  wrap.innerHTML = '';
-  for (const m of VIEW_MODES) {
-    const empty = m.show.every(k => !viewer.slots[k].loaded);
-    const b = document.createElement('button');
-    b.className = 'chip' + (m.key === viewer.viewMode ? ' on' : '') + (empty ? ' missing' : '');
-    b.textContent = m.name;
-    b.addEventListener('click', () => {
-      if (viewer.applyViewMode(m.key)) buildViewChips();
-    });
-    wrap.appendChild(b);
+  buildChips('viewChips',
+    VIEW_MODES.map(m => ({ ...m, label: m.name })),
+    m => m.key === viewer.viewMode,
+    m => { if (viewer.applyViewMode(m.key)) buildViewChips(); });
+  for (const [i, m] of VIEW_MODES.entries()) {
+    if (m.show.every(k => !viewer.slots[k].loaded)) {
+      $('viewChips').children[i].classList.add('missing');
+    }
   }
 }
 
 function buildMaterialChips() {
-  const wrap = $('matChips');
-  wrap.innerHTML = '';
-  for (const m of MATERIAL_MODES) {
-    const b = document.createElement('button');
-    b.className = 'chip' + (m.key === viewer.materialMode ? ' on' : '');
-    b.textContent = m.name;
-    b.addEventListener('click', () => {
-      viewer.applyMaterialMode(m.key);
-      for (const el of wrap.children) el.classList.remove('on');
-      b.classList.add('on');
-    });
-    wrap.appendChild(b);
-  }
+  buildChips('matChips',
+    MATERIAL_MODES.map(m => ({ ...m, label: m.name })),
+    m => m.key === viewer.materialMode,
+    m => { viewer.applyMaterialMode(m.key); buildMaterialChips(); });
 }
-
-// ---- モデルスロット --------------------------------------------------------
 
 function buildSlotRows() {
   const wrap = $('slotRows');
@@ -364,25 +392,17 @@ function buildSlotRows() {
   for (const s of viewer.slotInfo()) {
     const row = document.createElement('div');
     row.className = 'slot-row';
-
     const nm = document.createElement('span');
-    nm.className = 'nm';
-    nm.textContent = s.name;
-
+    nm.className = 'nm'; nm.textContent = s.name;
     const fn = document.createElement('span');
-    fn.className = 'fn';
-    fn.textContent = s.loaded ? s.fileName : '未読込';
-
+    fn.className = 'fn'; fn.textContent = s.loaded ? s.fileName : '未読込';
     const load = document.createElement('button');
     load.textContent = s.loaded ? '差替' : '読込';
     load.addEventListener('click', () => { pendingSlot = s.key; $('file').click(); });
-
     row.append(nm, fn, load);
-
     if (s.loaded) {
       const del = document.createElement('button');
-      del.className = 'ghost';
-      del.textContent = '削除';
+      del.className = 'ghost'; del.textContent = '削除';
       del.addEventListener('click', () => viewer.clearSlot(s.key));
       row.appendChild(del);
     }
@@ -397,7 +417,6 @@ $('file').addEventListener('change', async e => {
     await viewer.loadFile(f, pendingSlot);
     syncSliders();
   } catch (err) {
-    $('status').textContent = '読み込み失敗';
     if (window.__positShowError) {
       window.__positShowError('読み込みに失敗しました: ' + f.name + '\n'
         + (err && err.message ? err.message : err));
@@ -415,7 +434,6 @@ async function loadSample() {
     mark('サンプル取得完了');
     syncSliders();
   } catch (err) {
-    $('status').textContent = 'サンプル取得失敗';
     if (window.__positShowError) {
       window.__positShowError('サンプルモデルを取得できませんでした。\n' + SAMPLE_URL
         + '\n' + (err && err.message ? err.message : err));
@@ -447,17 +465,16 @@ $('canonRest').addEventListener('change', e => { viewer.setCanonicalRest(e.targe
 $('gridOn').addEventListener('change', e => viewer.setGridVisible(e.target.checked));
 $('limitsOn').addEventListener('change', e => { viewer.setLimitsEnabled(e.target.checked); syncSliders(); });
 
-$('btnReset').addEventListener('click', () => { viewer.resetPose(); syncSliders(); });
+$('btnReset').addEventListener('click', () => { snapshot(); viewer.resetPose(); syncSliders(); });
 $('btnMirror').addEventListener('click', () => {
+  snapshot();
   viewer.mirrorPose();
   syncSliders();
   history.add({ name: '左右反転', spec: toSpec(viewer.allAngles()) });
   buildHistory();
 });
-$('btnResetJoint').addEventListener('click', () => { viewer.resetSelected(); syncSliders(); });
+$('btnResetJoint').addEventListener('click', () => { snapshot(); viewer.resetSelected(); syncSliders(); });
 $('btnFrame').addEventListener('click', () => viewer.frameModel());
-
-$('handle').addEventListener('click', () => $('panel').classList.toggle('collapsed'));
 
 // ---- 困ったとき -----------------------------------------------------------
 
@@ -476,10 +493,7 @@ $('btnPurge').addEventListener('click', async () => {
 });
 
 async function showDiagnostics() {
-  const parts = [];
-  parts.push('バージョン: ' + BUILD);
-  parts.push('URL: ' + location.href);
-  parts.push('three.js: r' + THREE_REVISION);
+  const parts = ['バージョン: ' + BUILD, 'URL: ' + location.href, 'three.js: r' + THREE_REVISION];
   parts.push('importmap: ' + (window.HTMLScriptElement && HTMLScriptElement.supports
     && HTMLScriptElement.supports('importmap') ? '対応' : '未対応'));
   try {
@@ -489,13 +503,9 @@ async function showDiagnostics() {
     } else {
       parts.push('Service Worker: 使えません（httpsで開いていない可能性）');
     }
-    if (window.caches) {
-      const keys = await caches.keys();
-      parts.push('キャッシュ: ' + (keys.join(', ') || 'なし'));
-    }
-  } catch (e) { /* 取れなくても続行 */ }
-  parts.push('画面: ' + window.innerWidth + '×' + window.innerHeight
-    + ' / DPR ' + (window.devicePixelRatio || 1));
+    if (window.caches) parts.push('キャッシュ: ' + ((await caches.keys()).join(', ') || 'なし'));
+  } catch (e) { /* 続行 */ }
+  parts.push('画面: ' + window.innerWidth + '×' + window.innerHeight + ' / DPR ' + (window.devicePixelRatio || 1));
   parts.push('UA: ' + navigator.userAgent);
   if (window.__positStages) parts.push('経過: ' + window.__positStages.join(' → '));
   $('diag').textContent = parts.join('\n');
@@ -514,27 +524,22 @@ buildHistory();
 syncSliders();
 loadSample();
 
+$('buildTag').textContent = 'バージョン ' + BUILD;
 mark('UI構築');
 window.__booted = true;
 setTimeout(showDiagnostics, 1200);
 $('diag').addEventListener('click', showDiagnostics);
 
-$('buildTag').textContent = 'バージョン ' + BUILD;
-
 if ('serviceWorker' in navigator) {
   const hadController = !!navigator.serviceWorker.controller;
   let refreshing = false;
-
-  // 新しい Service Worker が主導権を取ったら、一度だけ読み直して新版に入れ替える
   navigator.serviceWorker.addEventListener('controllerchange', () => {
     if (!hadController || refreshing) return;
     refreshing = true;
     location.reload();
   });
-
   window.addEventListener('load', () => {
-    navigator.serviceWorker
-      .register('./sw.js', { updateViaCache: 'none' })
+    navigator.serviceWorker.register('./sw.js', { updateViaCache: 'none' })
       .then(reg => { try { reg.update(); } catch (e) { /* 続行 */ } })
       .catch(() => {});
   });

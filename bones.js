@@ -2,33 +2,56 @@
 // Mixamo / VRM / Rigify / UE風 など、リグごとに違うボーン名を共通の関節キーに対応づける。
 
 // ---- 関節定義 -------------------------------------------------------------
-// limits: [xMin,xMax, yMin,yMax, zMin,zMax]（度）
-// x=前後(曲げ) / y=ひねり / z=左右(開き)  ※Positと同じ約束
-export const JOINTS = [
-  { key: 'hips',     name: '腰',       side: null,    limits: [-40, 40, -60, 60, -35, 35] },
-  { key: 'spine',    name: '腹',       side: null,    limits: [-35, 55, -40, 40, -35, 35] },
-  { key: 'chest',    name: '胸',       side: null,    limits: [-30, 40, -45, 45, -30, 30] },
-  { key: 'neck',     name: '首',       side: null,    limits: [-45, 45, -60, 60, -40, 40] },
-  { key: 'head',     name: '頭',       side: null,    limits: [-35, 35, -50, 50, -35, 35] },
+// limits: [xMin,xMax, yMin,yMax, zMin,zMax]（度）— Swift版で検証した値をそのまま使う
+// x=前後(曲げ) / y=ひねり / z=左右  ※右側は左をミラーする
 
-  { key: 'shoulderL', name: '肩',      side: 'L',     limits: [-30, 30, -25, 25, -30, 45] },
-  { key: 'shoulderR', name: '肩',      side: 'R',     limits: [-30, 30, -25, 25, -45, 30] },
-  { key: 'upperArmL', name: '上腕',    side: 'L',     limits: [-95, 95, -90, 90, -30, 165] },
-  { key: 'upperArmR', name: '上腕',    side: 'R',     limits: [-95, 95, -90, 90, -165, 30] },
-  { key: 'forearmL',  name: '前腕',    side: 'L',     limits: [-5, 20, -90, 90, 0, 150] },
-  { key: 'forearmR',  name: '前腕',    side: 'R',     limits: [-5, 20, -90, 90, -150, 0] },
-  { key: 'handL',     name: '手',      side: 'L',     limits: [-80, 80, -30, 30, -30, 30] },
-  { key: 'handR',     name: '手',      side: 'R',     limits: [-80, 80, -30, 30, -30, 30] },
+/** 左の可動域を右用に反転する */
+function mirrorLimits(l) {
+  return [l[0], l[1], -l[3], -l[2], -l[5], -l[4]];
+}
 
-  { key: 'thighL',   name: '腿',       side: 'L',     limits: [-120, 45, -50, 50, -25, 80] },
-  { key: 'thighR',   name: '腿',       side: 'R',     limits: [-120, 45, -50, 50, -80, 25] },
-  { key: 'shinL',    name: '脛',       side: 'L',     limits: [0, 150, -25, 25, -10, 10] },
-  { key: 'shinR',    name: '脛',       side: 'R',     limits: [0, 150, -25, 25, -10, 10] },
-  { key: 'footL',    name: '足',       side: 'L',     limits: [-50, 45, -30, 30, -25, 25] },
-  { key: 'footR',    name: '足',       side: 'R',     limits: [-50, 45, -30, 30, -25, 25] },
-];
+const FREE = [-180, 180, -180, 180, -180, 180];
+
+const BASE = {
+  hips:     { name: '腰',   limits: FREE,                                  axes: ['前後に傾く', '向き', '左右に傾く'] },
+  spine:    { name: '腹',   limits: [-40, 60, -50, 50, -40, 40],           axes: ['前後', 'ひねり', '左右'] },
+  chest:    { name: '胸',   limits: [-40, 55, -50, 50, -40, 40],           axes: ['前後', 'ひねり', '左右'] },
+  neck:     { name: '首',   limits: [-55, 65, -75, 75, -45, 45],           axes: ['うなずく', '振り向く', 'かしげる'] },
+  head:     { name: '頭',   limits: [-45, 45, -50, 50, -35, 35],           axes: ['うなずく', '振り向く', 'かしげる'] },
+  shoulder: { name: '肩',   limits: [-25, 25, -40, 25, -20, 40],  sided: true, axes: ['前後', '前に出す', 'すくめる'] },
+  upperArm: { name: '上腕', limits: [-185, 80, -110, 100, -50, 185], sided: true, axes: ['前後', 'ひねり', '左右'] },
+  forearm:  { name: '前腕', limits: [-160, 10, -100, 100, -15, 15], sided: true, axes: ['曲げる', 'ひねり', '左右'] },
+  hand:     { name: '手',   limits: [-90, 85, -100, 100, -35, 45], sided: true, axes: ['前後', 'ひねり', '左右'] },
+  thigh:    { name: '腿',   limits: [-150, 60, -70, 70, -40, 110], sided: true, axes: ['前後', 'ひねり', '左右'] },
+  shin:     { name: '脛',   limits: [-5, 165, -40, 40, -12, 12],   sided: true, axes: ['曲げる', 'ひねり', '左右'] },
+  foot:     { name: '足',   limits: [-40, 70, -40, 40, -40, 40],   sided: true, axes: ['つま先の上下', '内外に向ける', '内外に傾ける'] },
+};
+
+const ORDER = ['hips', 'spine', 'chest', 'neck', 'head',
+  'shoulder', 'upperArm', 'forearm', 'hand', 'thigh', 'shin', 'foot'];
+
+export const JOINTS = (() => {
+  const list = [];
+  for (const base of ORDER) {
+    const b = BASE[base];
+    if (b.sided) {
+      list.push({ key: base + 'L', base, name: b.name, side: 'L', limits: b.limits, axes: b.axes });
+      list.push({ key: base + 'R', base, name: b.name, side: 'R', limits: mirrorLimits(b.limits), axes: b.axes });
+    } else {
+      list.push({ key: base, base, name: b.name, side: null, limits: b.limits, axes: b.axes });
+    }
+  }
+  return list;
+})();
 
 export const JOINT_BY_KEY = Object.fromEntries(JOINTS.map(j => [j.key, j]));
+
+/** 「左上腕」のような表示名 */
+export function jointLabel(key) {
+  const j = JOINT_BY_KEY[key];
+  if (!j) return '';
+  return (j.side ? (j.side === 'L' ? '左' : '右') : '') + j.name;
+}
 
 export const JOINT_GROUPS = [
   { title: '体幹', keys: ['hips', 'spine', 'chest', 'neck', 'head'] },

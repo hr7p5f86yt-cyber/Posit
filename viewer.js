@@ -38,19 +38,21 @@ const APPLY_ORDER = [
 /** 基準姿勢（A字）での各骨の向き。s はキャラクターの左が world +X なら +1 */
 function restTargets(s) {
   const n = (x, y, z) => new THREE.Vector3(x, y, z).normalize();
+  // Swift版のリグと同じ基準姿勢（気をつけ）に合わせる:
+  //   鎖骨は真横、上腕・前腕・腿・脛は真下、体幹は真上
   return [
     ['hips', 'spine', n(0, 1, 0)],
     ['spine', 'chest', n(0, 1, 0)],
     ['chest', 'neck', n(0, 1, 0)],
     ['neck', 'head', n(0, 1, 0)],
-    ['shoulderL', 'upperArmL', n(s * 0.94, 0.34, 0)],
-    ['shoulderR', 'upperArmR', n(-s * 0.94, 0.34, 0)],
-    ['upperArmL', 'forearmL', n(s * 0.20, -0.98, 0)],
-    ['upperArmR', 'forearmR', n(-s * 0.20, -0.98, 0)],
-    ['forearmL', 'handL', n(s * 0.20, -0.98, 0)],
-    ['forearmR', 'handR', n(-s * 0.20, -0.98, 0)],
-    ['thighL', 'shinL', n(s * 0.04, -1, 0)],
-    ['thighR', 'shinR', n(-s * 0.04, -1, 0)],
+    ['shoulderL', 'upperArmL', n(s, 0, 0)],
+    ['shoulderR', 'upperArmR', n(-s, 0, 0)],
+    ['upperArmL', 'forearmL', n(0, -1, 0)],
+    ['upperArmR', 'forearmR', n(0, -1, 0)],
+    ['forearmL', 'handL', n(0, -1, 0)],
+    ['forearmR', 'handR', n(0, -1, 0)],
+    ['thighL', 'shinL', n(0, -1, 0)],
+    ['thighR', 'shinR', n(0, -1, 0)],
     ['shinL', 'footL', n(0, -1, 0)],
     ['shinR', 'footR', n(0, -1, 0)],
   ];
