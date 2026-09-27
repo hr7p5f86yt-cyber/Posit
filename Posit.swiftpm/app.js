@@ -5,6 +5,8 @@ import { POSE_CATEGORIES, POSE_PRESETS, POSES_BY_CATEGORY, toSpec } from './pose
 import { PoseHistory, relativeTime, HISTORY_LIMIT } from './history.js';
 import { CroquisSession, CROQUIS_SECONDS, CROQUIS_COUNTS } from './croquis.js';
 
+export const BUILD = '2026-09-27a';
+
 const SAMPLE_URL = 'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r169/examples/models/gltf/Xbot.glb';
 const SETTINGS_KEY = 'posit.settings.v1';
 
@@ -458,6 +460,7 @@ $('btnPurge').addEventListener('click', async () => {
 
 async function showDiagnostics() {
   const parts = [];
+  parts.push('バージョン: ' + BUILD);
   parts.push('URL: ' + location.href);
   parts.push('three.js: r' + THREE_REVISION);
   parts.push('importmap: ' + (window.HTMLScriptElement && HTMLScriptElement.supports
@@ -499,8 +502,23 @@ window.__booted = true;
 setTimeout(showDiagnostics, 1200);
 $('diag').addEventListener('click', showDiagnostics);
 
+$('buildTag').textContent = 'バージョン ' + BUILD;
+
 if ('serviceWorker' in navigator) {
+  const hadController = !!navigator.serviceWorker.controller;
+  let refreshing = false;
+
+  // 新しい Service Worker が主導権を取ったら、一度だけ読み直して新版に入れ替える
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (!hadController || refreshing) return;
+    refreshing = true;
+    location.reload();
+  });
+
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('./sw.js').catch(() => {});
+    navigator.serviceWorker
+      .register('./sw.js', { updateViaCache: 'none' })
+      .then(reg => { try { reg.update(); } catch (e) { /* 続行 */ } })
+      .catch(() => {});
   });
 }
