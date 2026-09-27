@@ -4,7 +4,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { JOINTS, JOINT_BY_KEY, JOINT_GROUPS, mapBones, clampAngles } from './bones.js';
+import { JOINTS, JOINT_BY_KEY, JOINT_GROUPS, mapBones, clampAngles, normalizeName } from './bones.js';
 import { parseSpec } from './poses.js';
 import { buildSkeletonView } from './skeletonView.js';
 
@@ -93,6 +93,8 @@ class Slot {
     this.originalMaterials = new Map();
     this.restLowestY = 0;
     this.boneParts = [];
+    this.headRatio0 = 7.5;   // 読み込んだモデル本来の頭身
+    this.headScale = 1;
   }
   get loaded() { return !!this.root; }
   get posable() { return !!this.skeleton && Object.keys(this.boneMap).length > 0; }
@@ -385,6 +387,7 @@ export class Viewer {
       guard('向きの正規化', () => this._orientToCanonical(slot));
       guard('基準姿勢への補正', () => this._buildNeutral(slot));
       slot.restLowestY = this._lowestBoneY(slot);
+      guard('頭身の測定', () => this._measureHeadRatio(slot));
       guard('骨格の生成', () => this._buildBoneView(slot));
     }
 
@@ -468,11 +471,65 @@ export class Viewer {
         this._setBoneWorldQuat(bone, swing.multiply(current));
       }
     }
+    if (this.canonicalRest) guard('手の向きの補正', () => this._correctHands(slot));
     for (const b of slot.skeleton.bones) {
       slot.neutralWorld.set(b, b.getWorldQuaternion(new THREE.Quaternion()));
       const pq = new THREE.Quaternion();
       if (b.parent) b.parent.getWorldQuaternion(pq);
       slot.neutralParent.set(b, pq);
+    }
+  }
+
+  /**
+   * 手のひらの向きを基準姿勢に合わせる。
+   * Swift版と同じく「指は真下・親指は前」（＝手のひらが体側を向く）に揃える。
+   * 指と親指の骨の位置から今の向きを測り、その差分だけ手の骨を回す。
+   */
+  _correctHands(slot) {
+    const target = (() => {
+      const y = new THREE.Vector3(0, 1, 0);          // 指先から手首へ
+      const x = new THREE.Vector3(0, 0, 1);          // 親指の向き（前）
+      const z = new THREE.Vector3().crossVectors(x, y);
+      return new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(x, y, z));
+    })();
+
+    for (const side of ['L', 'R']) {
+      const hand = slot.boneMap['hand' + side];
+      if (!hand) continue;
+
+      const kids = [];
+      (function walk(b, depth) {
+        if (depth > 2) return;
+        for (const c of b.children) {
+          if (!c.isBone) continue;
+          kids.push(c);
+          walk(c, depth + 1);
+        }
+      })(hand, 0);
+      if (!kids.length) continue;
+
+      const pick = re => kids.find(b => re.test(normalizeName(b.name)));
+      const thumb = pick(/thumb/);
+      const finger = pick(/middle/) || pick(/index/) || pick(/ring/);
+      if (!thumb || !finger) continue;
+
+      const origin = hand.getWorldPosition(new THREE.Vector3());
+      const fDir = finger.getWorldPosition(new THREE.Vector3()).sub(origin);
+      const tDir = thumb.getWorldPosition(new THREE.Vector3()).sub(origin);
+      if (fDir.lengthSq() < 1e-10 || tDir.lengthSq() < 1e-10) continue;
+      fDir.normalize();
+      tDir.normalize();
+
+      const cy = fDir.clone().negate();
+      const cx = tDir.clone().addScaledVector(cy, -tDir.dot(cy));
+      if (cx.lengthSq() < 1e-6) continue;             // 親指と指が同じ向き = 測れない
+      cx.normalize();
+      const cz = new THREE.Vector3().crossVectors(cx, cy);
+      const current = new THREE.Quaternion().setFromRotationMatrix(
+        new THREE.Matrix4().makeBasis(cx, cy, cz));
+
+      const fix = target.clone().multiply(current.invert());
+      this._setBoneWorldQuat(hand, fix.multiply(hand.getWorldQuaternion(new THREE.Quaternion())));
     }
   }
 
@@ -509,6 +566,69 @@ export class Viewer {
       if (v.y < min) min = v.y;
     }
     return isFinite(min) ? min : 0;
+  }
+
+  /** 首の付け根から頭頂までを頭の高さとみなし、身長との比を頭身とする */
+  _measureHeadRatio(slot) {
+    const neck = slot.boneMap.neck || slot.boneMap.head;
+    if (!neck) return;
+    slot.pivot.updateWorldMatrix(true, true);
+    const box = new THREE.Box3().setFromObject(slot.root);
+    const neckY = neck.getWorldPosition(new THREE.Vector3()).y;
+    const headH = box.max.y - neckY;
+    const bodyH = box.max.y - box.min.y;
+    if (headH > 1e-4 && bodyH > 1e-4) slot.headRatio0 = bodyH / headH;
+    slot.headScale = 1;
+  }
+
+  /** いま基準になっているモデル本来の頭身 */
+  get baseHeadRatio() {
+    const p = this.primarySlot;
+    return p ? p.headRatio0 : 7.5;
+  }
+
+  /** 頭の大きさを変えて見かけの頭身を変える */
+  setHeadRatio(ratio) {
+    for (const s of SLOTS) {
+      const slot = this.slots[s.key];
+      const head = slot.boneMap.head;
+      if (!head) continue;
+      const k = Math.max(0.2, Math.min(4, slot.headRatio0 / Math.max(1, ratio)));
+      slot.headScale = k;
+      head.scale.setScalar(k);
+    }
+    this.applyAll();
+  }
+
+  resetHeadRatio() { this.setHeadRatio(this.baseHeadRatio); }
+
+  /** 見る範囲をカメラで切り替える */
+  frameOn(part) {
+    const p = this.primarySlot;
+    const at = new THREE.Vector3();
+    let dist = 3.4, height = 0.95;
+    const posOf = key => {
+      const b = p && p.boneMap[key];
+      if (!b) return null;
+      return b.getWorldPosition(new THREE.Vector3());
+    };
+    if (part === 'upper') {
+      const c = posOf('chest');
+      if (c) { at.copy(c); dist = 1.5; }
+    } else if (part === 'face') {
+      const hd = posOf('head');
+      if (hd) { at.copy(hd).y += 0.09; dist = 0.55; }
+    } else if (part === 'handL' || part === 'handR') {
+      const hn = posOf(part);
+      if (hn) { at.copy(hn); dist = 0.30; }
+    } else {
+      at.set(0, height, 0);
+      dist = 3.4;
+    }
+    if (part === 'full' || at.lengthSq() === 0) at.set(0, 0.95, 0);
+    this.controls.target.copy(at);
+    this.camera.position.set(at.x, at.y + dist * 0.06, at.z + dist);
+    this.controls.update();
   }
 
   frameModel() {

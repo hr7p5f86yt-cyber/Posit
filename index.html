@@ -175,6 +175,12 @@
 
   <!-- 設定 -->
   <div class="page" data-page="setting" hidden>
+    <div class="sub">見る範囲</div>
+    <div class="scroller" id="frameChips"></div>
+    <div class="sub">頭身<span class="dim">（頭の大きさ）</span></div>
+    <label class="row"><span class="lbl">頭身</span>
+      <input type="range" id="headRatio" min="3" max="9" step="0.1" value="7.5"><output id="outHead">7.5</output></label>
+    <button id="btnHeadReset" class="wide ghost">このモデル本来の頭身に戻す</button>
     <div class="sub">表示するモデル</div>
     <div class="scroller" id="viewChips"></div>
     <div class="sub">素体の質感</div>
@@ -221,6 +227,20 @@
       <input type="file" id="file" accept=".glb,.gltf,.fbx" hidden>
       <p class="hint">GLB / FBX を読み込めます。Mixamo から書き出した FBX はそのまま使えます。3つのスロットはリグが違っていても、同じポーズが当たります。</p>
       <div id="boneReport" class="hint"></div>
+      <details class="inner">
+        <summary>おすすめのモデル（無料）</summary>
+        <p class="hint">Sketchfab は無料登録が必要です。ダウンロード形式で <b>glTF/GLB</b> を選ぶとそのまま読み込めます。</p>
+        <ul class="links">
+          <li><b>素体・男</b> <a href="https://sketchfab.com/3d-models/male-base-mesh-t-poserigged-5d91d2f079814476b9d471e7a09a5c39" target="_blank" rel="noopener">Male Base Mesh (T-Pose, Rigged)</a><span>CC BY 4.0 / 28.9k / リグ済み</span></li>
+          <li><b>素体・女</b> <a href="https://sketchfab.com/3d-models/womenfemale-body-base-rigged-45caea510e4b4b65bf4ef9bbb4d2045c" target="_blank" rel="noopener">Women/Female Body Base Rigged</a><span>CC BY 4.0 / 108k / リグ済み</span></li>
+          <li><b>素体・男女セット</b> <a href="https://sketchfab.com/3d-models/human-models-set-malefemale-rigged-7311fcfdc03e4234900eeced42a1e669" target="_blank" rel="noopener">Human Models Set - Male/Female (Rigged)</a><span>CC BY 4.0 / 81k</span></li>
+          <li><b>骨格</b> <a href="https://sketchfab.com/3d-models/male-skeleton-11b57ebfcf6c4e3b88d0cbe618ee70a7" target="_blank" rel="noopener">Male Skeleton</a><span>CC BY 4.0 / 67.5k / リグ済み</span></li>
+          <li><b>筋肉・男</b> <a href="https://sketchfab.com/3d-models/male-body-muscular-system-anatomy-study-991eb96938be4d0d8fadee241a1063d3" target="_blank" rel="noopener">Male Body Muscular System</a><span>CC BY 4.0 / 210k</span></li>
+          <li><b>筋肉・女</b> <a href="https://sketchfab.com/3d-models/female-body-muscular-system-anatomy-study-9a596b6c24b344bfbe6bb5246290df0e" target="_blank" rel="noopener">Female Body Muscular System</a><span>CC BY 4.0 / 251k</span></li>
+          <li><b>手・軽量</b> <a href="https://sketchfab.com/3d-models/anatomically-accurate-rigged-hand-model-for-xr-86f37207468b427ead21e2eef820c06c" target="_blank" rel="noopener">Rigged Hand for XR</a><span>CC BY-NC / 4.4k / 21ボーン</span></li>
+          <li><b>手・高精細</b> <a href="https://sketchfab.com/3d-models/hand-rig-a348cf6087eb4fd98a83b026593823ad" target="_blank" rel="noopener">Hand Rig</a><span>CC BY 4.0 / 563k / 指まで完全リグ</span></li>
+        </ul>
+      </details>
     </details>
 
     <details>
@@ -240,13 +260,13 @@
       <svg viewBox="0 0 24 24"><path d="M4 8h16M4 16h16"/><circle cx="9" cy="8" r="2.4"/><circle cx="15" cy="16" r="2.4"/></svg>
       <span>関節</span>
     </button>
-    <button data-tab="croquis">
-      <svg viewBox="0 0 24 24"><circle cx="12" cy="13" r="7.5"/><path d="M12 9.5V13l2.4 2M9.5 2.5h5"/></svg>
-      <span>クロッキー</span>
-    </button>
     <button data-tab="setting">
       <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1"/></svg>
       <span>設定</span>
+    </button>
+    <button data-tab="croquis">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="13" r="7.5"/><path d="M12 9.5V13l2.4 2M9.5 2.5h5"/></svg>
+      <span>クロッキー</span>
     </button>
   </nav>
 </section>

@@ -83,9 +83,10 @@ body.collapsed #btnCollapse svg { transform: rotate(180deg); }
   padding-bottom: var(--safe-b);
   transition: transform 0.26s cubic-bezier(.32,.72,.35,1);
 }
-body.collapsed #sheet {
-  transform: translateY(calc(100% - var(--tabbar-h) - var(--safe-b) - 14px));
-}
+/* たたんだときは中身だけ隠し、タブバーは常に画面に残す */
+body.collapsed #sheet { height: auto; min-height: 0; }
+body.collapsed .page { display: none; }
+body.collapsed #grip { padding: 6px 0 2px; }
 
 #grip { padding: 9px 0 5px; text-align: center; flex: none; }
 #grip span { display: inline-block; width: 40px; height: 4px; border-radius: 2px; background: #4c5666; }
@@ -271,7 +272,16 @@ body.croquis #sheet, body.croquis #topbar { display: none; }
 @media (min-width: 720px) and (orientation: landscape) {
   #sheet { left: auto; right: 0; top: 0; bottom: 0; width: 400px;
     height: auto; max-height: none; border-radius: 0; border-left: 1px solid var(--line); border-top: 0; }
-  body.collapsed #sheet { transform: translateX(calc(100% - 64px)); }
+  body.collapsed #sheet { height: auto; top: auto; }
   #grip { display: none; }
   #topbar { right: 400px; }
 }
+
+details.inner { border-top: 1px solid var(--line-soft); margin-top: 6px; }
+details.inner summary { font-size: 14px; font-weight: 500; color: var(--muted); }
+ul.links { list-style: none; margin: 4px 0 10px; padding: 0; }
+ul.links li { padding: 9px 0; border-bottom: 1px solid var(--line-soft); font-size: 13px; }
+ul.links li:last-child { border-bottom: 0; }
+ul.links b { display: inline-block; min-width: 92px; color: var(--muted); font-weight: 500; font-size: 12px; }
+ul.links a { color: var(--accent); text-decoration: none; }
+ul.links span { display: block; margin-left: 92px; font-size: 11px; color: var(--muted); }

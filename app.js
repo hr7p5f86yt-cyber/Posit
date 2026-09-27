@@ -5,7 +5,7 @@ import { POSE_CATEGORIES, POSE_PRESETS, toSpec } from './poses.js';
 import { PoseHistory, relativeTime, HISTORY_LIMIT } from './history.js';
 import { CroquisSession, CROQUIS_SECONDS, CROQUIS_COUNTS } from './croquis.js';
 
-export const BUILD = '2026-09-27d';
+export const BUILD = '2026-09-27e';
 
 const SAMPLE_URL = 'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r169/examples/models/gltf/Xbot.glb';
 const SETTINGS_KEY = 'posit.settings.v1';
@@ -92,7 +92,7 @@ function showToast(msg) {
 
 viewer.onStatus = msg => { if (msg && !/読み込み中/.test(msg)) showToast(msg); };
 viewer.onNotice = msg => { if (msg) { $('viewNote').textContent = msg; showToast(msg); } };
-viewer.onSlotsChanged = () => { buildSlotRows(); buildViewChips(); markMissingJoints(); };
+viewer.onSlotsChanged = () => { buildSlotRows(); buildViewChips(); markMissingJoints(); syncHeadRatio(); };
 
 viewer.onSelect = key => {
   const label = key ? jointLabel(key) : '';
@@ -460,6 +460,35 @@ bindRange('fillInt', 'outFill', v => viewer.setFillIntensity(v), v => v.toFixed(
 bindRange('shadowSoft', 'outSoft', v => viewer.setShadowSoftness(v), v => v.toFixed(1));
 bindRange('lens', 'outLens', v => viewer.setLens(v), v => `${v | 0}mm`);
 
+const FRAMES = [
+  { key: 'full',  label: '全身' },
+  { key: 'upper', label: '上半身' },
+  { key: 'face',  label: '顔' },
+  { key: 'handL', label: '左手' },
+  { key: 'handR', label: '右手' },
+];
+let frameKey = 'full';
+function buildFrameChips() {
+  buildChips('frameChips', FRAMES, f => f.key === frameKey,
+    f => { frameKey = f.key; viewer.frameOn(f.key); buildFrameChips(); });
+}
+
+function syncHeadRatio() {
+  const el = $('headRatio');
+  const base = viewer.baseHeadRatio;
+  el.value = Math.max(3, Math.min(9, base)).toFixed(1);
+  $('outHead').textContent = (+el.value).toFixed(1);
+}
+$('headRatio').addEventListener('input', e => {
+  const r = parseFloat(e.target.value);
+  $('outHead').textContent = r.toFixed(1);
+  viewer.setHeadRatio(r);
+});
+$('btnHeadReset').addEventListener('click', () => {
+  viewer.resetHeadRatio();
+  syncHeadRatio();
+});
+
 $('boneView').addEventListener('change', e => viewer.setBoneViewOn(e.target.checked));
 $('canonRest').addEventListener('change', e => { viewer.setCanonicalRest(e.target.checked); syncSliders(); });
 $('gridOn').addEventListener('change', e => viewer.setGridVisible(e.target.checked));
@@ -520,6 +549,7 @@ buildSlotRows();
 buildPoseCats();
 buildPoseList();
 buildCroquisChips();
+buildFrameChips();
 buildHistory();
 syncSliders();
 loadSample();
