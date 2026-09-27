@@ -192,7 +192,7 @@
   <div class="page" data-page="setting" hidden>
     <div class="sub">見る範囲</div>
     <div class="scroller" id="frameChips"></div>
-    <div class="sub">頭身<span class="dim">（頭の大きさ）</span></div>
+    <div class="sub">頭身<span class="dim">（低いほどデフォルメが効きます）</span></div>
     <label class="row"><span class="lbl">頭身</span>
       <input type="range" id="headRatio" min="3" max="9" step="0.1" value="7.5"><output id="outHead">7.5</output></label>
     <button id="btnHeadReset" class="wide ghost">このモデル本来の頭身に戻す</button>
@@ -239,8 +239,9 @@
       <summary>モデル</summary>
       <div id="slotRows"></div>
       <button id="btnSample" class="wide ghost">サンプル素体を読み込む</button>
-      <input type="file" id="file" accept=".glb,.gltf,.fbx" hidden>
-      <p class="hint">GLB / FBX を読み込めます。Mixamo から書き出した FBX はそのまま使えます。3つのスロットはリグが違っていても、同じポーズが当たります。</p>
+      <input type="file" id="file" multiple
+             accept=".glb,.gltf,.fbx,.zip,.bin,model/gltf-binary,model/gltf+json,application/zip" hidden>
+      <p class="hint"><b>Sketchfab からの zip はそのまま選べます</b>（中の scene.gltf と scene.bin を自動で結びつけます）。GLB / FBX の1ファイル、Mixamo の FBX もそのまま使えます。展開済みなら scene.gltf と scene.bin をまとめて選んでください。3つのスロットはリグが違っていても同じポーズが当たります。</p>
       <div id="boneReport" class="hint"></div>
       <details class="inner">
         <summary>おすすめのモデル（無料）</summary>

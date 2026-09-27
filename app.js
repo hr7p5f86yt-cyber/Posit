@@ -5,7 +5,7 @@ import { POSE_CATEGORIES, POSE_PRESETS, HAND_SHAPES, FACE_PRESETS, toSpec } from
 import { PoseHistory, relativeTime, HISTORY_LIMIT } from './history.js';
 import { CroquisSession, CROQUIS_SECONDS, CROQUIS_COUNTS } from './croquis.js';
 
-export const BUILD = '2026-09-28a';
+export const BUILD = '2026-09-28b';
 
 const SAMPLE_URL = 'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r169/examples/models/gltf/Xbot.glb';
 const SETTINGS_KEY = 'posit.settings.v1';
@@ -523,14 +523,19 @@ function buildSlotRows() {
 
 $('file').addEventListener('change', async e => {
   const f = e.target.files && e.target.files[0];
-  if (!f) return;
+  if (!f) { e.target.value = ''; return; }
   try {
-    await viewer.loadFile(f, pendingSlot);
+    await viewer.loadFiles(e.target.files, pendingSlot);
     syncSliders();
   } catch (err) {
     if (window.__positShowError) {
-      window.__positShowError('読み込みに失敗しました: ' + f.name + '\n'
-        + (err && err.message ? err.message : err));
+      const msg = err && err.message ? err.message : String(err);
+      const hint = /buffer|\.bin|texture/i.test(msg)
+        ? '\n\nこの .gltf は別ファイル（scene.bin など）に中身が入っています。'
+          + '\nダウンロードした zip をそのまま選ぶか、'
+          + '\nscene.gltf と scene.bin をまとめて選んでください。'
+        : '';
+      window.__positShowError('読み込みに失敗しました: ' + f.name + '\n' + msg + hint);
     }
   }
   e.target.value = '';
@@ -595,9 +600,11 @@ $('headRatio').addEventListener('input', e => {
   $('outHead').textContent = r.toFixed(1);
   viewer.setHeadRatio(r);
 });
+$('headRatio').addEventListener('change', () => viewer.rebuildBoneViews());
 $('btnHeadReset').addEventListener('click', () => {
   viewer.resetHeadRatio();
   syncHeadRatio();
+  viewer.rebuildBoneViews();
 });
 
 $('boneView').addEventListener('change', e => viewer.setBoneViewOn(e.target.checked));

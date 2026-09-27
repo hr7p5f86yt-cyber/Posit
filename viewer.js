@@ -96,6 +96,9 @@ class Slot {
     this.fingers = { L: {}, R: {} };
     this.headRatio0 = 7.5;   // 読み込んだモデル本来の頭身
     this.headScale = 1;
+    this.bodyScale = 1;
+    this.restPos = null;      // 元の骨の間隔
+    this.headSubtree = null;  // 頭より先の骨
   }
   get loaded() { return !!this.root; }
   get posable() { return !!this.skeleton && Object.keys(this.boneMap).length > 0; }
@@ -310,16 +313,73 @@ export class Viewer {
     }
   }
 
-  async loadFile(file, slotKey = 'skin') {
-    const ext = (file.name.split('.').pop() || '').toLowerCase();
-    const buf = await file.arrayBuffer();
+  /**
+   * 端末から読み込む。次のどれでも受け付ける。
+   *  ・GLB / FBX の1ファイル
+   *  ・Sketchfab などの zip（中の scene.gltf と scene.bin を自動で結びつける）
+   *  ・scene.gltf と scene.bin とテクスチャをまとめて選んだ複数ファイル
+   */
+  async loadFiles(fileList, slotKey = 'skin') {
+    const files = Array.from(fileList || []);
+    if (!files.length) return;
     this.onStatus('読み込み中…');
-    if (ext === 'fbx') {
-      this._setupModel(new FBXLoader().parse(buf, ''), slotKey, file.name);
+
+    let entries = new Map();      // ファイル名（小文字） -> Blob
+    let label = files[0].name;
+
+    const zip = files.find(f => /\.zip$/i.test(f.name));
+    if (zip) {
+      const fflate = await import('three/addons/libs/fflate.module.js');
+      const unzipped = fflate.unzipSync(new Uint8Array(await zip.arrayBuffer()));
+      for (const [path, data] of Object.entries(unzipped)) {
+        if (!data || !data.length) continue;
+        entries.set(path.toLowerCase(), new Blob([data]));
+      }
+      label = zip.name;
     } else {
-      const gltf = await new GLTFLoader().parseAsync(buf, '');
-      this._setupModel(gltf.scene, slotKey, file.name);
+      for (const f of files) entries.set(f.name.toLowerCase(), f);
     }
+
+    // 主役のファイルを選ぶ
+    const pickMain = re => {
+      for (const key of entries.keys()) if (re.test(key)) return key;
+      return null;
+    };
+    const mainKey = pickMain(/\.glb$/) || pickMain(/\.gltf$/) || pickMain(/\.fbx$/);
+    if (!mainKey) {
+      throw new Error('GLB / glTF / FBX が見つかりませんでした。'
+        + (zip ? 'zip の中身を確認してください。' : 'モデル本体のファイルを選んでください。'));
+    }
+    if (files.length > 1 || zip) label = mainKey.split('/').pop();
+
+    // 相対パスを、選んだファイルへ差し替えるための対応表
+    const urls = new Map();
+    for (const [key, blob] of entries) {
+      urls.set(key.split('/').pop(), URL.createObjectURL(blob));
+    }
+    const manager = new THREE.LoadingManager();
+    manager.setURLModifier(url => {
+      const base = decodeURIComponent(String(url).split('?')[0].split('/').pop() || '').toLowerCase();
+      return urls.get(base) || url;
+    });
+
+    try {
+      const buf = await entries.get(mainKey).arrayBuffer();
+      if (/\.fbx$/.test(mainKey)) {
+        this._setupModel(new FBXLoader(manager).parse(buf, ''), slotKey, label);
+      } else {
+        const gltf = await new GLTFLoader(manager).parseAsync(buf, '');
+        this._setupModel(gltf.scene, slotKey, label);
+      }
+    } finally {
+      // FBX のテクスチャは後から読み込まれるので、少し待ってから片付ける
+      setTimeout(() => { for (const u of urls.values()) URL.revokeObjectURL(u); }, 60000);
+    }
+  }
+
+  /** 1ファイルだけのとき用 */
+  async loadFile(file, slotKey = 'skin') {
+    return this.loadFiles([file], slotKey);
   }
 
   clearSlot(slotKey) {
@@ -353,6 +413,8 @@ export class Viewer {
     slot.neutralWorld = new Map();
     slot.neutralParent = new Map();
     slot.originalMaterials = new Map();
+    slot.restPos = null;
+    slot.headSubtree = null;
   }
 
   _setupModel(root, slotKey, fileName) {
@@ -582,9 +644,31 @@ export class Viewer {
     const box = new THREE.Box3().setFromObject(slot.root);
     const neckY = neck.getWorldPosition(new THREE.Vector3()).y;
     const headH = box.max.y - neckY;
-    const bodyH = box.max.y - box.min.y;
-    if (headH > 1e-4 && bodyH > 1e-4) slot.headRatio0 = bodyH / headH;
+    const total = box.max.y - box.min.y;
+    if (headH > 1e-4 && total > 1e-4) {
+      slot.headH0 = headH;
+      slot.bodyH0 = total - headH;
+      slot.headRatio0 = total / headH;
+    }
+    // 元の骨の間隔を覚えておく（頭身を変えるときに縮める）
+    slot.restPos = new Map();
+    for (const b of slot.skeleton.bones) slot.restPos.set(b, b.position.clone());
+
+    // 頭より先の骨は、頭の拡大にまかせて間隔を触らない
+    slot.headSubtree = new Set();
+    const head = slot.boneMap.head;
+    if (head) {
+      (function walk(b) {
+        for (const c of b.children) {
+          if (!c.isBone) continue;
+          slot.headSubtree.add(c);
+          walk(c);
+        }
+      })(head);
+    }
+    slot.restLowestY0 = slot.restLowestY;
     slot.headScale = 1;
+    slot.bodyScale = 1;
   }
 
   /** いま基準になっているモデル本来の頭身 */
@@ -593,17 +677,50 @@ export class Viewer {
     return p ? p.headRatio0 : 7.5;
   }
 
-  /** 頭の大きさを変えて見かけの頭身を変える */
+  /**
+   * 頭身を変える。頭を大きくするだけでなく、体と手足の長さも縮めて
+   * 低頭身ほどデフォルメが効くようにする。全体の背丈は変えない。
+   */
   setHeadRatio(ratio) {
     for (const s of SLOTS) {
       const slot = this.slots[s.key];
+      if (!slot.skeleton || !slot.restPos) continue;
+      const r0 = slot.headRatio0 || 7.5;
+      const r = Math.max(2, Math.min(12, ratio));
+      const headH = slot.headH0 || 0.22;
+      const bodyH = slot.bodyH0 || 1.48;
+
+      // 頭:体 の比が目標の頭身になるように、頭を大きく・体を短くする
+      let kh = Math.pow(r0 / r, 0.55);
+      let kb = r0 > 1.05 ? kh * (r - 1) / (r0 - 1) : kh;
+      const total = headH * kh + bodyH * kb;
+      const norm = total > 1e-6 ? (headH + bodyH) / total : 1;   // 背丈は据え置く
+      kh *= norm;
+      kb *= norm;
+
+      for (const b of slot.skeleton.bones) {
+        const rp = slot.restPos.get(b);
+        if (!rp) continue;
+        if (slot.headSubtree && slot.headSubtree.has(b)) b.position.copy(rp);
+        else b.position.copy(rp).multiplyScalar(kb);
+      }
       const head = slot.boneMap.head;
-      if (!head) continue;
-      const k = Math.max(0.2, Math.min(4, slot.headRatio0 / Math.max(1, ratio)));
-      slot.headScale = k;
-      head.scale.setScalar(k);
+      if (head) head.scale.setScalar(kh);
+
+      slot.headScale = kh;
+      slot.bodyScale = kb;
+      slot.restLowestY = (slot.restLowestY0 || 0) * kb;
     }
     this.applyAll();
+    this._reapplyHandShapes();
+  }
+
+  /** 骨の長さを変えたあと、骨格表示を作り直す */
+  rebuildBoneViews() {
+    for (const s of SLOTS) {
+      const slot = this.slots[s.key];
+      if (slot.skeleton) guard('骨格の作り直し', () => this._buildBoneView(slot));
+    }
   }
 
   resetHeadRatio() { this.setHeadRatio(this.baseHeadRatio); }
