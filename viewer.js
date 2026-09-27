@@ -6,6 +6,7 @@ import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { JOINTS, JOINT_BY_KEY, JOINT_GROUPS, mapBones, clampAngles } from './bones.js';
 import { parseSpec } from './poses.js';
+import { buildSkeletonView } from './skeletonView.js';
 
 /** 例外を握りつぶさず、どの処理で落ちたかを画面に出す */
 function guard(label, fn) {
@@ -84,8 +85,9 @@ class Slot {
     this.skeleton = null;
     this.boneMap = {};
     this.boneToJoint = new Map();
-    this.restLocal = new Map();     // 読み込み直後の姿勢
-    this.neutralWorld = new Map();  // 基準姿勢に補正したあとの世界向き
+    this.restLocal = new Map();        // 読み込み直後の姿勢
+    this.neutralWorld = new Map();     // 基準姿勢に補正したあとの世界向き
+    this.neutralParent = new Map();    // そのときの親の世界向き
     this.originalMaterials = new Map();
     this.restLowestY = 0;
     this.boneParts = [];
@@ -342,6 +344,7 @@ export class Viewer {
     slot.boneToJoint = new Map();
     slot.restLocal = new Map();
     slot.neutralWorld = new Map();
+    slot.neutralParent = new Map();
     slot.originalMaterials = new Map();
   }
 
@@ -380,7 +383,7 @@ export class Viewer {
       guard('向きの正規化', () => this._orientToCanonical(slot));
       guard('基準姿勢への補正', () => this._buildNeutral(slot));
       slot.restLowestY = this._lowestBoneY(slot);
-      guard('簡易骨格の生成', () => this._buildBoneView(slot));
+      guard('骨格の生成', () => this._buildBoneView(slot));
     }
 
     this.applyAll();
@@ -444,6 +447,7 @@ export class Viewer {
   /** 読み込んだ姿勢を A 字の基準姿勢へ寄せ、その世界向きを neutral として記録する */
   _buildNeutral(slot) {
     slot.neutralWorld = new Map();
+    slot.neutralParent = new Map();
     if (this.canonicalRest) {
       const L = slot.boneMap.shoulderL || slot.boneMap.upperArmL || slot.boneMap.thighL;
       const R = slot.boneMap.shoulderR || slot.boneMap.upperArmR || slot.boneMap.thighR;
@@ -464,6 +468,9 @@ export class Viewer {
     }
     for (const b of slot.skeleton.bones) {
       slot.neutralWorld.set(b, b.getWorldQuaternion(new THREE.Quaternion()));
+      const pq = new THREE.Quaternion();
+      if (b.parent) b.parent.getWorldQuaternion(pq);
+      slot.neutralParent.set(b, pq);
     }
   }
 
@@ -486,6 +493,7 @@ export class Viewer {
       slot.pivot.updateWorldMatrix(true, true);
       guard('基準姿勢への補正', () => this._buildNeutral(slot));
       slot.restLowestY = this._lowestBoneY(slot);
+      guard('骨格の生成', () => this._buildBoneView(slot));
     }
     this.applyAll();
   }
@@ -513,40 +521,8 @@ export class Viewer {
     for (const p of slot.boneParts) if (p.parent) p.parent.remove(p);
     slot.boneParts = [];
     if (!slot.skeleton) return;
-
-    const boneMat = new THREE.MeshStandardMaterial({ color: 0xeae3d2, roughness: 0.5, metalness: 0.0 });
-    const jointMat = new THREE.MeshStandardMaterial({ color: 0xb8c4d0, roughness: 0.35, metalness: 0.05 });
-
-    for (const b of slot.skeleton.bones) {
-      const kids = b.children.filter(c => c.isBone);
-      let maxLen = 0;
-      for (const c of kids) {
-        const len = c.position.length();
-        if (len < 1e-6) continue;
-        maxLen = Math.max(maxLen, len);
-        const r = len * 0.14;
-        const cyl = Math.max(len - 2 * r, len * 0.05);
-        const seg = new THREE.Mesh(new THREE.CapsuleGeometry(r, cyl, 4, 10), boneMat);
-        seg.position.copy(c.position).multiplyScalar(0.5);
-        seg.quaternion.setFromUnitVectors(UP, c.position.clone().normalize());
-        seg.castShadow = true;
-        seg.receiveShadow = true;
-        seg.visible = false;
-        seg.userData.jointBone = b;
-        seg.userData.slot = slot.key;
-        b.add(seg);
-        slot.boneParts.push(seg);
-      }
-      if (maxLen > 0) {
-        const ball = new THREE.Mesh(new THREE.SphereGeometry(maxLen * 0.17, 12, 10), jointMat);
-        ball.castShadow = true;
-        ball.visible = false;
-        ball.userData.jointBone = b;
-        ball.userData.slot = slot.key;
-        b.add(ball);
-        slot.boneParts.push(ball);
-      }
-    }
+    slot.pivot.updateWorldMatrix(true, true);
+    slot.boneParts = buildSkeletonView(slot);
     this._refreshBoneView();
   }
 
@@ -683,25 +659,34 @@ export class Viewer {
     this.applyAll();
   }
 
-  /** 全関節を親から子の順に適用する。角度はワールド軸基準 */
+  /**
+   * 全関節にポーズを当てる。
+   * 角度は「基準姿勢のときのワールド軸」で解釈するが、適用は局所回転として行うので、
+   * 親を動かせば子もついていく（肩を開けば前腕も一緒に開く）。
+   *   局所 = 親の基準向き⁻¹ · 角度 · 自分の基準向き
+   */
   applyAll() {
     guard('ポーズ適用', () => {
-      this.container.updateWorldMatrix(true, true);
+      const delta = new THREE.Quaternion();
+      const qz = new THREE.Quaternion();
+      const qy = new THREE.Quaternion();
       for (const key of APPLY_ORDER) {
         const a = this.angles[key] || { x: 0, y: 0, z: 0 };
-        const delta = new THREE.Quaternion()
-          .setFromAxisAngle(AX, a.x * DEG)
-          .multiply(new THREE.Quaternion().setFromAxisAngle(AZ, a.z * DEG))
-          .multiply(new THREE.Quaternion().setFromAxisAngle(AY, a.y * DEG));
+        delta.setFromAxisAngle(AX, a.x * DEG);
+        qz.setFromAxisAngle(AZ, a.z * DEG);
+        qy.setFromAxisAngle(AY, a.y * DEG);
+        delta.multiply(qz).multiply(qy);
         for (const s of SLOTS) {
           const slot = this.slots[s.key];
           const bone = slot.boneMap[key];
           if (!bone) continue;
-          const neutral = slot.neutralWorld.get(bone);
-          if (!neutral) continue;
-          this._setBoneWorldQuat(bone, delta.clone().multiply(neutral));
+          const nb = slot.neutralWorld.get(bone);
+          const np = slot.neutralParent.get(bone);
+          if (!nb || !np) continue;
+          bone.quaternion.copy(np).invert().multiply(delta).multiply(nb);
         }
       }
+      this.container.updateWorldMatrix(true, true);
     });
     this._ground();
   }

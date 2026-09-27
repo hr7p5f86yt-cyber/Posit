@@ -5,7 +5,7 @@ import { POSE_CATEGORIES, POSE_PRESETS, POSES_BY_CATEGORY, toSpec } from './pose
 import { PoseHistory, relativeTime, HISTORY_LIMIT } from './history.js';
 import { CroquisSession, CROQUIS_SECONDS, CROQUIS_COUNTS } from './croquis.js';
 
-export const BUILD = '2026-09-27a';
+export const BUILD = '2026-09-27c';
 
 const SAMPLE_URL = 'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r169/examples/models/gltf/Xbot.glb';
 const SETTINGS_KEY = 'posit.settings.v1';
@@ -43,7 +43,24 @@ function saveSettings() {
 // ---- 状態表示 --------------------------------------------------------------
 
 viewer.onStatus = msg => { $('status').textContent = msg; };
-viewer.onNotice = msg => { if (msg) $('viewNote').textContent = msg; };
+let toastTimer = null;
+function showToast(msg) {
+  const el = $('toast');
+  el.textContent = msg;
+  el.hidden = false;
+  el.classList.add('show');
+  if (toastTimer) clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => {
+    el.classList.remove('show');
+    setTimeout(() => { el.hidden = true; }, 250);
+  }, 2800);
+}
+
+viewer.onNotice = msg => {
+  if (!msg) return;
+  $('viewNote').textContent = msg;
+  showToast(msg);
+};
 viewer.onSlotsChanged = () => { buildSlotRows(); buildViewChips(); markMissingJoints(); };
 
 viewer.onSelect = key => {

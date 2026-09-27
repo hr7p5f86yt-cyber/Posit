@@ -165,7 +165,7 @@
         <input type="checkbox" id="boneView"></label>
       <label class="row toggle"><span class="lbl">基準姿勢に合わせる</span>
         <input type="checkbox" id="canonRest" checked></label>
-      <p class="note" id="viewNote">骨格モデルを読み込んでいなくても、モデル自身のボーンから骨組みを描けます。「基準姿勢に合わせる」は、Tポーズなどの素の姿勢を腕を下ろした姿勢へ揃える設定で、プリセットはこれを前提にしています。</p>
+      <p class="note" id="viewNote">骨格モデルを読み込んでいなくても、モデル自身のボーンから骨格を組み立てて表示できます。「基準姿勢に合わせる」は、Tポーズなどの素の姿勢を腕を下ろした姿勢へ揃える設定で、プリセットはこれを前提にしています。</p>
     </details>
 
     <details>
@@ -221,6 +221,8 @@
   </div>
 </section>
 
+
+<div id="toast" hidden></div>
 
 <div id="croquis" hidden>
   <div id="cqBar"><i id="cqFill"></i></div>

@@ -31,6 +31,7 @@
 | `index.html` | 画面の骨組みと起動前の見張り |
 | `manifest.webmanifest` | ホーム画面に追加したときの設定 |
 | `poses.js` | 9 カテゴリ 76 ポーズ |
+| `skeletonView.js` | 頭蓋骨・胸郭・骨盤など、骨格表示の組み立て |
 | `style.css` | 見た目 |
 | `sw.js` | オフライン用のキャッシュ |
 | `viewer.js` | three.js の描画・モデル読み込み・関節操作 |
