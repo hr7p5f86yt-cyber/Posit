@@ -129,6 +129,31 @@
 
   <div id="scroll">
     <details open>
+      <summary>ポーズ</summary>
+      <div class="chips" id="poseCats"></div>
+      <div class="chips" id="poseList"></div>
+      <button id="btnRandomPose" class="wide ghost">ランダムに選ぶ</button>
+    </details>
+
+    <details>
+      <summary>クロッキー</summary>
+      <div class="sub">1ポーズの時間</div>
+      <div class="chips" id="cqSeconds"></div>
+      <div class="sub">枚数</div>
+      <div class="chips" id="cqCounts"></div>
+      <div class="sub">出題するカテゴリ（選ばなければ全部）</div>
+      <div class="chips" id="cqCats"></div>
+      <button id="btnCroquis" class="wide">はじめる</button>
+      <p class="note">直近の履歴30件と重ならないように出題します。</p>
+    </details>
+
+    <details>
+      <summary>履歴</summary>
+      <div id="historyList"></div>
+      <button id="btnClearHistory" class="wide ghost">履歴を消す</button>
+    </details>
+
+    <details>
       <summary>表示</summary>
       <div class="sub">表示するモデル</div>
       <div class="chips" id="viewChips"></div>
@@ -138,7 +163,9 @@
         <input type="range" id="skinOpacity" min="0.08" max="1" step="0.01" value="1"><output id="outOpacity">100%</output></label>
       <label class="row toggle"><span class="lbl">簡易骨格を重ねる</span>
         <input type="checkbox" id="boneView"></label>
-      <p class="note">骨格モデルを読み込んでいなくても、モデル自身のボーンから簡易的な骨組みを描けます。</p>
+      <label class="row toggle"><span class="lbl">基準姿勢に合わせる</span>
+        <input type="checkbox" id="canonRest" checked></label>
+      <p class="note" id="viewNote">骨格モデルを読み込んでいなくても、モデル自身のボーンから骨組みを描けます。「基準姿勢に合わせる」は、Tポーズなどの素の姿勢を腕を下ろした姿勢へ揃える設定で、プリセットはこれを前提にしています。</p>
     </details>
 
     <details>
@@ -187,11 +214,34 @@
     <details>
       <summary>困ったとき</summary>
       <p class="note">表示が更新されない・真っ暗なままのときは、保存された古いファイルを消してから読み直します。</p>
+      <p class="note" id="buildTag"></p>
       <button id="btnPurge" class="wide ghost">キャッシュを消して再読込</button>
       <p class="note" id="diag"></p>
     </details>
   </div>
 </section>
+
+
+<div id="croquis" hidden>
+  <div id="cqBar"><i id="cqFill"></i></div>
+  <div id="cqHead">
+    <span id="cqName"></span>
+    <span id="cqIndex"></span>
+  </div>
+  <div id="cqTime">30</div>
+  <div id="cqBtns">
+    <button id="cqPause" class="ghost">一時停止</button>
+    <button id="cqSkip">次へ</button>
+    <button id="cqStop" class="ghost">終了</button>
+  </div>
+</div>
+
+<div id="cqDone" hidden>
+  <div class="card">
+    <strong id="cqDoneText"></strong>
+    <button id="cqDoneClose" class="wide">閉じる</button>
+  </div>
+</div>
 
 <script type="module" src="./app.js"></script>
 </body>

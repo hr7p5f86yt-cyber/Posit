@@ -147,3 +147,72 @@ summary::-webkit-details-marker { color: var(--muted); }
   -webkit-user-select: text; user-select: text;
 }
 #errbox button { padding: 6px 12px; font-size: 13px; }
+
+/* ---- クロッキー ---- */
+body.croquis #panel,
+body.croquis #topbar { display: none; }
+
+#croquis {
+  position: fixed; inset: 0; z-index: 500;
+  pointer-events: none;
+  padding: calc(var(--safe-t) + 10px) 16px calc(var(--safe-b) + 16px);
+  display: flex; flex-direction: column;
+}
+#croquis[hidden] { display: none; }
+
+#cqBar {
+  position: absolute; top: 0; left: 0; right: 0; height: 3px;
+  background: rgba(255,255,255,0.12);
+}
+#cqFill {
+  display: block; height: 100%; width: 100%;
+  background: var(--accent); transform-origin: left center;
+}
+
+#cqHead {
+  display: flex; align-items: baseline; gap: 10px;
+  text-shadow: 0 1px 3px rgba(0,0,0,0.8);
+}
+#cqName { font-size: 17px; font-weight: 600; }
+#cqIndex { font-size: 13px; color: var(--muted); }
+
+#cqTime {
+  margin-top: 4px;
+  font: 700 46px/1 ui-rounded, -apple-system, sans-serif;
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 2px 8px rgba(0,0,0,0.85);
+}
+#cqTime.warn { color: #ffb4a2; }
+
+#cqBtns {
+  margin-top: auto; display: flex; gap: 10px; justify-content: center;
+  pointer-events: auto;
+}
+#cqBtns button { flex: 1; max-width: 160px; padding: 13px 10px; }
+
+#cqDone {
+  position: fixed; inset: 0; z-index: 600;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(10,12,16,0.72);
+  -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+}
+#cqDone[hidden] { display: none; }
+#cqDone .card {
+  background: var(--panel); border: 1px solid var(--line); border-radius: 16px;
+  padding: 22px; margin: 24px; text-align: center; min-width: 240px;
+}
+#cqDone .card strong { display: block; margin-bottom: 14px; font-size: 16px; }
+
+/* ---- ポーズ・履歴 ---- */
+#poseList { max-height: 190px; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+.chip.cat.on { background: #2e6f8e; color: #eaf6ff; border-color: #2e6f8e; }
+
+#historyList { display: flex; flex-direction: column; gap: 2px; margin-bottom: 8px; }
+.hist {
+  display: flex; align-items: baseline; gap: 10px; width: 100%;
+  padding: 9px 4px; border: 0; border-bottom: 1px solid var(--line);
+  background: none; text-align: left; border-radius: 0;
+}
+.hist:last-child { border-bottom: 0; }
+.hist .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
+.hist .tm { font-size: 11px; color: var(--muted); flex: none; }

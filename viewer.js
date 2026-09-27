@@ -5,6 +5,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { JOINTS, JOINT_BY_KEY, JOINT_GROUPS, mapBones, clampAngles } from './bones.js';
+import { parseSpec } from './poses.js';
 
 /** 例外を握りつぶさず、どの処理で落ちたかを画面に出す */
 function guard(label, fn) {
@@ -24,14 +25,42 @@ const AY = new THREE.Vector3(0, 1, 0);
 const AZ = new THREE.Vector3(0, 0, 1);
 const UP = new THREE.Vector3(0, 1, 0);
 
-/** モデルスロット: 素体 / 筋肉 / 骨格 */
+/** 親から子の順に並べた関節。ポーズはこの順で適用する */
+const APPLY_ORDER = [
+  'hips', 'spine', 'chest', 'neck', 'head',
+  'shoulderL', 'upperArmL', 'forearmL', 'handL',
+  'shoulderR', 'upperArmR', 'forearmR', 'handR',
+  'thighL', 'shinL', 'footL',
+  'thighR', 'shinR', 'footR',
+];
+
+/** 基準姿勢（A字）での各骨の向き。s はキャラクターの左が world +X なら +1 */
+function restTargets(s) {
+  const n = (x, y, z) => new THREE.Vector3(x, y, z).normalize();
+  return [
+    ['hips', 'spine', n(0, 1, 0)],
+    ['spine', 'chest', n(0, 1, 0)],
+    ['chest', 'neck', n(0, 1, 0)],
+    ['neck', 'head', n(0, 1, 0)],
+    ['shoulderL', 'upperArmL', n(s * 0.94, 0.34, 0)],
+    ['shoulderR', 'upperArmR', n(-s * 0.94, 0.34, 0)],
+    ['upperArmL', 'forearmL', n(s * 0.20, -0.98, 0)],
+    ['upperArmR', 'forearmR', n(-s * 0.20, -0.98, 0)],
+    ['forearmL', 'handL', n(s * 0.20, -0.98, 0)],
+    ['forearmR', 'handR', n(-s * 0.20, -0.98, 0)],
+    ['thighL', 'shinL', n(s * 0.04, -1, 0)],
+    ['thighR', 'shinR', n(-s * 0.04, -1, 0)],
+    ['shinL', 'footL', n(0, -1, 0)],
+    ['shinR', 'footR', n(0, -1, 0)],
+  ];
+}
+
 export const SLOTS = [
   { key: 'skin',   name: '素体' },
   { key: 'muscle', name: '筋肉' },
   { key: 'bone',   name: '骨格' },
 ];
 
-/** 表示モード */
 export const VIEW_MODES = [
   { key: 'skin',    name: '素体',   show: ['skin'] },
   { key: 'muscle',  name: '筋肉',   show: ['muscle'] },
@@ -48,13 +77,15 @@ export const MATERIAL_MODES = [
 class Slot {
   constructor(key) {
     this.key = key;
+    this.pivot = null;
     this.root = null;
     this.fileName = '';
     this.meshes = [];
     this.skeleton = null;
     this.boneMap = {};
     this.boneToJoint = new Map();
-    this.restQuats = new Map();
+    this.restLocal = new Map();     // 読み込み直後の姿勢
+    this.neutralWorld = new Map();  // 基準姿勢に補正したあとの世界向き
     this.originalMaterials = new Map();
     this.restLowestY = 0;
     this.boneParts = [];
@@ -73,7 +104,9 @@ export class Viewer {
     this.materialMode = 'clay';
     this.skinOpacity = 1.0;
     this.boneViewOn = false;
+    this.showBuiltinSkeleton = false;
     this.limitsEnabled = true;
+    this.canonicalRest = true;
 
     this.angles = {};
     for (const j of JOINTS) this.angles[j.key] = { x: 0, y: 0, z: 0 };
@@ -82,6 +115,7 @@ export class Viewer {
     this.onSelect = () => {};
     this.onStatus = () => {};
     this.onSlotsChanged = () => {};
+    this.onNotice = () => {};
 
     this._initScene();
     this._initLights();
@@ -109,7 +143,6 @@ export class Viewer {
     this.scene = scene;
 
     const pmrem = new THREE.PMREMGenerator(renderer);
-    pmrem.compileEquirectangularShader();
     scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
     if ('environmentIntensity' in scene) scene.environmentIntensity = 0.55;
     pmrem.dispose();
@@ -223,15 +256,10 @@ export class Viewer {
 
   // ---- スロット -----------------------------------------------------------
 
-  /** 基準になるスロット（接地・関節対応の判定に使う） */
   get primarySlot() {
     if (this.slots.skin.posable) return this.slots.skin;
-    for (const s of SLOTS) {
-      if (this.slots[s.key].posable) return this.slots[s.key];
-    }
-    for (const s of SLOTS) {
-      if (this.slots[s.key].loaded) return this.slots[s.key];
-    }
+    for (const s of SLOTS) if (this.slots[s.key].posable) return this.slots[s.key];
+    for (const s of SLOTS) if (this.slots[s.key].loaded) return this.slots[s.key];
     return null;
   }
 
@@ -245,7 +273,6 @@ export class Viewer {
     return null;
   }
 
-  /** 関節キー -> その関節を持つスロットが1つでもあるか */
   hasJoint(jointKey) { return !!this._boneForJoint(jointKey); }
 
   slotInfo() {
@@ -253,8 +280,7 @@ export class Viewer {
       const slot = this.slots[s.key];
       return {
         key: s.key, name: s.name,
-        loaded: slot.loaded, posable: slot.posable,
-        fileName: slot.fileName,
+        loaded: slot.loaded, posable: slot.posable, fileName: slot.fileName,
         boneCount: slot.skeleton ? slot.skeleton.bones.length : 0,
         jointCount: Object.keys(slot.boneMap).length,
       };
@@ -269,8 +295,7 @@ export class Viewer {
     const name = clean.split('/').pop() || url;
     this.onStatus('読み込み中…');
     if (ext === 'fbx') {
-      const obj = await new FBXLoader().loadAsync(url);
-      this._setupModel(obj, slotKey, name);
+      this._setupModel(await new FBXLoader().loadAsync(url), slotKey, name);
     } else {
       const gltf = await new GLTFLoader().loadAsync(url);
       this._setupModel(gltf.scene, slotKey, name);
@@ -290,8 +315,11 @@ export class Viewer {
   }
 
   clearSlot(slotKey) {
-    const slot = this.slots[slotKey];
-    this._disposeSlot(slot);
+    this._disposeSlot(this.slots[slotKey]);
+    if (!this.slots[this.viewMode] || !this.slots[this.viewMode].loaded) {
+      const first = SLOTS.find(s => this.slots[s.key].loaded);
+      this.viewMode = first ? first.key : 'skin';
+    }
     this.applyViewMode(this.viewMode);
     this._ground();
     this.onSlotsChanged();
@@ -301,17 +329,19 @@ export class Viewer {
   _disposeSlot(slot) {
     for (const p of slot.boneParts) if (p.parent) p.parent.remove(p);
     slot.boneParts = [];
-    if (slot.root) {
-      this.container.remove(slot.root);
-      slot.root.traverse(o => { if (o.geometry) o.geometry.dispose(); });
+    if (slot.pivot) {
+      this.container.remove(slot.pivot);
+      slot.pivot.traverse(o => { if (o.geometry) o.geometry.dispose(); });
     }
+    slot.pivot = null;
     slot.root = null;
     slot.fileName = '';
     slot.meshes = [];
     slot.skeleton = null;
     slot.boneMap = {};
     slot.boneToJoint = new Map();
-    slot.restQuats = new Map();
+    slot.restLocal = new Map();
+    slot.neutralWorld = new Map();
     slot.originalMaterials = new Map();
   }
 
@@ -334,7 +364,11 @@ export class Viewer {
       if (o.isSkinnedMesh && !slot.skeleton) slot.skeleton = o.skeleton;
     });
 
-    this.container.add(root);
+    const pivot = new THREE.Group();
+    pivot.add(root);
+    slot.pivot = pivot;
+    this.container.add(pivot);
+
     guard('大きさの正規化', () => this._normalizeScale(root));
 
     if (slot.skeleton) {
@@ -342,13 +376,16 @@ export class Viewer {
       slot.boneMap = map;
       slot.boneToJoint = new Map();
       for (const [k, b] of Object.entries(map)) slot.boneToJoint.set(b, k);
-      for (const b of slot.skeleton.bones) slot.restQuats.set(b, b.quaternion.clone());
+      for (const b of slot.skeleton.bones) slot.restLocal.set(b, b.quaternion.clone());
+      guard('向きの正規化', () => this._orientToCanonical(slot));
+      guard('基準姿勢への補正', () => this._buildNeutral(slot));
       slot.restLowestY = this._lowestBoneY(slot);
       guard('簡易骨格の生成', () => this._buildBoneView(slot));
     }
 
     this.applyAll();
     this.applyMaterialMode(this.materialMode);
+    if (!this.slots[this.viewMode] || !this.slots[this.viewMode].loaded) this.viewMode = slotKey;
     this.applyViewMode(this.viewMode);
     this.setSkinOpacity(this.skinOpacity);
     this._reportStatus();
@@ -368,9 +405,8 @@ export class Viewer {
     const box = new THREE.Box3().setFromObject(root);
     const size = new THREE.Vector3();
     box.getSize(size);
-    const h = size.y;
-    if (!isFinite(h) || h <= 1e-6) return;
-    root.scale.multiplyScalar(1.7 / h);
+    if (!isFinite(size.y) || size.y <= 1e-6) return;
+    root.scale.multiplyScalar(1.7 / size.y);
     root.updateWorldMatrix(true, true);
 
     const box2 = new THREE.Box3().setFromObject(root);
@@ -380,6 +416,78 @@ export class Viewer {
     root.position.z -= center.z;
     root.position.y -= box2.min.y;
     root.updateWorldMatrix(true, true);
+  }
+
+  /** キャラクターの左が world +X を向くように、ピボットを Y 軸まわりに回す */
+  _orientToCanonical(slot) {
+    const L = slot.boneMap.shoulderL || slot.boneMap.upperArmL || slot.boneMap.thighL;
+    const R = slot.boneMap.shoulderR || slot.boneMap.upperArmR || slot.boneMap.thighR;
+    if (!L || !R) return;
+    const a = L.getWorldPosition(new THREE.Vector3());
+    const b = R.getWorldPosition(new THREE.Vector3());
+    const dx = a.x - b.x, dz = a.z - b.z;
+    if (dx * dx + dz * dz < 1e-8) return;
+    slot.pivot.rotation.y = -Math.atan2(dz, dx);
+    slot.pivot.updateWorldMatrix(true, true);
+  }
+
+  _boneDirection(slot, fromKey, toKey) {
+    const a = slot.boneMap[fromKey], b = slot.boneMap[toKey];
+    if (!a || !b) return null;
+    const pa = a.getWorldPosition(new THREE.Vector3());
+    const pb = b.getWorldPosition(new THREE.Vector3());
+    const d = pb.sub(pa);
+    if (d.lengthSq() < 1e-10) return null;
+    return d.normalize();
+  }
+
+  /** 読み込んだ姿勢を A 字の基準姿勢へ寄せ、その世界向きを neutral として記録する */
+  _buildNeutral(slot) {
+    slot.neutralWorld = new Map();
+    if (this.canonicalRest) {
+      const L = slot.boneMap.shoulderL || slot.boneMap.upperArmL || slot.boneMap.thighL;
+      const R = slot.boneMap.shoulderR || slot.boneMap.upperArmR || slot.boneMap.thighR;
+      let s = 1;
+      if (L && R) {
+        const ax = L.getWorldPosition(new THREE.Vector3()).x;
+        const bx = R.getWorldPosition(new THREE.Vector3()).x;
+        s = ax >= bx ? 1 : -1;
+      }
+      for (const [fromKey, toKey, target] of restTargets(s)) {
+        const bone = slot.boneMap[fromKey];
+        const from = this._boneDirection(slot, fromKey, toKey);
+        if (!bone || !from) continue;
+        const swing = new THREE.Quaternion().setFromUnitVectors(from, target);
+        const current = bone.getWorldQuaternion(new THREE.Quaternion());
+        this._setBoneWorldQuat(bone, swing.multiply(current));
+      }
+    }
+    for (const b of slot.skeleton.bones) {
+      slot.neutralWorld.set(b, b.getWorldQuaternion(new THREE.Quaternion()));
+    }
+  }
+
+  _setBoneWorldQuat(bone, desiredWorld) {
+    const pq = new THREE.Quaternion();
+    if (bone.parent) bone.parent.getWorldQuaternion(pq);
+    bone.quaternion.copy(pq.invert().multiply(desiredWorld));
+    bone.updateWorldMatrix(false, true);
+  }
+
+  setCanonicalRest(on) {
+    this.canonicalRest = on;
+    for (const s of SLOTS) {
+      const slot = this.slots[s.key];
+      if (!slot.skeleton) continue;
+      for (const b of slot.skeleton.bones) {
+        const r = slot.restLocal.get(b);
+        if (r) b.quaternion.copy(r);
+      }
+      slot.pivot.updateWorldMatrix(true, true);
+      guard('基準姿勢への補正', () => this._buildNeutral(slot));
+      slot.restLowestY = this._lowestBoneY(slot);
+    }
+    this.applyAll();
   }
 
   _lowestBoneY(slot) {
@@ -399,19 +507,15 @@ export class Viewer {
     this.controls.update();
   }
 
-  // ---- 簡易骨格（モデル内蔵のボーンから作る） -------------------------------
+  // ---- 簡易骨格 -----------------------------------------------------------
 
   _buildBoneView(slot) {
     for (const p of slot.boneParts) if (p.parent) p.parent.remove(p);
     slot.boneParts = [];
     if (!slot.skeleton) return;
 
-    const boneMat = new THREE.MeshStandardMaterial({
-      color: 0xeae3d2, roughness: 0.5, metalness: 0.0,
-    });
-    const jointMat = new THREE.MeshStandardMaterial({
-      color: 0xb8c4d0, roughness: 0.35, metalness: 0.05,
-    });
+    const boneMat = new THREE.MeshStandardMaterial({ color: 0xeae3d2, roughness: 0.5, metalness: 0.0 });
+    const jointMat = new THREE.MeshStandardMaterial({ color: 0xb8c4d0, roughness: 0.35, metalness: 0.05 });
 
     for (const b of slot.skeleton.bones) {
       const kids = b.children.filter(c => c.isBone);
@@ -448,10 +552,11 @@ export class Viewer {
 
   _refreshBoneView() {
     const p = this.primarySlot;
+    const on = this.boneViewOn || this.showBuiltinSkeleton;
     for (const s of SLOTS) {
       const slot = this.slots[s.key];
-      const on = this.boneViewOn && slot === p;
-      for (const part of slot.boneParts) part.visible = on;
+      const show = on && slot === p;
+      for (const part of slot.boneParts) part.visible = show;
     }
   }
 
@@ -462,21 +567,41 @@ export class Viewer {
 
   // ---- 表示モード ---------------------------------------------------------
 
+  /** @returns {boolean} 切り替えられたら true、出せるものが無ければ false */
   applyViewMode(modeKey) {
-    this.viewMode = modeKey;
     const mode = VIEW_MODES.find(m => m.key === modeKey) || VIEW_MODES[0];
-    // 指定のスロットが空なら、読み込まれているものへ自動で落とす
-    let show = mode.show.filter(k => this.slots[k].loaded);
-    if (!show.length) {
-      const first = SLOTS.find(s => this.slots[s.key].loaded);
-      show = first ? [first.key] : [];
+    const p = this.primarySlot;
+    const hasSkeleton = !!(p && p.skeleton);
+
+    if (modeKey === 'muscle' && !this.slots.muscle.loaded) {
+      this.onNotice('筋肉モデルが読み込まれていません。「モデル」から読み込んでください。');
+      return false;
     }
+    if (modeKey === 'bone' && !this.slots.bone.loaded && !hasSkeleton) {
+      this.onNotice('骨格モデルが読み込まれていません。「モデル」から読み込んでください。');
+      return false;
+    }
+
+    this.viewMode = modeKey;
+    // 骨格モデルが無いときは、モデル内蔵のボーンから作る簡易骨格で代替する
+    this.showBuiltinSkeleton =
+      (modeKey === 'bone' && !this.slots.bone.loaded && hasSkeleton) ||
+      (modeKey === 'overlay' && !this.slots.bone.loaded && !this.slots.muscle.loaded && hasSkeleton);
+
+    const show = mode.show.filter(k => this.slots[k].loaded);
+    if (modeKey === 'bone' && this.showBuiltinSkeleton) show.length = 0;   // 肌を消して骨組みだけ出す
+
     for (const s of SLOTS) {
       const slot = this.slots[s.key];
-      const on = show.includes(s.key);
-      if (slot.root) slot.root.visible = on;
+      for (const m of slot.meshes) m.visible = show.includes(s.key);
     }
     this._refreshBoneView();
+    if (this.showBuiltinSkeleton && modeKey === 'bone') {
+      this.onNotice('骨格モデルが無いので、モデル内蔵のボーンから作った簡易骨格を表示しています。');
+    } else {
+      this.onNotice('');
+    }
+    return true;
   }
 
   setSkinOpacity(v) {
@@ -526,11 +651,30 @@ export class Viewer {
     if (!a) return;
     a[axis] = deg;
     if (this.limitsEnabled) Object.assign(a, clampAngles(jointKey, a));
-    this._applyJoint(jointKey);
-    this._ground();
+    this.applyAll();
   }
 
   getAngles(jointKey) { return this.angles[jointKey] || { x: 0, y: 0, z: 0 }; }
+
+  /** 角度一式をまとめて差し替える（省略した関節は 0 に戻る） */
+  setAngles(map) {
+    for (const j of JOINTS) {
+      const src = map[j.key];
+      this.angles[j.key] = src
+        ? { x: src.x || 0, y: src.y || 0, z: src.z || 0 }
+        : { x: 0, y: 0, z: 0 };
+      if (this.limitsEnabled) Object.assign(this.angles[j.key], clampAngles(j.key, this.angles[j.key]));
+    }
+    this.applyAll();
+  }
+
+  applyPose(spec) { this.setAngles(parseSpec(spec)); }
+
+  allAngles() {
+    const out = {};
+    for (const j of JOINTS) out[j.key] = { ...this.angles[j.key] };
+    return out;
+  }
 
   setLimitsEnabled(on) {
     this.limitsEnabled = on;
@@ -539,25 +683,26 @@ export class Viewer {
     this.applyAll();
   }
 
-  /** 1つの関節角度を、読み込まれている全スロットへ同時に適用する */
-  _applyJoint(jointKey) {
-    const a = this.angles[jointKey];
-    const qx = new THREE.Quaternion().setFromAxisAngle(AX, a.x * DEG);
-    const qy = new THREE.Quaternion().setFromAxisAngle(AY, a.y * DEG);
-    const qz = new THREE.Quaternion().setFromAxisAngle(AZ, a.z * DEG);
-    const delta = qx.multiply(qz).multiply(qy);   // Posit と同じ合成順 qx·qz·qy
-    for (const s of SLOTS) {
-      const slot = this.slots[s.key];
-      const bone = slot.boneMap[jointKey];
-      if (!bone) continue;
-      const rest = slot.restQuats.get(bone);
-      if (!rest) continue;
-      bone.quaternion.copy(rest).multiply(delta);
-    }
-  }
-
+  /** 全関節を親から子の順に適用する。角度はワールド軸基準 */
   applyAll() {
-    for (const j of JOINTS) this._applyJoint(j.key);
+    guard('ポーズ適用', () => {
+      this.container.updateWorldMatrix(true, true);
+      for (const key of APPLY_ORDER) {
+        const a = this.angles[key] || { x: 0, y: 0, z: 0 };
+        const delta = new THREE.Quaternion()
+          .setFromAxisAngle(AX, a.x * DEG)
+          .multiply(new THREE.Quaternion().setFromAxisAngle(AZ, a.z * DEG))
+          .multiply(new THREE.Quaternion().setFromAxisAngle(AY, a.y * DEG));
+        for (const s of SLOTS) {
+          const slot = this.slots[s.key];
+          const bone = slot.boneMap[key];
+          if (!bone) continue;
+          const neutral = slot.neutralWorld.get(bone);
+          if (!neutral) continue;
+          this._setBoneWorldQuat(bone, delta.clone().multiply(neutral));
+        }
+      }
+    });
     this._ground();
   }
 
@@ -569,8 +714,7 @@ export class Viewer {
   resetSelected() {
     if (!this.selected) return;
     this.angles[this.selected] = { x: 0, y: 0, z: 0 };
-    this._applyJoint(this.selected);
-    this._ground();
+    this.applyAll();
   }
 
   mirrorPose() {
@@ -621,7 +765,6 @@ export class Viewer {
     const out = [];
     for (const s of SLOTS) {
       const slot = this.slots[s.key];
-      if (!slot.root || !slot.root.visible) continue;
       for (const m of slot.meshes) if (m.visible) out.push(m);
       for (const p of slot.boneParts) if (p.visible) out.push(p);
     }
@@ -640,25 +783,15 @@ export class Viewer {
     ray.setFromCamera(ndc, this.camera);
     for (const m of targets) {
       if (!m.isSkinnedMesh) continue;
-      try {
-        m.computeBoundingBox?.();
-        m.computeBoundingSphere?.();
-      } catch (err) {
-        if (window.__positShowError) {
-          window.__positShowError('[境界の計算] ' + (m.name || '(名前なし)') + ': '
-            + (err && err.message ? err.message : err));
-        }
-      }
+      try { m.computeBoundingBox?.(); m.computeBoundingSphere?.(); } catch (err) { /* 続行 */ }
     }
     let hits = [];
     try {
       hits = ray.intersectObjects(targets, false);
     } catch (err) {
-      // スキン付きメッシュのレイキャストが落ちる場合は、簡易骨格のパーツだけで拾い直す
       const parts = targets.filter(t => t.userData && t.userData.jointBone);
       if (window.__positShowError) {
-        window.__positShowError('[レイキャスト] ' + (err && err.message ? err.message : err)
-          + (parts.length ? '\n簡易骨格のパーツで代替します。' : '\n「簡易骨格を重ねる」を ON にすると選択できます。'));
+        window.__positShowError('[レイキャスト] ' + (err && err.message ? err.message : err));
       }
       try { hits = ray.intersectObjects(parts, false); } catch (e2) { hits = []; }
     }
@@ -668,7 +801,6 @@ export class Viewer {
 
   _jointFromHit(hit) {
     const obj = hit.object;
-    // 簡易骨格のパーツを叩いた場合
     if (obj.userData && obj.userData.jointBone) {
       return this._walkToJoint(obj.userData.jointBone, obj.userData.slot);
     }
@@ -690,12 +822,11 @@ export class Viewer {
     return this._walkToJoint(obj.skeleton.bones[best], obj.userData.slot);
   }
 
-  /** 指など未対応のボーンは、親をたどって対応済みの関節に寄せる */
   _walkToJoint(bone, slotKey) {
     const slot = this.slots[slotKey] || this.primarySlot;
     if (!slot) return null;
-    let b = bone, guard = 0;
-    while (b && guard++ < 24) {
+    let b = bone, guardCount = 0;
+    while (b && guardCount++ < 24) {
       const key = slot.boneToJoint.get(b);
       if (key) return key;
       b = b.parent;
@@ -716,9 +847,7 @@ export class Viewer {
     this.lightElevation = elevationDeg;
     const a = azimuthDeg * DEG, e = elevationDeg * DEG, r = 5;
     this.keyLight.position.set(
-      r * Math.cos(e) * Math.sin(a),
-      r * Math.sin(e),
-      r * Math.cos(e) * Math.cos(a)
+      r * Math.cos(e) * Math.sin(a), r * Math.sin(e), r * Math.cos(e) * Math.cos(a)
     );
     this.keyLight.target.position.set(0, 0.9, 0);
     this.keyLight.target.updateMatrixWorld();
@@ -730,6 +859,7 @@ export class Viewer {
   setExposure(v) { this.renderer.toneMappingExposure = v; }
   setEnvIntensity(v) { if ('environmentIntensity' in this.scene) this.scene.environmentIntensity = v; }
   setGridVisible(on) { this.grid.visible = on; }
+  setUIHidden(on) { this.marker.visible = on ? false : !!(this.selected && this._boneForJoint(this.selected)); }
   setLens(mm) {
     this.camera.fov = 2 * Math.atan(12 / mm) * (180 / Math.PI);
     this.camera.updateProjectionMatrix();
