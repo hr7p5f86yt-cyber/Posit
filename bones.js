@@ -18,6 +18,7 @@ const BASE = {
   chest:    { name: '胸',   limits: [-40, 55, -50, 50, -40, 40],           axes: ['前後', 'ひねり', '左右'] },
   neck:     { name: '首',   limits: [-55, 65, -75, 75, -45, 45],           axes: ['うなずく', '振り向く', 'かしげる'] },
   head:     { name: '頭',   limits: [-45, 45, -50, 50, -35, 35],           axes: ['うなずく', '振り向く', 'かしげる'] },
+  jaw:      { name: 'あご', limits: [0, 35, -10, 10, -10, 10],             axes: ['口を開く', '左右にずらす', '傾き'] },
   shoulder: { name: '肩',   limits: [-25, 25, -40, 25, -20, 40],  sided: true, axes: ['前後', '前に出す', 'すくめる'] },
   upperArm: { name: '上腕', limits: [-185, 80, -110, 100, -50, 185], sided: true, axes: ['前後', 'ひねり', '左右'] },
   forearm:  { name: '前腕', limits: [-160, 10, -100, 100, -15, 15], sided: true, axes: ['曲げる', 'ひねり', '左右'] },
@@ -27,7 +28,7 @@ const BASE = {
   foot:     { name: '足',   limits: [-40, 70, -40, 40, -40, 40],   sided: true, axes: ['つま先の上下', '内外に向ける', '内外に傾ける'] },
 };
 
-const ORDER = ['hips', 'spine', 'chest', 'neck', 'head',
+const ORDER = ['hips', 'spine', 'chest', 'neck', 'head', 'jaw',
   'shoulder', 'upperArm', 'forearm', 'hand', 'thigh', 'shin', 'foot'];
 
 export const JOINTS = (() => {
@@ -54,7 +55,7 @@ export function jointLabel(key) {
 }
 
 export const JOINT_GROUPS = [
-  { title: '体幹', keys: ['hips', 'spine', 'chest', 'neck', 'head'] },
+  { title: '体幹', keys: ['hips', 'spine', 'chest', 'neck', 'head', 'jaw'] },
   { title: '左腕', keys: ['shoulderL', 'upperArmL', 'forearmL', 'handL'] },
   { title: '右腕', keys: ['shoulderR', 'upperArmR', 'forearmR', 'handR'] },
   { title: '左脚', keys: ['thighL', 'shinL', 'footL'] },
@@ -123,6 +124,7 @@ export function splitSide(normalized) {
 // 具体的なものから順に解決し、一度使ったボーンは他の関節に渡さない。
 const PATTERNS = [
   ['head',     ['head']],
+  ['jaw',      ['jaw', 'chin', 'lowerjaw', 'jawroot']],
   ['neck',     ['neck', 'neck1', 'neck01']],
   ['chest',    ['spine2', 'spine02', 'spine3', 'spine03', 'upperchest', 'chest', 'ribcage']],
   ['spine',    ['spine1', 'spine01', 'spine', 'abdomen', 'waist', 'torso']],
@@ -190,6 +192,20 @@ export function mapBones(bones) {
   return { map, unmatched };
 }
 
+/** 角度を -180〜180 に畳む */
+export function wrapDeg(d) {
+  return ((d + 180) % 360 + 360) % 360 - 180;
+}
+
+/** 可動域からどれだけはみ出しているか（度の合計） */
+export function limitExcess(jointKey, a) {
+  const j = JOINT_BY_KEY[jointKey];
+  if (!j) return 0;
+  const [xa, xb, ya, yb, za, zb] = j.limits;
+  const over = (v, lo, hi) => (v < lo ? lo - v : (v > hi ? v - hi : 0));
+  return over(a.x, xa, xb) + over(a.y, ya, yb) + over(a.z, za, zb);
+}
+
 /** 角度を可動域に収める */
 export function clampAngles(jointKey, a) {
   const j = JOINT_BY_KEY[jointKey];
@@ -200,4 +216,59 @@ export function clampAngles(jointKey, a) {
     y: Math.min(yb, Math.max(ya, a.y)),
     z: Math.min(zb, Math.max(za, a.z)),
   };
+}
+
+
+// ---- 指の骨 ---------------------------------------------------------------
+
+const FINGER_ALIASES = {
+  thumb: 'thumb', index: 'index', middle: 'middle', mid: 'middle',
+  ring: 'ring', pinky: 'pinky', little: 'pinky', pinkie: 'pinky',
+};
+const SEGMENT_WORDS = { proximal: 1, intermediate: 2, middle: 2, distal: 3 };
+
+/**
+ * 指の骨を {L:{index:{1:骨,2:骨,3:骨}, ...}, R:{...}} の形に対応づける。
+ * Mixamo の "LeftHandIndex1"、VRM の "J_Bip_L_Index1" / "LeftIndexProximal"、
+ * UE の "index_01_l"、Blender の "f_index.01.L" などを吸収する。
+ */
+export function mapFingers(bones) {
+  const out = { L: {}, R: {} };
+  for (const b of bones) {
+    const { side, core } = splitSide(normalizeName(b.name));
+    if (!side) continue;
+    let c = core;
+    if (c.startsWith('hand')) c = c.slice(4);
+    else if (c.startsWith('f') && !c.startsWith('foot')) c = c.slice(1);
+
+    let finger = null;
+    for (const key of Object.keys(FINGER_ALIASES)) {
+      if (c.startsWith(key)) { finger = FINGER_ALIASES[key]; c = c.slice(key.length); break; }
+    }
+    if (!finger) continue;
+
+    let seg = null;
+    const digits = c.match(/^0*([1-4])/);
+    if (digits) {
+      seg = parseInt(digits[1], 10);
+    } else {
+      for (const w of Object.keys(SEGMENT_WORDS)) {
+        if (c.startsWith(w)) { seg = SEGMENT_WORDS[w]; break; }
+      }
+    }
+    if (!seg || seg > 3) continue;
+
+    if (!out[side][finger]) out[side][finger] = {};
+    if (!out[side][finger][seg]) out[side][finger][seg] = b;
+  }
+  return out;
+}
+
+/** 指の骨がいくつ見つかったか */
+export function fingerCount(fingers) {
+  let n = 0;
+  for (const side of ['L', 'R']) {
+    for (const f of Object.keys(fingers[side] || {})) n += Object.keys(fingers[side][f]).length;
+  }
+  return n;
 }

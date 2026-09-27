@@ -285,3 +285,21 @@ ul.links li:last-child { border-bottom: 0; }
 ul.links b { display: inline-block; min-width: 92px; color: var(--muted); font-weight: 500; font-size: 12px; }
 ul.links a { color: var(--accent); text-decoration: none; }
 ul.links span { display: block; margin-left: 92px; font-size: 11px; color: var(--muted); }
+
+#photoBox {
+  position: fixed; inset: 0; z-index: 650;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(10,12,16,0.78);
+  -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+}
+#photoBox[hidden] { display: none; }
+#photoBox .card {
+  background: var(--sheet-solid); border: 1px solid var(--line); border-radius: 18px;
+  padding: 18px; margin: 18px; max-width: 92vw; max-height: 86vh; overflow-y: auto;
+}
+#photoBox .card strong { display: block; margin-bottom: 12px; font-size: 16px; }
+#photoCanvas {
+  display: block; width: 100%; max-width: 320px; margin: 0 auto;
+  border-radius: 12px; background: #11141a;
+}
+#photoBox .bar { position: static; background: none; border-top: 0; padding-top: 12px; }

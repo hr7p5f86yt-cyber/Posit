@@ -4,8 +4,8 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { JOINTS, JOINT_BY_KEY, JOINT_GROUPS, mapBones, clampAngles, normalizeName } from './bones.js';
-import { parseSpec } from './poses.js';
+import { JOINTS, JOINT_BY_KEY, JOINT_GROUPS, mapBones, mapFingers, fingerCount, clampAngles, limitExcess, wrapDeg, normalizeName } from './bones.js';
+import { parseSpec, parseFingerSpec } from './poses.js';
 import { buildSkeletonView } from './skeletonView.js';
 
 /** 例外を握りつぶさず、どの処理で落ちたかを画面に出す */
@@ -28,7 +28,7 @@ const UP = new THREE.Vector3(0, 1, 0);
 
 /** 親から子の順に並べた関節。ポーズはこの順で適用する */
 const APPLY_ORDER = [
-  'hips', 'spine', 'chest', 'neck', 'head',
+  'hips', 'spine', 'chest', 'neck', 'head', 'jaw',
   'shoulderL', 'upperArmL', 'forearmL', 'handL',
   'shoulderR', 'upperArmR', 'forearmR', 'handR',
   'thighL', 'shinL', 'footL',
@@ -93,6 +93,7 @@ class Slot {
     this.originalMaterials = new Map();
     this.restLowestY = 0;
     this.boneParts = [];
+    this.fingers = { L: {}, R: {} };
     this.headRatio0 = 7.5;   // 読み込んだモデル本来の頭身
     this.headScale = 1;
   }
@@ -117,6 +118,7 @@ export class Viewer {
     this.angles = {};
     for (const j of JOINTS) this.angles[j.key] = { x: 0, y: 0, z: 0 };
     this.selected = null;
+    this.handShape = { L: '', R: '' };
 
     this.onSelect = () => {};
     this.onStatus = () => {};
@@ -346,6 +348,7 @@ export class Viewer {
     slot.skeleton = null;
     slot.boneMap = {};
     slot.boneToJoint = new Map();
+    slot.fingers = { L: {}, R: {} };
     slot.restLocal = new Map();
     slot.neutralWorld = new Map();
     slot.neutralParent = new Map();
@@ -381,6 +384,7 @@ export class Viewer {
     if (slot.skeleton) {
       const { map } = mapBones(slot.skeleton.bones);
       slot.boneMap = map;
+      slot.fingers = mapFingers(slot.skeleton.bones);
       slot.boneToJoint = new Map();
       for (const [k, b] of Object.entries(map)) slot.boneToJoint.set(b, k);
       for (const b of slot.skeleton.bones) slot.restLocal.set(b, b.quaternion.clone());
@@ -392,6 +396,7 @@ export class Viewer {
     }
 
     this.applyAll();
+    this._reapplyHandShapes();
     this.applyMaterialMode(this.materialMode);
     if (!this.slots[this.viewMode] || !this.slots[this.viewMode].loaded) this.viewMode = slotKey;
     this.applyViewMode(this.viewMode);
@@ -555,6 +560,7 @@ export class Viewer {
       guard('骨格の生成', () => this._buildBoneView(slot));
     }
     this.applyAll();
+    this._reapplyHandShapes();
   }
 
   _lowestBoneY(slot) {
@@ -811,6 +817,264 @@ export class Viewer {
       this.container.updateWorldMatrix(true, true);
     });
     this._ground();
+  }
+
+  /** 手の形を当てる軸（基準姿勢での手の向きに合わせたワールド軸） */
+  _fingerAxes(side) {
+    // 左: 曲げ=+Z / ひねり=+Y / 開き=-X   右はその鏡
+    return side === 'L'
+      ? { x: new THREE.Vector3(0, 0, 1), y: new THREE.Vector3(0, 1, 0), z: new THREE.Vector3(-1, 0, 0) }
+      : { x: new THREE.Vector3(0, 0, -1), y: new THREE.Vector3(0, 1, 0), z: new THREE.Vector3(1, 0, 0) };
+  }
+
+  /** 指の骨がいくつ使えるか */
+  fingerBoneCount() {
+    const p = this.primarySlot;
+    return p ? fingerCount(p.fingers) : 0;
+  }
+
+  /**
+   * 手の形を当てる。spec は左手基準（"index1:-88,0,-3 ..."）。
+   * @param {'L'|'R'|'both'} side
+   */
+  applyHandShape(side, spec) {
+    const sides = side === 'both' ? ['L', 'R'] : [side];
+    for (const sd of sides) this.handShape[sd] = spec;
+    guard('手の形', () => {
+      const angles = parseFingerSpec(spec);
+      for (const sd of sides) {
+        const axes = this._fingerAxes(sd);
+        for (const s of SLOTS) {
+          const slot = this.slots[s.key];
+          const set = slot.fingers[sd];
+          if (!set) continue;
+          for (const finger of Object.keys(set)) {
+            for (const segStr of Object.keys(set[finger])) {
+              const bone = set[finger][segStr];
+              const nb = slot.neutralWorld.get(bone);
+              const np = slot.neutralParent.get(bone);
+              if (!nb || !np) continue;
+              const a = angles[finger + segStr] || { x: 0, y: 0, z: 0 };
+              const delta = new THREE.Quaternion().setFromAxisAngle(axes.x, a.x * DEG)
+                .multiply(new THREE.Quaternion().setFromAxisAngle(axes.z, a.z * DEG))
+                .multiply(new THREE.Quaternion().setFromAxisAngle(axes.y, a.y * DEG));
+              bone.quaternion.copy(np).invert().multiply(delta).multiply(nb);
+            }
+          }
+        }
+      }
+      this.container.updateWorldMatrix(true, true);
+    });
+  }
+
+  /** 読み込み直後や基準姿勢の作り直しのあとに、今の手の形をかけ直す */
+  _reapplyHandShapes() {
+    for (const sd of ['L', 'R']) {
+      if (this.handShape[sd]) this.applyHandShape(sd, this.handShape[sd]);
+    }
+  }
+
+  /** 顔の向き・表情。指定された関節だけを書き換える */
+  applyFacePreset(spec) {
+    const map = parseSpec(spec);
+    for (const k of ['head', 'neck', 'jaw']) {
+      this.angles[k] = map[k] ? { x: map[k].x || 0, y: map[k].y || 0, z: map[k].z || 0 } : { x: 0, y: 0, z: 0 };
+      if (this.limitsEnabled) Object.assign(this.angles[k], clampAngles(k, this.angles[k]));
+    }
+    this.applyAll();
+  }
+
+  /** 四元数から qx·qz·qy 順のオイラー角（度）を取り出す */
+  static eulerXZY(q) {
+    const e = new THREE.Matrix4().makeRotationFromQuaternion(q).elements;
+    const m00 = e[0], m01 = e[4], m02 = e[8];
+    const m10 = e[1], m11 = e[5];
+    const m20 = e[2], m21 = e[6];
+    const sc = Math.max(-1, Math.min(1, -m01));
+    const c = Math.asin(sc);
+    let a, b;
+    if (Math.abs(sc) < 0.9995) {
+      b = Math.atan2(m02, m00);
+      a = Math.atan2(m21, m11);
+    } else {                         // 軸が重なったとき
+      b = 0;
+      a = Math.atan2(-m20, m10 * (sc > 0 ? 1 : -1));
+    }
+    return { x: a / DEG, y: b / DEG, z: c / DEG };
+  }
+
+  _sideSign(slot) {
+    const L = slot.boneMap.shoulderL || slot.boneMap.upperArmL || slot.boneMap.thighL;
+    const R = slot.boneMap.shoulderR || slot.boneMap.upperArmR || slot.boneMap.thighR;
+    if (!L || !R) return 1;
+    return L.getWorldPosition(new THREE.Vector3()).x >= R.getWorldPosition(new THREE.Vector3()).x ? 1 : -1;
+  }
+
+  /** いまのポーズの骨の向きを取り出す（逆算の検算にも使う） */
+  currentDirections() {
+    const p = this.primarySlot;
+    if (!p) return {};
+    const out = {};
+    const pairs = [['spine', 'chest'], ['chest', 'neck'], ['neck', 'head'],
+      ['shoulderL', 'upperArmL'], ['upperArmL', 'forearmL'], ['forearmL', 'handL'],
+      ['shoulderR', 'upperArmR'], ['upperArmR', 'forearmR'], ['forearmR', 'handR'],
+      ['thighL', 'shinL'], ['shinL', 'footL'], ['thighR', 'shinR'], ['shinR', 'footR']];
+    for (const [a, b] of pairs) {
+      const d = this._boneDirection(p, a, b);
+      if (d) out[a] = d;
+    }
+    const hips = p.boneMap.hips, sl = p.boneMap.shoulderL, sr = p.boneMap.shoulderR, ch = p.boneMap.chest;
+    if (hips && sl && sr && ch) {
+      const hp = hips.getWorldPosition(new THREE.Vector3());
+      const cp = ch.getWorldPosition(new THREE.Vector3());
+      out.hips = {
+        up: cp.sub(hp).normalize(),
+        left: sl.getWorldPosition(new THREE.Vector3())
+          .sub(sr.getWorldPosition(new THREE.Vector3())).normalize(),
+      };
+    }
+    return out;
+  }
+
+  /**
+   * 測った骨の向きから関節角度を逆算して当てる。
+   *
+   * 向きだけでは骨の「ひねり」が決まらない。そしてひじ・ひざの曲がる向きは
+   * 親（上腕・腿）のひねりで決まるので、親子をまとめて解く。
+   *
+   * @param {Object} dirs 関節キー -> 向き（THREE.Vector3）。hips は {up,left} の全身の向き。
+   * @returns {number} 当てられた関節の数
+   */
+  applyDetectedPose(dirs) {
+    const p = this.primarySlot;
+    if (!p || !p.skeleton) return 0;
+    let applied = 0;
+    this.lastSolveReport = [];
+
+    const ORDER_SOLVE = ['hips', 'spine', 'chest', 'neck',
+      'shoulderL', 'upperArmL', 'forearmL', 'shoulderR', 'upperArmR', 'forearmR',
+      'thighL', 'shinL', 'footL', 'thighR', 'shinR', 'footR'];
+    const HINGE_CHILD = {
+      shoulderL: 'upperArmL', shoulderR: 'upperArmR',
+      upperArmL: 'forearmL', upperArmR: 'forearmR',
+      thighL: 'shinL', thighR: 'shinR',
+      shinL: 'footL', shinR: 'footR',
+    };
+    const CHILD_OF = Object.fromEntries(restTargets(1).map(([a, b]) => [a, b]));
+    const targets = Object.fromEntries(restTargets(this._sideSign(p)).map(([a, b, t]) => [a, t]));
+
+    const TWISTS = [0];
+    for (let t = 5; t <= 180; t += 5) TWISTS.push(t, -t);
+
+    /** その関節の「基準からの回転」を作る。ひねり t を足せる */
+    const rotationFor = (key, t) => {
+      if (key === 'hips') {
+        const f = dirs.hips;
+        if (!f || !f.up || !f.left) return null;
+        const up = f.up.clone().normalize();
+        const left = f.left.clone().addScaledVector(up, -f.left.dot(up));
+        if (left.lengthSq() < 1e-6) return null;
+        left.normalize();
+        const fwd = new THREE.Vector3().crossVectors(left, up);
+        return { F: new THREE.Quaternion().setFromRotationMatrix(
+          new THREE.Matrix4().makeBasis(left, up, fwd)), axis: null };
+      }
+      const d = dirs[key];
+      const rest = targets[key];
+      if (!d || !rest || d.lengthSq() < 1e-8) return null;
+      const axis = d.clone().normalize();
+      const F = new THREE.Quaternion().setFromUnitVectors(rest.clone().normalize(), axis);
+      if (t) F.premultiply(new THREE.Quaternion().setFromAxisAngle(axis, t * DEG));
+      return { F, axis };
+    };
+
+    /** いまの親の向きを使って、角度候補とはみ出し量を出す */
+    const candidate = (key, t) => {
+      const bone = p.boneMap[key];
+      if (!bone) return null;
+      const nb = p.neutralWorld.get(bone);
+      const np = p.neutralParent.get(bone);
+      if (!nb || !np) return null;
+      const r = rotationFor(key, t);
+      if (!r) return null;
+      const pc = new THREE.Quaternion();
+      if (bone.parent) bone.parent.getWorldQuaternion(pc);
+      const delta = np.clone().multiply(pc.invert()).multiply(r.F);
+      const a1 = Viewer.eulerXZY(delta);
+      const a2 = { x: wrapDeg(a1.x + 180), y: wrapDeg(a1.y + 180), z: wrapDeg(180 - a1.z) };
+      const e1 = limitExcess(key, a1), e2 = limitExcess(key, a2);
+      return e2 < e1 ? { a: a2, ex: e2, twistable: !!r.axis } : { a: a1, ex: e1, twistable: !!r.axis };
+    };
+
+    /** その関節だけを実際に反映する（子を解くために先に効かせる） */
+    const applyOne = (key, a) => {
+      const d2 = new THREE.Quaternion().setFromAxisAngle(AX, a.x * DEG)
+        .multiply(new THREE.Quaternion().setFromAxisAngle(AZ, a.z * DEG))
+        .multiply(new THREE.Quaternion().setFromAxisAngle(AY, a.y * DEG));
+      for (const sl of SLOTS) {
+        const slot = this.slots[sl.key];
+        const b2 = slot.boneMap[key];
+        if (!b2) continue;
+        const n2 = slot.neutralWorld.get(b2), p2 = slot.neutralParent.get(b2);
+        if (!n2 || !p2) continue;
+        b2.quaternion.copy(p2).invert().multiply(d2).multiply(n2);
+      }
+      this.container.updateWorldMatrix(true, true);
+    };
+
+    /** その関節が狙った向きからどれだけずれているか（度） */
+    const dirError = (key) => {
+      const childKey = CHILD_OF[key];
+      const want = dirs[key];
+      if (!childKey || !want || typeof want.dot !== 'function') return 0;
+      const got = this._boneDirection(p, key, childKey);
+      if (!got) return 0;
+      const dot = Math.max(-1, Math.min(1, got.dot(want.clone().normalize())));
+      return Math.acos(dot) * 180 / Math.PI;
+    };
+
+    guard('ポーズの逆算', () => {
+      this.container.updateWorldMatrix(true, true);
+      for (const key of ORDER_SOLVE) {
+        if (!p.boneMap[key]) continue;
+        const child = HINGE_CHILD[key];
+        const coupled = child && dirs[child] && p.boneMap[child];
+
+        let best = null;
+        const first = candidate(key, 0);
+        if (!first) continue;
+        const list = first.twistable ? TWISTS : [0];
+
+        for (const t of list) {
+          const cand = t === 0 ? first : candidate(key, t);
+          if (!cand) continue;
+          // 実際に可動域へ収めたうえで、狙った向きにどれだけ近いかで採点する
+          const a = this.limitsEnabled ? clampAngles(key, cand.a) : cand.a;
+          applyOne(key, a);
+          let total = dirError(key);
+          if (coupled) {
+            const c = candidate(child, 0);
+            if (c) {
+              const ca = this.limitsEnabled ? clampAngles(child, c.a) : c.a;
+              applyOne(child, ca);
+              total += dirError(child);
+            } else {
+              total += 90;
+            }
+          }
+          if (!best || total < best.total) best = { total, a };
+          if (total <= 0.05) break;
+        }
+        if (!best) continue;
+
+        this.angles[key] = best.a;
+        applyOne(key, this.angles[key]);
+        this.lastSolveReport.push({ key, excess: +best.total.toFixed(1) });
+        applied += 1;
+      }
+    });
+    this.applyAll();
+    return applied;
   }
 
   resetPose() {

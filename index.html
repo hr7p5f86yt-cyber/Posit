@@ -117,7 +117,9 @@
   <!-- ポーズ -->
   <div class="page" data-page="pose">
     <div class="seg" id="poseSeg">
-      <button class="on" data-seg="preset">プリセット</button>
+      <button class="on" data-seg="preset">全身</button>
+      <button data-seg="hand">手</button>
+      <button data-seg="face">顔</button>
       <button data-seg="history">履歴</button>
     </div>
 
@@ -126,14 +128,27 @@
       <div class="grid" id="poseList"></div>
     </div>
 
+    <div id="handWrap" hidden>
+      <div class="scroller" id="handSide"></div>
+      <div class="grid" id="handList"></div>
+      <p class="hint" id="handNote"></p>
+    </div>
+
+    <div id="faceWrap" hidden>
+      <div class="grid" id="faceList"></div>
+      <p class="hint" id="faceNote"></p>
+    </div>
+
     <div id="historyWrap" hidden>
       <div id="historyList"></div>
       <button id="btnClearHistory" class="ghost wide">履歴を消す</button>
     </div>
 
-    <div class="bar">
+    <div class="bar" id="poseBar">
       <button id="btnRandomPose" class="primary">ランダム</button>
+      <button id="btnPhoto" class="ghost">写真から</button>
     </div>
+    <input type="file" id="photoFile" accept="image/*" hidden>
   </div>
 
   <!-- 関節 -->
@@ -282,6 +297,18 @@
     <button id="cqPause" class="ghost">一時停止</button>
     <button id="cqSkip" class="primary">次へ</button>
     <button id="cqStop" class="ghost">終了</button>
+  </div>
+</div>
+
+<div id="photoBox" hidden>
+  <div class="card wide-card">
+    <strong id="photoTitle">写真からポーズを読み取る</strong>
+    <canvas id="photoCanvas"></canvas>
+    <p class="hint" id="photoMsg">写真を選んでください。</p>
+    <div class="bar">
+      <button id="photoApply" class="primary" disabled>当てる</button>
+      <button id="photoClose" class="ghost">閉じる</button>
+    </div>
   </div>
 </div>
 

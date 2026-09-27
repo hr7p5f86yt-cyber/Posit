@@ -125,3 +125,56 @@ export const POSES_BY_CATEGORY = POSE_CATEGORIES.map(c => ({
   ...c,
   poses: POSE_PRESETS.filter(p => p.category === c.key),
 }));
+
+// ---- 手の形（左手基準。右手は左右反転して当てる）----
+// 書式: "指の骨:X,Y,Z"。X=曲げる / Y=ひねり / Z=開く（度）
+export const HAND_SHAPES = [
+  { id: 'flat', name: '平ら（初期）', spec: '' },
+  { id: 'relaxed', name: '自然', spec: 'index1:-15,0,3 index2:-22,0,0 index3:-12,0,0 middle1:-20,0,0 middle2:-28,0,0 middle3:-14,0,0 pinky1:-30,0,-6 pinky2:-38,0,0 pinky3:-20,0,0 ring1:-25,0,-3 ring2:-34,0,0 ring3:-17,0,0 thumb1:-8,0,-8 thumb2:-10,0,0 thumb3:-12,0,0' },
+  { id: 'open', name: 'パー', spec: 'index1:5,0,12 index2:0,0,0 index3:0,0,0 middle1:5,0,1 middle2:0,0,0 middle3:0,0,0 pinky1:5,0,-20 pinky2:0,0,0 pinky3:0,0,0 ring1:5,0,-10 ring2:0,0,0 ring3:0,0,0 thumb1:12,0,-18 thumb2:5,0,0 thumb3:5,0,0' },
+  { id: 'fist', name: 'グー', spec: 'index1:-88,0,-3 index2:-100,0,0 index3:-60,0,0 middle1:-88,0,0 middle2:-100,0,0 middle3:-60,0,0 pinky1:-88,0,6 pinky2:-100,0,0 pinky3:-60,0,0 ring1:-88,0,3 ring2:-100,0,0 ring3:-60,0,0 thumb1:-3,0,7 thumb2:-57,0,0 thumb3:-40,0,0' },
+  { id: 'point', name: '指差し', spec: 'index1:0,0,2 index2:0,0,0 index3:0,0,0 middle1:-88,0,0 middle2:-100,0,0 middle3:-60,0,0 pinky1:-88,0,6 pinky2:-100,0,0 pinky3:-60,0,0 ring1:-88,0,3 ring2:-100,0,0 ring3:-60,0,0 thumb1:-12,0,6 thumb2:-53,0,0 thumb3:-36,0,0' },
+  { id: 'peace', name: 'ピース', spec: 'index1:0,0,10 index2:0,0,0 index3:0,0,0 middle1:0,0,-8 middle2:0,0,0 middle3:0,0,0 pinky1:-88,0,6 pinky2:-100,0,0 pinky3:-60,0,0 ring1:-88,0,3 ring2:-100,0,0 ring3:-60,0,0 thumb1:-25,0,0 thumb2:-50,0,0 thumb3:-30,0,0' },
+  { id: 'ok', name: 'OK', spec: 'index1:-44,0,0 index2:-54,0,0 index3:-35,0,0 middle1:-8,0,-3 middle2:-8,0,0 middle3:-5,0,0 pinky1:-18,0,-18 pinky2:-12,0,0 pinky3:-8,0,0 ring1:-12,0,-10 ring2:-10,0,0 ring3:-6,0,0 thumb1:-25,0,5 thumb2:-17,0,0 thumb3:-8,0,0' },
+  { id: 'thumbsUp', name: 'いいね', spec: 'index1:-88,0,-3 index2:-100,0,0 index3:-60,0,0 middle1:-88,0,0 middle2:-100,0,0 middle3:-60,0,0 pinky1:-88,0,6 pinky2:-100,0,0 pinky3:-60,0,0 ring1:-88,0,3 ring2:-100,0,0 ring3:-60,0,0 thumb1:30,0,10 thumb2:5,0,0 thumb3:5,0,0' },
+  { id: 'grip', name: '握る（棒）', spec: 'index1:-55,0,-2 index2:-70,0,0 index3:-40,0,0 middle1:-58,0,0 middle2:-72,0,0 middle3:-40,0,0 pinky1:-62,0,4 pinky2:-74,0,0 pinky3:-44,0,0 ring1:-60,0,2 ring2:-72,0,0 ring3:-42,0,0 thumb1:-35,0,-1 thumb2:-9,0,0 thumb3:-3,0,0' },
+  { id: 'pinch', name: 'つまむ', spec: 'index1:-50,0,0 index2:-48,0,0 index3:-27,0,0 middle1:-45,0,0 middle2:-60,0,0 middle3:-30,0,0 pinky1:-60,0,4 pinky2:-75,0,0 pinky3:-40,0,0 ring1:-55,0,2 ring2:-70,0,0 ring3:-35,0,0 thumb1:-34,0,7 thumb2:-5,0,0 thumb3:-1,0,0' },
+  { id: 'claw', name: '爪を立てる', spec: 'index1:-12,0,10 index2:-80,0,0 index3:-60,0,0 middle1:-12,0,0 middle2:-82,0,0 middle3:-60,0,0 pinky1:-12,0,-16 pinky2:-80,0,0 pinky3:-60,0,0 ring1:-12,0,-8 ring2:-82,0,0 ring3:-60,0,0 thumb1:-5,0,15 thumb2:-30,0,0 thumb3:-40,0,0' },
+  { id: 'knife', name: '手刀', spec: 'index1:0,0,-3 index2:0,0,0 index3:0,0,0 middle1:0,0,0 middle2:0,0,0 middle3:0,0,0 pinky1:0,0,5 pinky2:0,0,0 pinky3:0,0,0 ring1:0,0,2 ring2:0,0,0 ring3:0,0,0 thumb1:15,0,-30 thumb2:-60,0,0 thumb3:-57,0,0' },
+  { id: 'three', name: '3', spec: 'index1:0,0,10 index2:0,0,0 index3:0,0,0 middle1:0,0,0 middle2:0,0,0 middle3:0,0,0 pinky1:-88,0,6 pinky2:-100,0,0 pinky3:-60,0,0 ring1:0,0,-8 ring2:0,0,0 ring3:0,0,0 thumb1:-39,0,-6 thumb2:-47,0,0 thumb3:-26,0,0' },
+  { id: 'four', name: '4', spec: 'index1:0,0,10 index2:0,0,0 index3:0,0,0 middle1:0,0,1 middle2:0,0,0 middle3:0,0,0 pinky1:0,0,-18 pinky2:0,0,0 pinky3:0,0,0 ring1:0,0,-9 ring2:0,0,0 ring3:0,0,0 thumb1:-17,0,-29 thumb2:-61,0,0 thumb3:-43,0,0' },
+  { id: 'rock', name: 'ロック', spec: 'index1:0,0,8 index2:0,0,0 index3:0,0,0 middle1:-88,0,0 middle2:-100,0,0 middle3:-60,0,0 pinky1:0,0,-14 pinky2:0,0,0 pinky3:0,0,0 ring1:-88,0,3 ring2:-100,0,0 ring3:-60,0,0 thumb1:-18,0,3 thumb2:-52,0,0 thumb3:-33,0,0' },
+  { id: 'phone', name: '電話', spec: 'index1:-88,0,-3 index2:-100,0,0 index3:-60,0,0 middle1:-88,0,0 middle2:-100,0,0 middle3:-60,0,0 pinky1:0,0,-18 pinky2:0,0,0 pinky3:0,0,0 ring1:-88,0,3 ring2:-100,0,0 ring3:-60,0,0 thumb1:30,0,10 thumb2:5,0,0 thumb3:5,0,0' },
+];
+
+// ---- 顔の向き・表情 ----
+export const FACE_PRESETS = [
+  { id: 'front', name: '正面', spec: '' },
+  { id: 'lookUp', name: '見上げる', spec: 'head:-18,0,0 neck:-28,0,0' },
+  { id: 'lookDown', name: '見下ろす', spec: 'head:14,0,0 neck:28,0,0' },
+  { id: 'turnLeft', name: '左を向く', spec: 'head:0,28,0 neck:0,45,0' },
+  { id: 'turnRight', name: '右を向く', spec: 'head:0,-28,0 neck:0,-45,0' },
+  { id: 'lookBack', name: '振り向く', spec: 'head:-6,40,0 neck:0,70,0' },
+  { id: 'tilt', name: '首をかしげる', spec: 'head:0,6,-12 neck:0,8,-16' },
+  { id: 'threeQuarterUp', name: '斜め上を見る', spec: 'head:-14,18,0 neck:-16,32,0' },
+  { id: 'threeQuarterDown', name: '斜め下を見る', spec: 'head:10,-18,0 neck:20,-30,0' },
+  { id: 'openMouth', name: '口を開ける', spec: 'jaw:26,0,0' },
+  { id: 'surprise', name: '驚く', spec: 'head:-8,0,0 jaw:32,0,0 neck:-12,0,0' },
+  { id: 'laugh', name: '笑う', spec: 'head:-12,0,4 jaw:22,0,0 neck:-18,0,6' },
+  { id: 'sleepy', name: 'うとうと', spec: 'head:14,0,8 neck:30,0,12' },
+  { id: 'shyFace', name: '恥ずかしがる', spec: 'head:10,-12,6 neck:18,-20,8' },
+];
+
+/** 指の spec を {骨キー: {x,y,z}} に展開する */
+export function parseFingerSpec(spec) {
+  const out = {};
+  if (!spec) return out;
+  for (const token of String(spec).split(/\s+/)) {
+    const i = token.indexOf(':');
+    if (i < 0) continue;
+    const nums = token.slice(i + 1).split(',').map(Number);
+    if (nums.length < 3 || nums.some(n => !isFinite(n))) continue;
+    out[token.slice(0, i)] = { x: nums[0], y: nums[1], z: nums[2] };
+  }
+  return out;
+}

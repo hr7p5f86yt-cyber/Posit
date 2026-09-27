@@ -1,11 +1,11 @@
 // app.js — 画面まわりの配線
 import { Viewer, SLOTS, VIEW_MODES, MATERIAL_MODES, THREE_REVISION } from './viewer.js';
 import { JOINTS, JOINT_BY_KEY, JOINT_GROUPS, jointLabel } from './bones.js';
-import { POSE_CATEGORIES, POSE_PRESETS, toSpec } from './poses.js';
+import { POSE_CATEGORIES, POSE_PRESETS, HAND_SHAPES, FACE_PRESETS, toSpec } from './poses.js';
 import { PoseHistory, relativeTime, HISTORY_LIMIT } from './history.js';
 import { CroquisSession, CROQUIS_SECONDS, CROQUIS_COUNTS } from './croquis.js';
 
-export const BUILD = '2026-09-27e';
+export const BUILD = '2026-09-28a';
 
 const SAMPLE_URL = 'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r169/examples/models/gltf/Xbot.glb';
 const SETTINGS_KEY = 'posit.settings.v1';
@@ -92,7 +92,11 @@ function showToast(msg) {
 
 viewer.onStatus = msg => { if (msg && !/読み込み中/.test(msg)) showToast(msg); };
 viewer.onNotice = msg => { if (msg) { $('viewNote').textContent = msg; showToast(msg); } };
-viewer.onSlotsChanged = () => { buildSlotRows(); buildViewChips(); markMissingJoints(); syncHeadRatio(); };
+viewer.onSlotsChanged = () => {
+  buildSlotRows(); buildViewChips(); markMissingJoints(); syncHeadRatio();
+  if (!$('handWrap').hidden) buildHandList();
+  if (!$('faceWrap').hidden) buildFaceList();
+};
 
 viewer.onSelect = key => {
   const label = key ? jointLabel(key) : '';
@@ -194,16 +198,123 @@ $('btnRandomPose').addEventListener('click', () => {
   applyPose(list[Math.floor(Math.random() * list.length)]);
 });
 
-for (const b of document.querySelectorAll('#poseSeg button')) {
-  b.addEventListener('click', () => {
-    for (const x of document.querySelectorAll('#poseSeg button')) x.classList.remove('on');
-    b.classList.add('on');
-    const preset = b.dataset.seg === 'preset';
-    $('presetWrap').hidden = !preset;
-    $('historyWrap').hidden = preset;
-    $('btnRandomPose').parentElement.hidden = !preset;
-  });
+const SEG_WRAPS = { preset: 'presetWrap', hand: 'handWrap', face: 'faceWrap', history: 'historyWrap' };
+
+function showSeg(seg) {
+  for (const x of document.querySelectorAll('#poseSeg button')) {
+    x.classList.toggle('on', x.dataset.seg === seg);
+  }
+  for (const [k, id] of Object.entries(SEG_WRAPS)) $(id).hidden = k !== seg;
+  $('poseBar').hidden = seg !== 'preset';
+  if (seg === 'hand') buildHandList();
+  if (seg === 'face') buildFaceList();
 }
+for (const b of document.querySelectorAll('#poseSeg button')) {
+  b.addEventListener('click', () => showSeg(b.dataset.seg));
+}
+
+// ---- 手の形 ---------------------------------------------------------------
+
+let handTarget = 'both';
+
+function buildHandList() {
+  buildChips('handSide',
+    [{ v: 'both', label: '両手' }, { v: 'L', label: '左手' }, { v: 'R', label: '右手' }],
+    o => o.v === handTarget,
+    o => { handTarget = o.v; buildHandList(); });
+
+  const wrap = $('handList');
+  wrap.innerHTML = '';
+  for (const h of HAND_SHAPES) {
+    const b = document.createElement('button');
+    b.textContent = h.name;
+    b.addEventListener('click', () => {
+      viewer.applyHandShape(handTarget, h.spec);
+      showToast(h.name);
+    });
+    wrap.appendChild(b);
+  }
+  const n = viewer.fingerBoneCount();
+  $('handNote').textContent = n
+    ? `指の骨 ${n} 本を見つけました。形は左手基準で、右手には左右反転して当てます。`
+    : 'このモデルには指の骨がありません。指のあるモデルを読み込むと使えます。';
+  for (const b of wrap.children) b.disabled = !n;
+}
+
+// ---- 顔の向き・表情 --------------------------------------------------------
+
+function buildFaceList() {
+  const wrap = $('faceList');
+  wrap.innerHTML = '';
+  for (const f of FACE_PRESETS) {
+    const b = document.createElement('button');
+    b.textContent = f.name;
+    b.addEventListener('click', () => {
+      snapshot();
+      viewer.applyFacePreset(f.spec);
+      syncSliders();
+      showToast(f.name);
+    });
+    wrap.appendChild(b);
+  }
+  $('faceNote').textContent = viewer.hasJoint('jaw')
+    ? '首と頭の向きに加えて、あごの開閉も反映します。'
+    : 'このモデルにはあごの骨が無いので、首と頭の向きだけ変わります。';
+}
+
+// ---- 写真からポーズ --------------------------------------------------------
+
+let detected = null;
+
+$('btnPhoto').addEventListener('click', () => {
+  $('photoBox').hidden = false;
+  $('photoMsg').textContent = '写真を選んでください。全身が写っているものが向いています。';
+  $('photoApply').disabled = true;
+  detected = null;
+  $('photoFile').click();
+});
+$('photoClose').addEventListener('click', () => { $('photoBox').hidden = true; });
+
+$('photoFile').addEventListener('change', async e => {
+  const f = e.target.files && e.target.files[0];
+  e.target.value = '';
+  if (!f) { $('photoBox').hidden = true; return; }
+  $('photoBox').hidden = false;
+  $('photoMsg').textContent = '読み取り中…（初回は検出モデルの取得に少し時間がかかります）';
+  $('photoApply').disabled = true;
+  try {
+    const photo = await import('./photopose.js');
+    const img = await photo.fileToImage(f);
+    const res = await photo.detectPose(img);
+    if (!res) {
+      $('photoMsg').textContent = '人物を見つけられませんでした。全身が大きく写った写真で試してください。';
+      return;
+    }
+    photo.drawPreview($('photoCanvas'), img, res.image);
+    const { dirs, missing } = photo.landmarksToDirections(res.world);
+    if (missing.length) {
+      $('photoMsg').textContent = '肩か腰が写っていないため、姿勢を組み立てられませんでした。';
+      return;
+    }
+    detected = dirs;
+    $('photoApply').disabled = false;
+    $('photoMsg').textContent = `${Object.keys(dirs).length} か所を読み取りました。`;
+  } catch (err) {
+    const msg = err && err.message ? err.message : String(err);
+    $('photoMsg').textContent = '読み取りに失敗しました: ' + msg;
+  }
+});
+
+$('photoApply').addEventListener('click', () => {
+  if (!detected) return;
+  snapshot();
+  const n = viewer.applyDetectedPose(detected);
+  syncSliders();
+  $('photoBox').hidden = true;
+  history.add({ name: '写真から', spec: toSpec(viewer.allAngles()) });
+  buildHistory();
+  showToast(`${n} か所の関節を写真に合わせました`);
+});
 
 // ---- 履歴 -----------------------------------------------------------------
 
