@@ -704,6 +704,58 @@ export class Viewer {
   }
 
   /** 首の付け根から頭頂までを頭の高さとみなし、身長との比を頭身とする */
+
+  /**
+   * 頭の実際の大きさを、スキンの重みから測る。
+   * ボーンの位置から当てると、リグによって頭のボーンの高さが違うため外れる。
+   * 頭のボーン（とその先）に主に引っ張られる頂点だけを集めて、頭のボーン基準の
+   * 箱を作る。戻り値の単位はメートル、y は頭のボーンからの高さ。
+   */
+  _measureHeadBox(slot) {
+    const head = slot.boneMap.head;
+    if (!head || !slot.skeleton || !slot.meshes.length) return null;
+    const ids = new Set();
+    slot.skeleton.bones.forEach((b, i) => {
+      for (let c = b; c; c = c.parent) if (c === head) { ids.add(i); break; }
+    });
+    if (!ids.size) return null;
+
+    slot.pivot.updateMatrixWorld(true);
+    head.updateWorldMatrix(true, false);
+    const hs = head.getWorldScale(new THREE.Vector3()).x || 1;
+    const v = new THREE.Vector3();
+    let n = 0;
+    const lo = new THREE.Vector3(1e9, 1e9, 1e9);
+    const hi = new THREE.Vector3(-1e9, -1e9, -1e9);
+
+    for (const m of slot.meshes) {
+      const g = m.geometry;
+      const pos = g && g.attributes && g.attributes.position;
+      const si = g && g.attributes && g.attributes.skinIndex;
+      const sw = g && g.attributes && g.attributes.skinWeight;
+      if (!pos || !si || !sw) continue;
+      m.updateWorldMatrix(true, false);
+      for (let i = 0; i < pos.count; i++) {
+        let best = -1, bw = 0;
+        for (let k = 0; k < 4; k++) {
+          const w = sw.getComponent(i, k);
+          if (w > bw) { bw = w; best = si.getComponent(i, k); }
+        }
+        if (bw <= 0 || !ids.has(best)) continue;
+        v.set(pos.getX(i), pos.getY(i), pos.getZ(i));
+        m.localToWorld(v);
+        head.worldToLocal(v).multiplyScalar(hs);     // 頭のボーン基準・メートル
+        lo.min(v); hi.max(v); n++;
+      }
+    }
+    if (n < 24) return null;
+    return {
+      top: hi.y, bottom: lo.y, height: hi.y - lo.y,
+      half: Math.max(Math.abs(lo.x), Math.abs(hi.x)),
+      zc: (lo.z + hi.z) / 2, depth: hi.z - lo.z, count: n,
+    };
+  }
+
   _measureHeadRatio(slot) {
     const neck = slot.boneMap.neck || slot.boneMap.head;
     if (!neck) return;
@@ -724,9 +776,20 @@ export class Viewer {
       slot.headBoneY0 = hb ? hb.getWorldPosition(new THREE.Vector3()).y - box.min.y : neckY - box.min.y;
       slot.crownH0 = Math.max(1e-4, total - slot.headBoneY0);
       slot.totalH0 = total;
+      // スキンの重みから頭の実寸が取れたら、そちらを正とする
+      slot.headBox = this._measureHeadBox(slot);
+      if (slot.headBox && slot.headBox.height > 1e-3) {
+        slot.headH0 = slot.headBox.height;
+        slot.bodyH0 = total - slot.headH0;
+        slot.headRatio0 = total / slot.headH0;
+        slot.crownH0 = Math.max(1e-4, slot.headBox.top);   // 頭のボーン→頭頂（実測）
+      }
       const hp = slot.boneMap.hips;
       slot.hipY0 = hp ? Math.max(0, hp.getWorldPosition(new THREE.Vector3()).y - box.min.y)
                       : slot.headBoneY0 * 0.6;
+      // 胴を伸び縮みさせるときに使うボーンの高さ
+      const sp = slot.boneMap.spine || slot.boneMap.chest;
+      slot.spineY0 = sp ? sp.getWorldPosition(new THREE.Vector3()).y - box.min.y : slot.hipY0;
     }
     // 元の骨の間隔を覚えておく（頭身を変えるときに縮める）
     slot.restPos = new Map();
@@ -808,15 +871,23 @@ export class Viewer {
       // 頭の高さ = headH*kh、背丈 = 頭のボーンの高さ + B*kh。
       // 背丈を T に据え置いたまま 背丈/頭の高さ = r にすると kh は一意に決まる。
       const kh = Math.max(0.05, T / (r * headH));
+      const headBoneY = Math.max(1e-3, T - B * kh);   // 頭のボーンが来るべき高さ
+      const kb = Math.max(0.15, headBoneY / A);       // 体ぜんたいの倍率
 
-      // 低頭身ほどデフォルメを強める：手足を短く詰めて、胴を相対的に太くする。
+      // 低頭身ほどデフォルメを強める。
+      //   脚と腕をさらに詰め、そのぶん胴を伸ばして頭のボーンの高さを保つ。
+      //   ボーンごと縮めるので、長さと一緒に太さも詰まる（関節から先が飛び出さない）。
       const span = Math.max(1e-6, r0 - 2);
       const deform = Math.max(0, Math.min(1, (r0 - r) / span));
-      const kl = 1 - 0.30 * deform;                          // 手足の追加縮小
-
-      // 脚は kb*kl、胴は kb で縮むので、頭のボーンの高さは L*kb*kl + (A-L)*kb
-      const denom = Math.max(1e-6, L * kl + (A - L));
-      const kb = Math.max(0.2, (T - B * kh) / denom);
+      const kl = 1 - 0.30 * deform;                   // 脚
+      const ka = 1 - 0.38 * deform;                   // 腕
+      // 胴は「脚を詰めたぶん」を引き受けて、頭のボーンの高さを元どおりにする。
+      //   頭のボーンの高さ = L*kb*kl + (Sy-L)*kb + (A-Sy)*kb*kt
+      const Sy = Math.min(A - 1e-3, Math.max(L, slot.spineY0 || L));
+      const rest = (A - Sy) * kb;
+      const kt = rest > 1e-6
+        ? Math.max(0.5, Math.min(2.6, (headBoneY - L * kb * kl - (Sy - L) * kb) / rest))
+        : 1;
 
       // いったん元に戻す
       for (const b of slot.skeleton.bones) {
@@ -831,15 +902,18 @@ export class Viewer {
       const head = slot.boneMap.head;
       const hide = (this.headPlanesOn && slot === this.slots.skin
         && slot.headPlanes && slot.headPlanes.parts.length) ? 0.62 : 1;       // 面取り頭部のときは元の頭を隠す
-      if (head) head.scale.setScalar((hips ? kh / kb : kh) * hide);
+      const spine = slot.boneMap.spine || slot.boneMap.chest;
+      if (spine && Math.abs(kt - 1) > 1e-3) spine.scale.setScalar(kt);
+      const chainK = (hips ? kb : 1) * (spine ? kt : 1);
+      if (head) head.scale.setScalar((chainK > 1e-6 ? kh / chainK : kh) * hide);
 
-      // 手足はさらに kl 倍。ボーンごと縮めるので太さも一緒に詰まり、
-      // 関節から先が飛び出すことがない。
-      if (kl < 0.999) {
-        for (const key of ['upperArmL', 'upperArmR', 'thighL', 'thighR']) {
-          const b = slot.boneMap[key];
-          if (b) b.scale.setScalar(kl);
-        }
+      for (const key of ['thighL', 'thighR']) {
+        const b = slot.boneMap[key];
+        if (b) b.scale.setScalar(kl);
+      }
+      for (const key of ['upperArmL', 'upperArmR']) {
+        const b = slot.boneMap[key];
+        if (b) b.scale.setScalar(ka);
       }
       if (slot.headPlaneGroup) slot.headPlaneGroup.scale.setScalar(1 / hide);
 
@@ -933,7 +1007,7 @@ export class Viewer {
     const group = new THREE.Group();
     head.add(group);
     slot.headPlaneGroup = group;
-    slot.headPlanes = buildHeadPlanes(head, group, { crownH: slot.crownH0 });
+    slot.headPlanes = buildHeadPlanes(head, group, { box: slot.headBox, crownH: slot.crownH0 });
     head.scale.copy(keepHead);
     if (hips && keepHips) hips.scale.copy(keepHips);
     head.updateWorldMatrix(true, false);

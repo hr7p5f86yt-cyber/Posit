@@ -60,6 +60,7 @@ function ringLoop(pts) {
 function buildShell() {
   const rings = RINGS.map(([y, pts]) => ringLoop(pts).map(([x, z]) => [x, y, z]));
   const tri = [];
+  const seg = [];                       // 稜線（四角形の辺）をそのまま持つ
   const push = (a, b, c) => { tri.push(a, b, c); };
   const N = 16;
   for (let r = 0; r < rings.length - 1; r++) {
@@ -68,6 +69,8 @@ function buildShell() {
       const k = (j + 1) % N;
       push(up[j], dn[j], dn[k]);
       push(up[j], dn[k], up[k]);
+      seg.push(up[j], up[k]);           // 横の輪
+      seg.push(up[j], dn[j]);           // 縦の筋
     }
   }
   const top = rings[0], bot = rings[rings.length - 1];
@@ -75,8 +78,11 @@ function buildShell() {
     const k = (j + 1) % N;
     push(CROWN, top[j], top[k]);
     push(BOTTOM, bot[k], bot[j]);
+    seg.push(CROWN, top[j]);
+    seg.push(bot[j], bot[(j + 1) % N]);
+    seg.push(BOTTOM, bot[j]);
   }
-  return tri;
+  return { tri, seg };
 }
 
 function buildNose() {
@@ -174,6 +180,16 @@ function buildLips() {
   return tri;
 }
 
+function toLineGeometry(seg) {
+  const arr = new Float32Array(seg.length * 3);
+  for (let i = 0; i < seg.length; i++) {
+    arr[i * 3] = seg[i][0]; arr[i * 3 + 1] = seg[i][1]; arr[i * 3 + 2] = seg[i][2];
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(arr, 3));
+  return g;
+}
+
 function toGeometry(tri) {
   const arr = new Float32Array(tri.length * 3);
   for (let i = 0; i < tri.length; i++) {
@@ -203,7 +219,9 @@ function materials() {
  * @param {THREE.Object3D} parent  ぶら下げる先（頭のボーンの子のグループ）
  * @returns {{parts: THREE.Mesh[], lines: THREE.LineSegments[]}}
  */
-export const DESIGN_CROWN = 0.190;   // この形での「頭のボーン→頭頂」の高さ（m）
+export const DESIGN_CROWN  = 0.190;   // この形での「頭のボーン→頭頂」の高さ（m）
+export const DESIGN_BOTTOM = -0.106;  // あごの底
+export const DESIGN_HALF   = 0.100;   // 頭蓋のいちばん広い半幅（耳は含まない）
 
 export function buildHeadPlanes(headBone, parent, opts = {}) {
   if (!headBone || !parent) return { parts: [], lines: [] };
@@ -213,8 +231,19 @@ export function buildHeadPlanes(headBone, parent, opts = {}) {
 
   // 骨の縮尺に合わせて、メートル指定をローカル単位へ直す
   const s = headBone.getWorldScale(new THREE.Vector3()).x || 1;
-  // モデルごとに頭の大きさが違うので、そのモデルの「頭のボーン→頭頂」に合わせる
-  const fit = opts.crownH > 1e-4 ? opts.crownH / DESIGN_CROWN : 1;
+
+  // モデルの頭の実寸に合わせる。
+  // 高さと幅の両方で収まる倍率を選ぶので、元の頭より大きくなることがない。
+  const box = opts.box;
+  let fit = 1, lift = 0;
+  if (box && box.height > 1e-4) {
+    const byH = box.height / (DESIGN_CROWN - DESIGN_BOTTOM);
+    const byW = box.half > 1e-4 ? box.half / DESIGN_HALF : byH;
+    fit = Math.min(byH, byW * 1.15);   // 少しなら横に広くてよい（頭を差し替えるため）
+    lift = box.top - DESIGN_CROWN * fit;      // 頭頂をそろえる
+  } else if (opts.crownH > 1e-4) {
+    fit = opts.crownH / DESIGN_CROWN;
+  }
   const u = fit / s;
 
   // 骨の「前・上・横」をローカル座標で知る
@@ -227,12 +256,13 @@ export function buildHeadPlanes(headBone, parent, opts = {}) {
   const quat = new THREE.Quaternion().setFromRotationMatrix(
     new THREE.Matrix4().makeBasis(side, up, fwd));
 
-  const add = (geo, material, pos) => {
+  const add = (geo, material, pos, lineGeo) => {
     const m = new THREE.Mesh(geo, material);
     m.quaternion.copy(quat);
     m.scale.setScalar(u);
+    m.position.copy(up).multiplyScalar(lift / s);
     if (pos) {
-      m.position.copy(side).multiplyScalar(pos[0] * u)
+      m.position.addScaledVector(side, pos[0] * u)
         .addScaledVector(up, pos[1] * u)
         .addScaledVector(fwd, pos[2] * u);
     }
@@ -243,7 +273,7 @@ export function buildHeadPlanes(headBone, parent, opts = {}) {
     parent.add(m);
     parts.push(m);
 
-    const edges = new THREE.LineSegments(new THREE.EdgesGeometry(geo, 16), mats.line);
+    const edges = new THREE.LineSegments(lineGeo || new THREE.EdgesGeometry(geo, 24), mats.line);
     edges.quaternion.copy(m.quaternion);
     edges.scale.copy(m.scale);
     edges.position.copy(m.position);
@@ -255,7 +285,8 @@ export function buildHeadPlanes(headBone, parent, opts = {}) {
     return m;
   };
 
-  add(toGeometry(buildShell()), mats.skin);        // 頭の塊（眉・眼窩・頬骨・あご）
+  const shell = buildShell();
+  add(toGeometry(shell.tri), mats.skin, null, toLineGeometry(shell.seg));  // 頭の塊
   add(toGeometry(buildNose()), mats.skin);         // 鼻
   add(toGeometry(buildLips()), mats.skin);         // 口もと
   for (const sx of [-1, 1]) add(toGeometry(buildEye(sx)), mats.eye);   // 目（眼窩に収まる板）
