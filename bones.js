@@ -272,3 +272,219 @@ export function fingerCount(fingers) {
   }
   return n;
 }
+
+// ---------------------------------------------------------------------------
+// 名前に頼らない関節の割り出し
+// ---------------------------------------------------------------------------
+// 解剖学の名前が付いた骨格モデルなど、名前の対応表で拾えないリグ向け。
+// ボーンのつながり方と、休めの姿勢での位置関係だけを見て関節を決める。
+//
+// 考え方
+//   1. いちばん上の骨（頭頂）と、そこへ至る道筋＝背骨の並び を見つける
+//   2. 左右いちばん外へ伸びる先（指先）から親をたどり、背骨に着いた所を胸とする
+//   3. 腕・脚は「続けて2本いちばん長い区間」を上腕と前腕、腿とすねに当てる
+//      （鎖骨や手首の小さな骨が何本挟まっていても効く）
+// ---------------------------------------------------------------------------
+
+/** 子のボーンだけを返す */
+function boneChildren(b) {
+  return (b.children || []).filter(c => c.isBone);
+}
+
+/** 骨のつながりを上へたどる（配列は自分→親→…の順） */
+function ancestry(b, inSet) {
+  const out = [];
+  let cur = b;
+  while (cur && inSet.has(cur)) { out.push(cur); cur = cur.parent; }
+  return out;
+}
+
+/** a から b へ下る道筋。無ければ null */
+function pathDown(a, b, inSet) {
+  const up = ancestry(b, inSet);
+  const idx = up.indexOf(a);
+  if (idx < 0) return null;
+  return up.slice(0, idx + 1).reverse();
+}
+
+/** 続けて 2 本、いちばん長い区間を探して [手前, 真ん中, 先] を返す */
+function longestTwoLinks(chain, P) {
+  if (chain.length < 3) return null;
+  const len = [];
+  for (let i = 0; i < chain.length - 1; i++) {
+    const a = P(chain[i]), b = P(chain[i + 1]);
+    len.push(Math.hypot(b.x - a.x, b.y - a.y, b.z - a.z));
+  }
+  let best = -1, at = 0;
+  for (let i = 0; i < len.length - 1; i++) {
+    const v = len[i] + len[i + 1];
+    if (v > best) { best = v; at = i; }
+  }
+  return { root: chain[at], mid: chain[at + 1], tip: chain[at + 2], before: at > 0 ? chain[at - 1] : null };
+}
+
+/**
+ * ボーンのつながりと位置だけから関節を割り出す。
+ * @param {Array} bones     スケルトンのボーン
+ * @param {Function} posOf  ボーン → {x,y,z}（休めの姿勢でのワールド座標）
+ * @returns {Object} 関節キー → ボーン
+ */
+export function mapBonesByStructure(bones, posOf) {
+  const map = {};
+  if (!bones || bones.length < 8 || typeof posOf !== 'function') return map;
+  const inSet = new Set(bones);
+  const P = b => posOf(b);
+
+  // --- 上下・左右のいちばん端 ---
+  let top = null, xMax = null, xMin = null;
+  for (const b of bones) {
+    const p = P(b);
+    if (!p) continue;
+    if (!top || p.y > P(top).y) top = b;
+    if (!xMax || p.x > P(xMax).x) xMax = b;
+    if (!xMin || p.x < P(xMin).x) xMin = b;
+  }
+  if (!top || !xMax || !xMin) return map;
+
+  // --- 根元から頭頂までの道筋 ---
+  const upTop = ancestry(top, inSet);
+  const rootBone = upTop[upTop.length - 1];
+  const trunk = pathDown(rootBone, top, inSet);
+  if (!trunk || trunk.length < 3) return map;
+
+  // 各ボーンの「その先が届くいちばん低いところ／いちばん外側」を測っておく
+  const reach = new Map();
+  (function measure(b) {
+    const p = P(b);
+    let lowY = p ? p.y : 0, farX = p ? Math.abs(p.x) : 0;
+    for (const c of boneChildren(b)) {
+      const r = measure(c);
+      lowY = Math.min(lowY, r.lowY);
+      farX = Math.max(farX, r.farX);
+    }
+    const r = { lowY, farX };
+    reach.set(b, r);
+    return r;
+  })(rootBone);
+
+  // --- 腰：道筋のうち、下へ伸びる枝を二本持ついちばん深いところ ---
+  const floorY = reach.get(rootBone).lowY;
+  const topY = P(top).y;
+  const legLine = floorY + (topY - floorY) * 0.35;     // ここより下へ届けば脚
+  const onTrunk = new Set(trunk);
+  let hips = null;
+  for (let i = trunk.length - 1; i >= 0; i--) {
+    const legs = boneChildren(trunk[i]).filter(c => !onTrunk.has(c) && reach.get(c).lowY < legLine);
+    if (legs.length >= 2) { hips = trunk[i]; break; }
+  }
+  if (!hips) hips = trunk[0];
+  map.hips = hips;
+
+  // --- 背骨の道筋（腰 → 頭頂）---
+  const spinePath = pathDown(hips, top, inSet);
+  if (!spinePath || spinePath.length < 3) return map;
+  const onSpine = new Set(spinePath);
+
+  // --- 腕：背骨から左右へ出る枝のうち、いちばん外へ届く二本 ---
+  const branches = [];
+  for (const sp of spinePath) {
+    for (const c of boneChildren(sp)) {
+      if (onSpine.has(c)) continue;
+      const r = reach.get(c);
+      if (!r || r.lowY < legLine) continue;          // 脚は除く
+      const p = P(c);
+      branches.push({ root: c, chest: sp, farX: r.farX, sign: p && p.x >= 0 ? 1 : -1 });
+    }
+  }
+  branches.sort((a, b) => b.farX - a.farX);
+  const arms = [];
+  for (const sign of [1, -1]) {
+    const pick = branches.find(x => x.sign === sign);
+    if (!pick) continue;
+    // 枝の中で、根元からいちばん遠くまで伸びた先が指先
+    let tip = pick.root, best = 0;
+    (function walk(b, d) {
+      if (d > best) { best = d; tip = b; }
+      const p = P(b);
+      for (const c of boneChildren(b)) {
+        const q = P(c);
+        walk(c, d + (p && q ? Math.hypot(q.x - p.x, q.y - p.y, q.z - p.z) : 0));
+      }
+    })(pick.root, 0);
+    arms.push({ tip, chest: pick.chest, rootBone: pick.root });
+  }
+  const chest = arms.length ? arms[0].chest : null;
+  if (chest) map.chest = chest;
+
+  // --- 背骨：腰と胸のあいだ ---
+  const toChest = chest ? pathDown(hips, chest, inSet) : null;
+  if (toChest && toChest.length >= 2) {
+    map.spine = toChest[1];
+    if (toChest.length >= 3) map.chest = toChest[toChest.length - 1];
+  }
+
+  // --- 首と頭：胸から上を高さで分ける ---
+  if (chest) {
+    const above = pathDown(chest, top, inSet);
+    if (above && above.length >= 2) {
+      const y0 = P(chest).y, y1 = P(top).y;
+      const line = y0 + (y1 - y0) * 0.55;
+      let head = null, neck = null;
+      for (let i = 1; i < above.length; i++) {
+        if (!neck) neck = above[i];
+        if (!head && P(above[i]).y >= line) head = above[i];
+      }
+      if (head && head === neck && above.length >= 3) neck = above[1], head = above[2];
+      // 頭頂そのものが末端の目印なら、その一つ手前を頭にする
+      if (head === top && boneChildren(top).length === 0 && above.length >= 3) head = above[above.length - 2];
+      if (neck) map.neck = neck;
+      if (head && head !== neck) map.head = head;
+      else if (head) map.head = head;
+    }
+  }
+
+  // --- 腕の三本（上腕・前腕・手）と鎖骨 ---
+  for (const arm of arms) {
+    const chain = pathDown(arm.rootBone, arm.tip, inSet);
+    if (!chain) continue;
+    const seg = longestTwoLinks(chain, P);
+    if (!seg) continue;
+    const side = P(arm.tip).x >= 0 ? 'L' : 'R';
+    map['upperArm' + side] = seg.root;
+    map['forearm' + side] = seg.mid;
+    map['hand' + side] = seg.tip;
+    const clav = seg.before || (arm.rootBone !== seg.root ? arm.rootBone : null);
+    if (clav && clav !== seg.root) map['shoulder' + side] = clav;
+  }
+
+  // --- 脚：腰から下へ伸びる枝のうち、いちばん下まで届く二本 ---
+  const legTips = [];
+  for (const c of boneChildren(hips)) {
+    if (onSpine.has(c) || !reach.get(c) || reach.get(c).lowY >= legLine) continue;
+    let low = null;
+    (function walk(b) {
+      if (!low || P(b).y < P(low).y) low = b;
+      for (const k of boneChildren(b)) walk(k);
+    })(c);
+    if (low) legTips.push({ root: c, tip: low });
+  }
+  legTips.sort((a, b) => P(a.tip).y - P(b.tip).y);
+  for (const leg of legTips.slice(0, 2)) {
+    const chain = pathDown(leg.root, leg.tip, inSet);
+    if (!chain) continue;
+    const seg = longestTwoLinks(chain, P);
+    if (!seg) continue;
+    const side = P(leg.tip).x >= 0 ? 'L' : 'R';
+    map['thigh' + side] = seg.root;
+    map['shin' + side] = seg.mid;
+    map['foot' + side] = seg.tip;
+  }
+
+  // 同じボーンを二つの関節に割り当てない
+  const used = new Set();
+  for (const k of Object.keys(map)) {
+    if (used.has(map[k])) delete map[k];
+    else used.add(map[k]);
+  }
+  return map;
+}

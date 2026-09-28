@@ -4,7 +4,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { JOINTS, JOINT_BY_KEY, JOINT_GROUPS, mapBones, mapFingers, fingerCount, clampAngles, limitExcess, wrapDeg, normalizeName } from './bones.js';
+import { JOINTS, JOINT_BY_KEY, JOINT_GROUPS, mapBones, mapBonesByStructure, mapFingers, fingerCount, clampAngles, limitExcess, wrapDeg, normalizeName } from './bones.js';
 import { parseSpec, parseFingerSpec } from './poses.js';
 import { buildSkeletonView } from './skeletonView.js';
 import { buildHeadPlanes } from './headPlanes.js';
@@ -308,8 +308,13 @@ export class Viewer {
       if (!slot.loaded) continue;
       if (!slot.skeleton) { lines.push(`${s.name}: スキン情報なし`); continue; }
       const names = slot.skeleton.bones.slice(0, 24).map(b => b.name);
-      lines.push(`${s.name}（${slot.skeleton.bones.length}本・関節 ${Object.keys(slot.boneMap).length}）`);
-      lines.push('  ' + names.join(', ') + (slot.skeleton.bones.length > 24 ? ' …' : ''));
+      const how = slot.mappedBy === 'structure' ? '骨のつながりから割り出し' : 'ボーン名から';
+      lines.push(`${s.name}（${slot.skeleton.bones.length}本・関節 ${Object.keys(slot.boneMap).length}・${how}）`);
+      const got = JOINTS.map(j => j.key).filter(k => slot.boneMap[k]);
+      const miss = JOINTS.map(j => j.key).filter(k => !slot.boneMap[k]);
+      if (got.length) lines.push('  取れた関節: ' + got.map(k => `${k}=${slot.boneMap[k].name}`).join(', '));
+      if (miss.length) lines.push('  取れなかった関節: ' + miss.join(', '));
+      lines.push('  ボーン名: ' + names.join(', ') + (slot.skeleton.bones.length > 24 ? ' …' : ''));
     }
     return lines.join('\n');
   }
@@ -482,6 +487,25 @@ export class Viewer {
     if (slot.skeleton) {
       const { map } = mapBones(slot.skeleton.bones);
       slot.boneMap = map;
+      slot.mappedBy = 'name';
+      // 名前で足りないときは、ボーンのつながりと位置から割り出す
+      if (Object.keys(map).length < 12) {
+        guard('骨のつながりから関節を割り出す', () => {
+          slot.pivot.updateWorldMatrix(true, true);
+          const cache = new Map();
+          const posOf = b => {
+            let v = cache.get(b);
+            if (!v) { v = b.getWorldPosition(new THREE.Vector3()); cache.set(b, v); }
+            return v;
+          };
+          const alt = mapBonesByStructure(slot.skeleton.bones, posOf);
+          if (Object.keys(alt).length > Object.keys(map).length) {
+            // 名前で確実に取れたものは残し、足りない分だけ埋める
+            for (const [k, b] of Object.entries(alt)) if (!map[k]) map[k] = b;
+            slot.mappedBy = Object.keys(map).length > 12 ? 'structure' : 'name';
+          }
+        });
+      }
       slot.fingers = mapFingers(slot.skeleton.bones);
       slot.boneToJoint = new Map();
       for (const [k, b] of Object.entries(map)) slot.boneToJoint.set(b, k);
@@ -700,6 +724,9 @@ export class Viewer {
       slot.headBoneY0 = hb ? hb.getWorldPosition(new THREE.Vector3()).y - box.min.y : neckY - box.min.y;
       slot.crownH0 = Math.max(1e-4, total - slot.headBoneY0);
       slot.totalH0 = total;
+      const hp = slot.boneMap.hips;
+      slot.hipY0 = hp ? Math.max(0, hp.getWorldPosition(new THREE.Vector3()).y - box.min.y)
+                      : slot.headBoneY0 * 0.6;
     }
     // 元の骨の間隔を覚えておく（頭身を変えるときに縮める）
     slot.restPos = new Map();
@@ -773,15 +800,23 @@ export class Viewer {
       const r0 = slot.headRatio0 || 7.5;
       const r = Math.max(2, Math.min(12, this.headRatio === null ? r0 : this.headRatio));
       const headH = slot.headH0 || 0.22;                    // あご先から頭頂まで
-      const C = slot.bodyH0 || 1.48;                        // 足元からあご先まで
-      const T = slot.totalH0 || (headH + C);                // 元の背丈
+      const A = slot.headBoneY0 || (slot.bodyH0 || 1.48);   // 足元から頭のボーンまで
+      const B = slot.crownH0 || headH;                      // 頭のボーンから頭頂まで
+      const L = Math.min(A * 0.95, slot.hipY0 || A * 0.6);  // 足元から腰まで（＝脚の長さ）
+      const T = slot.totalH0 || (A + B);                    // 元の背丈
 
-      // 頭は kh 倍、体は足元を中心に kb 倍。頭はあごが首に乗るように持ち上げる。
-      //   背丈    = C*kb + headH*kh  … T に据え置く
-      //   頭の高さ = headH*kh        … 背丈の 1/r
-      // この二つから kh と kb が厳密に決まる。
-      let kh = Math.max(0.05, T / (r * headH));
-      let kb = Math.max(0.2, r > 1.02 ? T * (r - 1) / (C * r) : 1);
+      // 頭の高さ = headH*kh、背丈 = 頭のボーンの高さ + B*kh。
+      // 背丈を T に据え置いたまま 背丈/頭の高さ = r にすると kh は一意に決まる。
+      const kh = Math.max(0.05, T / (r * headH));
+
+      // 低頭身ほどデフォルメを強める：手足を短く詰めて、胴を相対的に太くする。
+      const span = Math.max(1e-6, r0 - 2);
+      const deform = Math.max(0, Math.min(1, (r0 - r) / span));
+      const kl = 1 - 0.30 * deform;                          // 手足の追加縮小
+
+      // 脚は kb*kl、胴は kb で縮むので、頭のボーンの高さは L*kb*kl + (A-L)*kb
+      const denom = Math.max(1e-6, L * kl + (A - L));
+      const kb = Math.max(0.2, (T - B * kh) / denom);
 
       // いったん元に戻す
       for (const b of slot.skeleton.bones) {
@@ -796,12 +831,15 @@ export class Viewer {
       const head = slot.boneMap.head;
       const hide = (this.headPlanesOn && slot === this.slots.skin
         && slot.headPlanes && slot.headPlanes.parts.length) ? 0.62 : 1;       // 面取り頭部のときは元の頭を隠す
-      if (head) {
-        head.scale.setScalar((hips ? kh / kb : kh) * hide);
-        // 首から頭までの間隔も頭と一緒に伸ばす。
-        // こうしないと頭を大きくしたぶんだけ、あごが首より下へ食い込む。
-        const rp = slot.restPos.get(head);
-        if (rp && hips && kb > 1e-6) head.position.copy(rp).multiplyScalar(kh / kb);
+      if (head) head.scale.setScalar((hips ? kh / kb : kh) * hide);
+
+      // 手足はさらに kl 倍。ボーンごと縮めるので太さも一緒に詰まり、
+      // 関節から先が飛び出すことがない。
+      if (kl < 0.999) {
+        for (const key of ['upperArmL', 'upperArmR', 'thighL', 'thighR']) {
+          const b = slot.boneMap[key];
+          if (b) b.scale.setScalar(kl);
+        }
       }
       if (slot.headPlaneGroup) slot.headPlaneGroup.scale.setScalar(1 / hide);
 
@@ -895,7 +933,7 @@ export class Viewer {
     const group = new THREE.Group();
     head.add(group);
     slot.headPlaneGroup = group;
-    slot.headPlanes = buildHeadPlanes(head, group);
+    slot.headPlanes = buildHeadPlanes(head, group, { crownH: slot.crownH0 });
     head.scale.copy(keepHead);
     if (hips && keepHips) hips.scale.copy(keepHips);
     head.updateWorldMatrix(true, false);
