@@ -5,7 +5,7 @@ import { POSE_CATEGORIES, POSE_PRESETS, HAND_SHAPES, FACE_PRESETS, toSpec } from
 import { PoseHistory, relativeTime, HISTORY_LIMIT } from './history.js';
 import { CroquisSession, CROQUIS_SECONDS, CROQUIS_COUNTS } from './croquis.js';
 
-export const BUILD = '2026-09-28c';
+export const BUILD = '2026-09-28e';
 
 const SAMPLE_URL = 'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r169/examples/models/gltf/Xbot.glb';
 const SETTINGS_KEY = 'posit.settings.v1';
@@ -505,7 +505,9 @@ function markMissingJoints() {
   const info = viewer.slotInfo().filter(s => s.loaded);
   $('boneReport').textContent = info.length ? info.map(s => s.posable
     ? `${s.name}: ボーン ${s.boneCount} 本・関節 ${s.jointCount}/${JOINTS.length}`
-    : `${s.name}: スキン情報なし（表示のみ）`).join(' ／ ') : '';
+    : (s.boneCount ? `${s.name}: ボーン ${s.boneCount} 本／関節 0（ボーン名が未対応）`
+                   : `${s.name}: スキン情報なし（表示のみ）`)).join(' ／ ') : '';
+  $('boneNames').textContent = viewer.boneNameReport();
 }
 
 // ---- 表示まわり ------------------------------------------------------------
@@ -657,6 +659,12 @@ $('btnHeadReset').addEventListener('click', () => {
 });
 
 $('wireOn').addEventListener('change', e => viewer.setWireframe(e.target.checked));
+$('headPlanes').addEventListener('change', e => {
+  const ok = viewer.setHeadPlanes(e.target.checked);
+  if (e.target.checked && !ok) {
+    showToast('面で捉えた頭部は、組み込みの素体を表示しているときだけ使えます。');
+  }
+});
 $('boneView').addEventListener('change', e => viewer.setBoneViewOn(e.target.checked));
 $('canonRest').addEventListener('change', e => { viewer.setCanonicalRest(e.target.checked); syncSliders(); });
 $('gridOn').addEventListener('change', e => viewer.setGridVisible(e.target.checked));

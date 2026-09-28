@@ -123,19 +123,19 @@ export function splitSide(normalized) {
 // ---- 芯の名前 → 関節 ------------------------------------------------------
 // 具体的なものから順に解決し、一度使ったボーンは他の関節に渡さない。
 const PATTERNS = [
-  ['head',     ['head']],
+  ['head',     ['head', 'skull', 'cranium']],
   ['jaw',      ['jaw', 'chin', 'lowerjaw', 'jawroot']],
-  ['neck',     ['neck', 'neck1', 'neck01']],
-  ['chest',    ['spine2', 'spine02', 'spine3', 'spine03', 'upperchest', 'chest', 'ribcage']],
-  ['spine',    ['spine1', 'spine01', 'spine', 'abdomen', 'waist', 'torso']],
-  ['hips',     ['hips', 'hip', 'pelvis', 'root']],
-  ['shoulder', ['shoulder', 'clavicle', 'collar', 'shoulderblade']],
-  ['upperArm', ['upperarm', 'arm', 'upperarmtwist', 'humerus']],
-  ['forearm',  ['forearm', 'lowerarm', 'elbow', 'forearmtwist', 'ulna']],
-  ['hand',     ['hand', 'wrist', 'palm']],
-  ['thigh',    ['upleg', 'upperleg', 'thigh', 'femur', 'thighs']],
-  ['shin',     ['leg', 'lowerleg', 'calf', 'shin', 'knee', 'tibia']],
-  ['foot',     ['foot', 'ankle']],
+  ['neck',     ['neck', 'neck1', 'neck01', 'cervical', 'neck02']],
+  ['chest',    ['spine2', 'spine02', 'spine3', 'spine03', 'upperchest', 'chest', 'ribcage', 'thoracic', 'torso2', 'sternum']],
+  ['spine',    ['spine1', 'spine01', 'spine', 'abdomen', 'waist', 'torso', 'lumbar', 'belly']],
+  ['hips',     ['hips', 'hip', 'pelvis', 'root', 'sacrum', 'cog', 'center']],
+  ['shoulder', ['shoulder', 'clavicle', 'collar', 'shoulderblade', 'scapula']],
+  ['upperArm', ['upperarm', 'arm', 'upperarmtwist', 'humerus', 'arm1', 'upperarm1']],
+  ['forearm',  ['forearm', 'lowerarm', 'elbow', 'forearmtwist', 'ulna', 'radius', 'arm2', 'lowerarm1']],
+  ['hand',     ['hand', 'wrist', 'palm', 'carpal', 'metacarpal']],
+  ['thigh',    ['upleg', 'upperleg', 'thigh', 'femur', 'thighs', 'leg1', 'upperleg1']],
+  ['shin',     ['leg', 'lowerleg', 'calf', 'shin', 'knee', 'tibia', 'fibula', 'leg2', 'lowerleg1']],
+  ['foot',     ['foot', 'ankle', 'tarsal', 'calcaneus', 'heel']],
 ];
 
 const SIDED = new Set(['shoulder', 'upperArm', 'forearm', 'hand', 'thigh', 'shin', 'foot']);

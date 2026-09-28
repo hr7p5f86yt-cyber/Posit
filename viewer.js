@@ -7,6 +7,7 @@ import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { JOINTS, JOINT_BY_KEY, JOINT_GROUPS, mapBones, mapFingers, fingerCount, clampAngles, limitExcess, wrapDeg, normalizeName } from './bones.js';
 import { parseSpec, parseFingerSpec } from './poses.js';
 import { buildSkeletonView } from './skeletonView.js';
+import { buildHeadPlanes } from './headPlanes.js';
 
 /** 例外を握りつぶさず、どの処理で落ちたかを画面に出す */
 function guard(label, fn) {
@@ -101,6 +102,8 @@ class Slot {
     this.headSubtree = null;  // 頭より先の骨
     this.lateral = null;      // 肩・腿の「横向き」の向き
     this.wireMeshes = [];     // 面の線（ワイヤー）
+    this.headPlaneGroup = null;
+    this.headPlanes = { parts: [], lines: [] };
   }
   get loaded() { return !!this.root; }
   get posable() { return !!this.skeleton && Object.keys(this.boneMap).length > 0; }
@@ -123,6 +126,7 @@ export class Viewer {
     this.bodyType = 'neutral';
     this.headRatio = null;          // null なら元のまま
     this.partView = 'full';         // full / upper / face / hand / foot
+    this.headPlanesOn = false;
     this.partSide = 'L';
 
     this.angles = {};
@@ -296,6 +300,20 @@ export class Viewer {
 
   hasJoint(jointKey) { return !!this._boneForJoint(jointKey); }
 
+  /** どのスロットにどんなボーンが入っているかを文字にする（対応がうまくいかないとき用） */
+  boneNameReport() {
+    const lines = [];
+    for (const s of SLOTS) {
+      const slot = this.slots[s.key];
+      if (!slot.loaded) continue;
+      if (!slot.skeleton) { lines.push(`${s.name}: スキン情報なし`); continue; }
+      const names = slot.skeleton.bones.slice(0, 24).map(b => b.name);
+      lines.push(`${s.name}（${slot.skeleton.bones.length}本・関節 ${Object.keys(slot.boneMap).length}）`);
+      lines.push('  ' + names.join(', ') + (slot.skeleton.bones.length > 24 ? ' …' : ''));
+    }
+    return lines.join('\n');
+  }
+
   slotInfo() {
     return SLOTS.map(s => {
       const slot = this.slots[s.key];
@@ -425,6 +443,11 @@ export class Viewer {
     slot.originalMaterials = new Map();
     for (const w of slot.wireMeshes) if (w.parent) w.parent.remove(w);
     slot.wireMeshes = [];
+    if (slot.headPlaneGroup && slot.headPlaneGroup.parent) {
+      slot.headPlaneGroup.parent.remove(slot.headPlaneGroup);
+    }
+    slot.headPlaneGroup = null;
+    slot.headPlanes = { parts: [], lines: [] };
     slot.restPos = null;
     slot.headSubtree = null;
     slot.lateral = null;
@@ -473,12 +496,18 @@ export class Viewer {
     this.applyAll();
     this._reapplyHandShapes();
     guard('面の線の生成', () => this._buildWireframe(slot));
+    guard('面取り頭部の生成', () => this._buildHeadPlanes(slot));
+    guard('頭身・体型の反映', () => this._applyProportions());
     this.applyMaterialMode(this.materialMode);
     if (!this.slots[this.viewMode] || !this.slots[this.viewMode].loaded) this.viewMode = slotKey;
     this.applyViewMode(this.viewMode);
     this.setSkinOpacity(this.skinOpacity);
     this._reportStatus();
     this.onSlotsChanged();
+    if (slot.skeleton && !Object.keys(slot.boneMap).length) {
+      this.onNotice(`${SLOTS.find(x => x.key === slotKey).name}: ボーン名が対応表にありません。`
+        + '設定→モデル→「読み込んだモデルの中身」でボーン名を確認できます。');
+    }
   }
 
   _reportStatus() {
@@ -663,6 +692,14 @@ export class Viewer {
       slot.headH0 = headH;
       slot.bodyH0 = total - headH;
       slot.headRatio0 = total / headH;
+      // 頭身を変えるときに必要な三つの高さ
+      //   headBoneY0 … 頭の骨の高さ（ここから下は体として縮む）
+      //   crownH0    … 頭の骨から頭頂まで（ここは頭として拡大する）
+      //   totalH0    … 元の背丈
+      const hb = slot.boneMap.head;
+      slot.headBoneY0 = hb ? hb.getWorldPosition(new THREE.Vector3()).y - box.min.y : neckY - box.min.y;
+      slot.crownH0 = Math.max(1e-4, total - slot.headBoneY0);
+      slot.totalH0 = total;
     }
     // 元の骨の間隔を覚えておく（頭身を変えるときに縮める）
     slot.restPos = new Map();
@@ -723,7 +760,11 @@ export class Viewer {
     this._applyProportions();
   }
 
-  /** 頭身と体型を骨の配置に反映する */
+  /**
+   * 頭身と体型を骨に反映する。
+   * 体は「腰の骨を丸ごと縮める」方式なので、骨の間隔だけでなく肉付きも一緒に縮み、
+   * かかとから脚が突き抜けるようなことが起きない。
+   */
   _applyProportions() {
     const bt = Viewer.BODY_TYPES[this.bodyType] || Viewer.BODY_TYPES.neutral;
     for (const s of SLOTS) {
@@ -731,35 +772,48 @@ export class Viewer {
       if (!slot.skeleton || !slot.restPos) continue;
       const r0 = slot.headRatio0 || 7.5;
       const r = Math.max(2, Math.min(12, this.headRatio === null ? r0 : this.headRatio));
-      const headH = slot.headH0 || 0.22;
-      const bodyH = slot.bodyH0 || 1.48;
+      const headH = slot.headH0 || 0.22;                    // あご先から頭頂まで
+      const C = slot.bodyH0 || 1.48;                        // 足元からあご先まで
+      const T = slot.totalH0 || (headH + C);                // 元の背丈
 
-      // 頭:体 の比が目標の頭身になるように、頭を大きく・体を短くする
-      let kh = Math.pow(r0 / r, 0.55);
-      let kb = r0 > 1.05 ? kh * (r - 1) / (r0 - 1) : kh;
-      const total = headH * kh + bodyH * kb;
-      const norm = total > 1e-6 ? (headH + bodyH) / total : 1;   // 背丈は据え置く
-      kh *= norm;
-      kb *= norm;
+      // 頭は kh 倍、体は足元を中心に kb 倍。頭はあごが首に乗るように持ち上げる。
+      //   背丈    = C*kb + headH*kh  … T に据え置く
+      //   頭の高さ = headH*kh        … 背丈の 1/r
+      // この二つから kh と kb が厳密に決まる。
+      let kh = Math.max(0.05, T / (r * headH));
+      let kb = Math.max(0.2, r > 1.02 ? T * (r - 1) / (C * r) : 1);
 
-      const widthOf = (bone) => {
-        if (bone === slot.boneMap.shoulderL || bone === slot.boneMap.shoulderR) return bt.shoulder;
-        if (bone === slot.boneMap.thighL || bone === slot.boneMap.thighR) return bt.hip;
-        return 1;
-      };
-
+      // いったん元に戻す
       for (const b of slot.skeleton.bones) {
         const rp = slot.restPos.get(b);
-        if (!rp) continue;
-        if (slot.headSubtree && slot.headSubtree.has(b)) { b.position.copy(rp); continue; }
-        const pos = rp.clone().multiplyScalar(kb);
-        const w = widthOf(b);
-        const lat = slot.lateral && slot.lateral.get(b);
-        if (lat && w !== 1) pos.addScaledVector(lat, pos.dot(lat) * (w - 1));
-        b.position.copy(pos);
+        if (rp) b.position.copy(rp);
+        b.scale.setScalar(1);
       }
+
+      // 体は腰から丸ごと縮め、頭だけその上で大きくする
+      const hips = slot.boneMap.hips;
+      if (hips) hips.scale.setScalar(kb);
       const head = slot.boneMap.head;
-      if (head) head.scale.setScalar(kh);
+      const hide = (this.headPlanesOn && slot === this.slots.skin
+        && slot.headPlanes && slot.headPlanes.parts.length) ? 0.62 : 1;       // 面取り頭部のときは元の頭を隠す
+      if (head) {
+        head.scale.setScalar((hips ? kh / kb : kh) * hide);
+        // 首から頭までの間隔も頭と一緒に伸ばす。
+        // こうしないと頭を大きくしたぶんだけ、あごが首より下へ食い込む。
+        const rp = slot.restPos.get(head);
+        if (rp && hips && kb > 1e-6) head.position.copy(rp).multiplyScalar(kh / kb);
+      }
+      if (slot.headPlaneGroup) slot.headPlaneGroup.scale.setScalar(1 / hide);
+
+      // 肩幅・腰幅（体型）
+      for (const key of ['shoulderL', 'shoulderR', 'thighL', 'thighR']) {
+        const b = slot.boneMap[key];
+        if (!b) continue;
+        const w = key.startsWith('shoulder') ? bt.shoulder : bt.hip;
+        const lat = slot.lateral && slot.lateral.get(b);
+        if (!lat || w === 1) continue;
+        b.position.addScaledVector(lat, b.position.dot(lat) * (w - 1));
+      }
 
       slot.headScale = kh;
       slot.bodyScale = kb;
@@ -818,6 +872,62 @@ export class Viewer {
     this._applyClipping();
   }
 
+  // ---- 面で捉えた頭部 ---------------------------------------------------
+
+  _buildHeadPlanes(slot) {
+    if (slot.headPlaneGroup && slot.headPlaneGroup.parent) {
+      slot.headPlaneGroup.parent.remove(slot.headPlaneGroup);
+    }
+    slot.headPlaneGroup = null;
+    slot.headPlanes = { parts: [], lines: [] };
+    // 素体（人のモデル）の頭だけに付ける。骨格・筋肉モデルには付けない
+    if (slot !== this.slots.skin) return;
+    const head = slot.boneMap.head;
+    if (!head) return;
+    // 頭身を変えた後でも同じ大きさで作れるように、
+    // 頭と腰の拡大をいったん等倍に戻してから縮尺を測る
+    const hips = slot.boneMap.hips;
+    const keepHead = head.scale.clone();
+    const keepHips = hips ? hips.scale.clone() : null;
+    head.scale.setScalar(1);
+    if (hips) hips.scale.setScalar(1);
+    head.updateWorldMatrix(true, false);
+    const group = new THREE.Group();
+    head.add(group);
+    slot.headPlaneGroup = group;
+    slot.headPlanes = buildHeadPlanes(head, group);
+    head.scale.copy(keepHead);
+    if (hips && keepHips) hips.scale.copy(keepHips);
+    head.updateWorldMatrix(true, false);
+    this._refreshHeadPlanes();
+  }
+
+  _refreshHeadPlanes() {
+    for (const s of SLOTS) {
+      const slot = this.slots[s.key];
+      const show = this.headPlanesOn && slot === this.slots.skin
+        && this.viewMode !== 'bone' && this.viewMode !== 'muscle';
+      for (const p of slot.headPlanes.parts) p.visible = show;
+      for (const l of slot.headPlanes.lines) l.visible = show;
+    }
+  }
+
+  /** 面で捉えた頭部に差し替える。元の頭は小さくして中に隠す */
+  setHeadPlanes(on) {
+    this.headPlanesOn = on;
+    this._applyProportions();      // 頭の縮尺をかけ直す
+    this._refreshHeadPlanes();
+    this._applyClipping();
+    return this.headPlanesAvailable;
+  }
+
+  /** 面で捉えた頭部が今の表示で使えるか */
+  get headPlanesAvailable() {
+    const slot = this.slots.skin;
+    return !!(slot && slot.headPlanes && slot.headPlanes.parts.length
+      && this.viewMode !== 'bone' && this.viewMode !== 'muscle');
+  }
+
   // ---- 見る範囲（体の一部だけを切り出す）--------------------------------
 
   /**
@@ -838,6 +948,8 @@ export class Viewer {
       for (const m of slot.meshes) out.push(m);
       for (const w of slot.wireMeshes) out.push(w);
       for (const p of slot.boneParts) out.push(p);
+      for (const p of slot.headPlanes.parts) out.push(p);
+      for (const l of slot.headPlanes.lines) out.push(l);
     }
     return out;
   }
@@ -978,6 +1090,7 @@ export class Viewer {
     }
     this._refreshBoneView();
     this._refreshWire();
+    this._refreshHeadPlanes();
     this._applyClipping();
     if (this.showBuiltinSkeleton && modeKey === 'bone') {
       this.onNotice('骨格モデルが無いので、モデル内蔵のボーンから作った簡易骨格を表示しています。');

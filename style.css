@@ -303,3 +303,11 @@ ul.links span { display: block; margin-left: 92px; font-size: 11px; color: var(-
   border-radius: 12px; background: #11141a;
 }
 #photoBox .bar { position: static; background: none; border-top: 0; padding-top: 12px; }
+
+.hint.mono {
+  font: 11px/1.7 ui-monospace, SFMono-Regular, Menlo, monospace;
+  white-space: pre-wrap; word-break: break-all;
+  -webkit-user-select: text; user-select: text;
+  background: #1e232b; border: 1px solid var(--line-soft);
+  border-radius: 10px; padding: 10px; max-height: 190px; overflow-y: auto;
+}
