@@ -99,6 +99,8 @@ class Slot {
     this.bodyScale = 1;
     this.restPos = null;      // 元の骨の間隔
     this.headSubtree = null;  // 頭より先の骨
+    this.lateral = null;      // 肩・腿の「横向き」の向き
+    this.wireMeshes = [];     // 面の線（ワイヤー）
   }
   get loaded() { return !!this.root; }
   get posable() { return !!this.skeleton && Object.keys(this.boneMap).length > 0; }
@@ -117,6 +119,11 @@ export class Viewer {
     this.showBuiltinSkeleton = false;
     this.limitsEnabled = true;
     this.canonicalRest = true;
+    this.wireOn = false;
+    this.bodyType = 'neutral';
+    this.headRatio = null;          // null なら元のまま
+    this.partView = 'full';         // full / upper / face / hand / foot
+    this.partSide = 'L';
 
     this.angles = {};
     for (const j of JOINTS) this.angles[j.key] = { x: 0, y: 0, z: 0 };
@@ -147,7 +154,9 @@ export class Viewer {
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 1.0;
+    renderer.localClippingEnabled = true;
     this.renderer = renderer;
+    this.clipPlane = new THREE.Plane(new THREE.Vector3(0, -1, 0), 10);
 
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0x15181d);
@@ -248,6 +257,7 @@ export class Viewer {
       requestAnimationFrame(tick);
       try {
         this.controls.update();
+        this._updateClipPlane();
         const bone = this.selected ? this._boneForJoint(this.selected) : null;
         if (bone) bone.getWorldPosition(this.marker.position);
         this.renderer.render(this.scene, this.camera);
@@ -413,8 +423,11 @@ export class Viewer {
     slot.neutralWorld = new Map();
     slot.neutralParent = new Map();
     slot.originalMaterials = new Map();
+    for (const w of slot.wireMeshes) if (w.parent) w.parent.remove(w);
+    slot.wireMeshes = [];
     slot.restPos = null;
     slot.headSubtree = null;
+    slot.lateral = null;
   }
 
   _setupModel(root, slotKey, fileName) {
@@ -459,6 +472,7 @@ export class Viewer {
 
     this.applyAll();
     this._reapplyHandShapes();
+    guard('面の線の生成', () => this._buildWireframe(slot));
     this.applyMaterialMode(this.materialMode);
     if (!this.slots[this.viewMode] || !this.slots[this.viewMode].loaded) this.viewMode = slotKey;
     this.applyViewMode(this.viewMode);
@@ -666,6 +680,14 @@ export class Viewer {
         }
       })(head);
     }
+    // 肩幅・腰幅を変えるときのための「横向き」
+    slot.lateral = new Map();
+    for (const key of ['shoulderL', 'shoulderR', 'thighL', 'thighR']) {
+      const b = slot.boneMap[key];
+      if (!b || !b.parent) continue;
+      const pq = b.parent.getWorldQuaternion(new THREE.Quaternion()).invert();
+      slot.lateral.set(b, new THREE.Vector3(1, 0, 0).applyQuaternion(pq).normalize());
+    }
     slot.restLowestY0 = slot.restLowestY;
     slot.headScale = 1;
     slot.bodyScale = 1;
@@ -677,16 +699,38 @@ export class Viewer {
     return p ? p.headRatio0 : 7.5;
   }
 
+  /** 男女の体型ごとの、肩幅と腰幅の倍率 */
+  static get BODY_TYPES() {
+    return {
+      neutral: { name: '中性', shoulder: 1.00, hip: 1.00 },
+      male:    { name: '男性', shoulder: 1.12, hip: 0.93 },
+      female:  { name: '女性', shoulder: 0.92, hip: 1.10 },
+    };
+  }
+
+  setBodyType(type) {
+    if (!Viewer.BODY_TYPES[type]) return;
+    this.bodyType = type;
+    this._applyProportions();
+  }
+
   /**
    * 頭身を変える。頭を大きくするだけでなく、体と手足の長さも縮めて
    * 低頭身ほどデフォルメが効くようにする。全体の背丈は変えない。
    */
   setHeadRatio(ratio) {
+    this.headRatio = ratio;
+    this._applyProportions();
+  }
+
+  /** 頭身と体型を骨の配置に反映する */
+  _applyProportions() {
+    const bt = Viewer.BODY_TYPES[this.bodyType] || Viewer.BODY_TYPES.neutral;
     for (const s of SLOTS) {
       const slot = this.slots[s.key];
       if (!slot.skeleton || !slot.restPos) continue;
       const r0 = slot.headRatio0 || 7.5;
-      const r = Math.max(2, Math.min(12, ratio));
+      const r = Math.max(2, Math.min(12, this.headRatio === null ? r0 : this.headRatio));
       const headH = slot.headH0 || 0.22;
       const bodyH = slot.bodyH0 || 1.48;
 
@@ -698,11 +742,21 @@ export class Viewer {
       kh *= norm;
       kb *= norm;
 
+      const widthOf = (bone) => {
+        if (bone === slot.boneMap.shoulderL || bone === slot.boneMap.shoulderR) return bt.shoulder;
+        if (bone === slot.boneMap.thighL || bone === slot.boneMap.thighR) return bt.hip;
+        return 1;
+      };
+
       for (const b of slot.skeleton.bones) {
         const rp = slot.restPos.get(b);
         if (!rp) continue;
-        if (slot.headSubtree && slot.headSubtree.has(b)) b.position.copy(rp);
-        else b.position.copy(rp).multiplyScalar(kb);
+        if (slot.headSubtree && slot.headSubtree.has(b)) { b.position.copy(rp); continue; }
+        const pos = rp.clone().multiplyScalar(kb);
+        const w = widthOf(b);
+        const lat = slot.lateral && slot.lateral.get(b);
+        if (lat && w !== 1) pos.addScaledVector(lat, pos.dot(lat) * (w - 1));
+        b.position.copy(pos);
       }
       const head = slot.boneMap.head;
       if (head) head.scale.setScalar(kh);
@@ -715,6 +769,114 @@ export class Viewer {
     this._reapplyHandShapes();
   }
 
+  resetHeadRatio() { this.headRatio = null; this._applyProportions(); }
+
+  // ---- 面の線（ワイヤー）-----------------------------------------------
+
+  _buildWireframe(slot) {
+    for (const w of slot.wireMeshes) if (w.parent) w.parent.remove(w);
+    slot.wireMeshes = [];
+    if (!slot.meshes.length) return;
+    const mat = new THREE.MeshBasicMaterial({
+      color: 0x11141a, wireframe: true, transparent: true, opacity: 0.6, depthWrite: false,
+    });
+    for (const m of slot.meshes) {
+      let w;
+      if (m.isSkinnedMesh && m.skeleton) {
+        w = new THREE.SkinnedMesh(m.geometry, mat);
+        w.bind(m.skeleton, m.bindMatrix);
+      } else {
+        w = new THREE.Mesh(m.geometry, mat);
+      }
+      w.position.copy(m.position);
+      w.quaternion.copy(m.quaternion);
+      w.scale.copy(m.scale);
+      w.frustumCulled = false;
+      w.renderOrder = 5;
+      w.visible = false;
+      w.userData.slot = slot.key;
+      w.userData.wire = true;
+      if (m.parent) m.parent.add(w);
+      slot.wireMeshes.push(w);
+    }
+    this._refreshWire();
+  }
+
+  _refreshWire() {
+    for (const s of SLOTS) {
+      const slot = this.slots[s.key];
+      for (let i = 0; i < slot.wireMeshes.length; i++) {
+        const src = slot.meshes[i];
+        slot.wireMeshes[i].visible = this.wireOn && !!src && src.visible;
+      }
+    }
+  }
+
+  setWireframe(on) {
+    this.wireOn = on;
+    this._refreshWire();
+    this._applyClipping();
+  }
+
+  // ---- 見る範囲（体の一部だけを切り出す）--------------------------------
+
+  /**
+   * 表示する範囲を切り替える。手・足は手首／足首の少し上で切って、
+   * その部分だけを大きく見られるようにする。
+   */
+  setPartView(part, side) {
+    this.partView = part || 'full';
+    if (side) this.partSide = side;
+    this._applyClipping();
+    this.frameOn(this.partView, this.partSide);
+  }
+
+  _clipTargets() {
+    const out = [];
+    for (const s of SLOTS) {
+      const slot = this.slots[s.key];
+      for (const m of slot.meshes) out.push(m);
+      for (const w of slot.wireMeshes) out.push(w);
+      for (const p of slot.boneParts) out.push(p);
+    }
+    return out;
+  }
+
+  _applyClipping() {
+    const on = this.partView === 'hand' || this.partView === 'foot';
+    const planes = on ? [this.clipPlane] : null;
+    for (const o of this._clipTargets()) {
+      const mats = Array.isArray(o.material) ? o.material : [o.material];
+      for (const mat of mats) {
+        if (!mat) continue;
+        mat.clippingPlanes = planes;
+        mat.clipShadows = true;
+        mat.side = on ? THREE.DoubleSide : THREE.FrontSide;
+        mat.needsUpdate = true;
+      }
+    }
+  }
+
+  /** 切る面を、いまの姿勢に合わせて動かす */
+  _updateClipPlane() {
+    if (this.partView !== 'hand' && this.partView !== 'foot') return;
+    const p = this.primarySlot;
+    if (!p) return;
+    const isHand = this.partView === 'hand';
+    const fromKey = (isHand ? 'forearm' : 'shin') + this.partSide;
+    const toKey = (isHand ? 'hand' : 'foot') + this.partSide;
+    const a = p.boneMap[fromKey], b = p.boneMap[toKey];
+    if (!a || !b) return;
+    const pa = a.getWorldPosition(new THREE.Vector3());
+    const pb = b.getWorldPosition(new THREE.Vector3());
+    const dir = pb.clone().sub(pa);
+    if (dir.lengthSq() < 1e-8) return;
+    dir.normalize();
+    // 手首（足首）より少し手前で切る＝腕（脚）が少しだけ残る
+    const cut = pb.clone().addScaledVector(dir, -(isHand ? 0.12 : 0.14));
+    this.clipPlane.setFromNormalAndCoplanarPoint(dir, cut);
+  }
+
   /** 骨の長さを変えたあと、骨格表示を作り直す */
   rebuildBoneViews() {
     for (const s of SLOTS) {
@@ -723,34 +885,32 @@ export class Viewer {
     }
   }
 
-  resetHeadRatio() { this.setHeadRatio(this.baseHeadRatio); }
 
   /** 見る範囲をカメラで切り替える */
-  frameOn(part) {
+  frameOn(part, side) {
     const p = this.primarySlot;
-    const at = new THREE.Vector3();
-    let dist = 3.4, height = 0.95;
+    const at = new THREE.Vector3(0, 0.95, 0);
+    let dist = 3.4;
     const posOf = key => {
       const b = p && p.boneMap[key];
-      if (!b) return null;
-      return b.getWorldPosition(new THREE.Vector3());
+      return b ? b.getWorldPosition(new THREE.Vector3()) : null;
     };
+    const sd = side || this.partSide;
     if (part === 'upper') {
       const c = posOf('chest');
       if (c) { at.copy(c); dist = 1.5; }
     } else if (part === 'face') {
       const hd = posOf('head');
-      if (hd) { at.copy(hd).y += 0.09; dist = 0.55; }
-    } else if (part === 'handL' || part === 'handR') {
-      const hn = posOf(part);
-      if (hn) { at.copy(hn); dist = 0.30; }
-    } else {
-      at.set(0, height, 0);
-      dist = 3.4;
+      if (hd) { at.copy(hd); at.y += 0.09; dist = 0.55; }
+    } else if (part === 'hand') {
+      const hn = posOf('hand' + sd);
+      if (hn) { at.copy(hn); dist = 0.34; }
+    } else if (part === 'foot') {
+      const ft = posOf('foot' + sd);
+      if (ft) { at.copy(ft); dist = 0.38; }
     }
-    if (part === 'full' || at.lengthSq() === 0) at.set(0, 0.95, 0);
     this.controls.target.copy(at);
-    this.camera.position.set(at.x, at.y + dist * 0.06, at.z + dist);
+    this.camera.position.set(at.x, at.y + dist * 0.08, at.z + dist);
     this.controls.update();
   }
 
@@ -817,6 +977,8 @@ export class Viewer {
       for (const m of slot.meshes) m.visible = show.includes(s.key);
     }
     this._refreshBoneView();
+    this._refreshWire();
+    this._applyClipping();
     if (this.showBuiltinSkeleton && modeKey === 'bone') {
       this.onNotice('骨格モデルが無いので、モデル内蔵のボーンから作った簡易骨格を表示しています。');
     } else {
@@ -863,6 +1025,7 @@ export class Viewer {
       m.material = m.userData.studioMat[mode];
     }
     this.setSkinOpacity(this.skinOpacity);
+    this._applyClipping();
   }
 
   // ---- 関節操作 -----------------------------------------------------------

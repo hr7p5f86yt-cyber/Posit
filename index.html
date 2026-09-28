@@ -182,7 +182,13 @@
     <div class="scroller" id="cqCounts"></div>
     <div class="sub">出題するカテゴリ<span class="dim">（選ばなければ全部）</span></div>
     <div class="grid small" id="cqCats"></div>
-    <p class="hint">直近の履歴30件と重ならないように出題します。進行中は画面が消えません。</p>
+    <div class="sub">出題中の見え方</div>
+    <div class="scroller" id="cqModel"></div>
+    <div class="scroller" id="cqFrame"></div>
+    <label class="row toggle"><span class="lbl">面の線を出す</span>
+      <input type="checkbox" id="cqWire"></label>
+    <p class="hint">直近の履歴30件と重ならないように出題します。進行中は画面が消えません。
+      終わると元の見え方に戻ります。</p>
     <div class="bar">
       <button id="btnCroquis" class="primary big">はじめる</button>
     </div>
@@ -192,9 +198,14 @@
   <div class="page" data-page="setting" hidden>
     <div class="sub">見る範囲</div>
     <div class="scroller" id="frameChips"></div>
+    <div class="scroller" id="sideChips" hidden></div>
+
+    <div class="sub">体型</div>
+    <div class="scroller" id="bodyChips"></div>
+
     <div class="sub">頭身<span class="dim">（低いほどデフォルメが効きます）</span></div>
     <label class="row"><span class="lbl">頭身</span>
-      <input type="range" id="headRatio" min="3" max="9" step="0.1" value="7.5"><output id="outHead">7.5</output></label>
+      <input type="range" id="headRatio" min="2" max="9" step="0.1" value="7.5"><output id="outHead">7.5</output></label>
     <button id="btnHeadReset" class="wide ghost">このモデル本来の頭身に戻す</button>
     <div class="sub">表示するモデル</div>
     <div class="scroller" id="viewChips"></div>
@@ -202,6 +213,8 @@
     <div class="scroller" id="matChips"></div>
     <label class="row"><span class="lbl">素体の透明</span>
       <input type="range" id="skinOpacity" min="0.08" max="1" step="0.01" value="1"><output id="outOpacity">100%</output></label>
+    <label class="row toggle"><span class="lbl">面の線を出す</span>
+      <input type="checkbox" id="wireOn"></label>
     <label class="row toggle"><span class="lbl">骨格を重ねる</span>
       <input type="checkbox" id="boneView"></label>
     <label class="row toggle"><span class="lbl">基準姿勢に合わせる</span>

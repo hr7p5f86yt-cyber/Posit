@@ -5,7 +5,7 @@ import { POSE_CATEGORIES, POSE_PRESETS, HAND_SHAPES, FACE_PRESETS, toSpec } from
 import { PoseHistory, relativeTime, HISTORY_LIMIT } from './history.js';
 import { CroquisSession, CROQUIS_SECONDS, CROQUIS_COUNTS } from './croquis.js';
 
-export const BUILD = '2026-09-28b';
+export const BUILD = '2026-09-28c';
 
 const SAMPLE_URL = 'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r169/examples/models/gltf/Xbot.glb';
 const SETTINGS_KEY = 'posit.settings.v1';
@@ -30,9 +30,12 @@ function loadSettings() {
       seconds: CROQUIS_SECONDS.includes(s.seconds) ? s.seconds : 30,
       count: CROQUIS_COUNTS.includes(s.count) ? s.count : 10,
       cqCats: Array.isArray(s.cqCats) ? s.cqCats : [],
+      cqModel: s.cqModel || 'skin',
+      cqFrame: s.cqFrame || 'full',
+      cqWire: !!s.cqWire,
     };
   } catch (e) {
-    return { seconds: 30, count: 10, cqCats: [] };
+    return { seconds: 30, count: 10, cqCats: [], cqModel: 'skin', cqFrame: 'full', cqWire: false };
   }
 }
 function saveSettings() {
@@ -373,10 +376,17 @@ const croquis = new CroquisSession({
 
 let wakeLock = null;
 
+let beforeCroquis = null;
+
 async function startCroquis() {
   document.body.classList.add('croquis');
   $('croquis').hidden = false;
   viewer.select(null);
+  // 出題中だけ見え方を切り替え、終わったら戻す
+  beforeCroquis = { view: viewer.viewMode, part: viewer.partView, side: viewer.partSide, wire: viewer.wireOn };
+  if (settings.cqModel !== viewer.viewMode) viewer.applyViewMode(settings.cqModel);
+  viewer.setPartView(settings.cqFrame, viewer.partSide);
+  viewer.setWireframe(settings.cqWire);
   try {
     if (navigator.wakeLock && navigator.wakeLock.request) {
       wakeLock = await navigator.wakeLock.request('screen');
@@ -393,6 +403,15 @@ async function startCroquis() {
 function stopCroquis() {
   document.body.classList.remove('croquis');
   $('croquis').hidden = true;
+  if (beforeCroquis) {
+    viewer.applyViewMode(beforeCroquis.view);
+    viewer.setPartView(beforeCroquis.part, beforeCroquis.side);
+    viewer.setWireframe(beforeCroquis.wire);
+    $('wireOn').checked = beforeCroquis.wire;
+    buildFrameChips();
+    buildViewChips();
+    beforeCroquis = null;
+  }
   buildHistory();
   syncSliders();
   if (wakeLock) { try { wakeLock.release(); } catch (e) { /* 続行 */ } wakeLock = null; }
@@ -406,6 +425,7 @@ $('cqPause').addEventListener('click', () => {
   $('cqPause').textContent = croquis.paused ? '再開' : '一時停止';
 });
 $('cqDoneClose').addEventListener('click', () => { $('cqDone').hidden = true; });
+$('cqWire').addEventListener('change', e => { settings.cqWire = e.target.checked; saveSettings(); });
 
 function buildChips(wrapId, options, isOn, onPick, cls) {
   const wrap = $(wrapId);
@@ -429,6 +449,18 @@ function buildCroquisChips() {
     CROQUIS_COUNTS.map(c => ({ value: c, label: c === 0 ? '制限なし' : `${c}枚` })),
     o => settings.count === o.value,
     o => { settings.count = o.value; saveSettings(); buildCroquisChips(); });
+
+  buildChips('cqModel',
+    VIEW_MODES.map(m => ({ value: m.key, label: m.name })),
+    o => settings.cqModel === o.value,
+    o => { settings.cqModel = o.value; saveSettings(); buildCroquisChips(); });
+
+  buildChips('cqFrame',
+    FRAMES.map(f => ({ value: f.key, label: f.label })),
+    o => settings.cqFrame === o.value,
+    o => { settings.cqFrame = o.value; saveSettings(); buildCroquisChips(); });
+
+  $('cqWire').checked = settings.cqWire;
 
   buildChips('cqCats',
     POSE_CATEGORIES.map(c => ({ value: c.key, label: c.name })),
@@ -580,13 +612,30 @@ const FRAMES = [
   { key: 'full',  label: '全身' },
   { key: 'upper', label: '上半身' },
   { key: 'face',  label: '顔' },
-  { key: 'handL', label: '左手' },
-  { key: 'handR', label: '右手' },
+  { key: 'hand',  label: '手だけ' },
+  { key: 'foot',  label: '足だけ' },
 ];
-let frameKey = 'full';
+const SIDES = [{ key: 'L', label: '左' }, { key: 'R', label: '右' }];
+
 function buildFrameChips() {
-  buildChips('frameChips', FRAMES, f => f.key === frameKey,
-    f => { frameKey = f.key; viewer.frameOn(f.key); buildFrameChips(); });
+  buildChips('frameChips', FRAMES, f => f.key === viewer.partView,
+    f => { viewer.setPartView(f.key, viewer.partSide); buildFrameChips(); });
+  const sided = viewer.partView === 'hand' || viewer.partView === 'foot';
+  $('sideChips').hidden = !sided;
+  if (sided) {
+    buildChips('sideChips', SIDES, s => s.key === viewer.partSide,
+      s => { viewer.setPartView(viewer.partView, s.key); buildFrameChips(); });
+  }
+}
+
+const BODY_TYPES = [
+  { key: 'neutral', label: '中性' },
+  { key: 'male', label: '男性' },
+  { key: 'female', label: '女性' },
+];
+function buildBodyChips() {
+  buildChips('bodyChips', BODY_TYPES, b => b.key === viewer.bodyType,
+    b => { viewer.setBodyType(b.key); buildBodyChips(); viewer.rebuildBoneViews(); });
 }
 
 function syncHeadRatio() {
@@ -607,6 +656,7 @@ $('btnHeadReset').addEventListener('click', () => {
   viewer.rebuildBoneViews();
 });
 
+$('wireOn').addEventListener('change', e => viewer.setWireframe(e.target.checked));
 $('boneView').addEventListener('change', e => viewer.setBoneViewOn(e.target.checked));
 $('canonRest').addEventListener('change', e => { viewer.setCanonicalRest(e.target.checked); syncSliders(); });
 $('gridOn').addEventListener('change', e => viewer.setGridVisible(e.target.checked));
@@ -668,6 +718,7 @@ buildPoseCats();
 buildPoseList();
 buildCroquisChips();
 buildFrameChips();
+buildBodyChips();
 buildHistory();
 syncSliders();
 loadSample();
