@@ -74,7 +74,7 @@ body.collapsed #btnCollapse svg { transform: rotate(180deg); }
 
 #sheet {
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 20;
-  height: 52vh; min-height: 330px; max-height: 66vh;
+  height: var(--sheet-h, 44vh); min-height: 180px; max-height: 82vh;
   display: flex; flex-direction: column;
   background: var(--sheet);
   -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px);
@@ -311,3 +311,32 @@ ul.links span { display: block; margin-left: 92px; font-size: 11px; color: var(-
   background: #1e232b; border: 1px solid var(--line-soft);
   border-radius: 10px; padding: 10px; max-height: 190px; overflow-y: auto;
 }
+
+/* ---------- 設定のグループ ---------- */
+
+details.grp {
+  border: 1px solid var(--line); border-radius: 12px;
+  margin: 8px 0; background: rgba(255,255,255,0.025);
+}
+details.grp > summary {
+  list-style: none; cursor: pointer;
+  padding: 12px 14px; font-size: 15px; font-weight: 600;
+  display: flex; align-items: center; gap: 8px;
+}
+details.grp > summary::-webkit-details-marker { display: none; }
+details.grp > summary::after {
+  content: ''; margin-left: auto; width: 8px; height: 8px;
+  border-right: 2px solid #8a94a6; border-bottom: 2px solid #8a94a6;
+  transform: rotate(45deg); transition: transform 0.18s;
+}
+details.grp[open] > summary::after { transform: rotate(-135deg); }
+details.grp[open] > summary { border-bottom: 1px solid var(--line); }
+details.grp > *:not(summary) { margin-left: 14px; margin-right: 14px; }
+details.grp > *:first-of-type { margin-top: 10px; }
+details.grp > *:last-child { margin-bottom: 12px; }
+.now { font-size: 12px; font-weight: 400; color: #8a94a6; }
+
+/* つまみを下へ引くと低く、上へ引くと高くできる */
+#grip { touch-action: none; cursor: ns-resize; }
+#grip span { transition: background 0.15s; }
+body.resizing #grip span { background: #7d8899; }

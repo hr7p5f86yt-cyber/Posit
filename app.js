@@ -5,7 +5,7 @@ import { POSE_CATEGORIES, POSE_PRESETS, HAND_SHAPES, FACE_PRESETS, toSpec } from
 import { PoseHistory, relativeTime, HISTORY_LIMIT } from './history.js';
 import { CroquisSession, CROQUIS_SECONDS, CROQUIS_COUNTS } from './croquis.js';
 
-export const BUILD = '2026-10-03f';
+export const BUILD = '2026-10-03g';
 
 const SAMPLE_URL = 'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r169/examples/models/gltf/Xbot.glb';
 const SETTINGS_KEY = 'posit.settings.v1';
@@ -33,9 +33,10 @@ function loadSettings() {
       cqModel: s.cqModel || 'skin',
       cqFrame: s.cqFrame || 'full',
       cqWire: !!s.cqWire,
+      sheetH: typeof s.sheetH === 'number' ? s.sheetH : 0,
     };
   } catch (e) {
-    return { seconds: 30, count: 10, cqCats: [], cqModel: 'skin', cqFrame: 'full', cqWire: false };
+    return { seconds: 30, count: 10, cqCats: [], cqModel: 'skin', cqFrame: 'full', cqWire: false, sheetH: 0 };
   }
 }
 function saveSettings() {
@@ -69,13 +70,78 @@ function showTab(name) {
     p.hidden = p.dataset.page !== name;
   }
   document.body.classList.remove('collapsed');
+  if (window.__syncGroupLabels) window.__syncGroupLabels();
 }
 for (const b of document.querySelectorAll('#tabbar button')) {
   b.addEventListener('click', () => showTab(b.dataset.tab));
 }
 
 const toggleSheet = () => document.body.classList.toggle('collapsed');
-$('grip').addEventListener('click', toggleSheet);
+
+// つまみ: 上下にドラッグすると高さが変わる。動かさずに離したら、たたむ／開く。
+(() => {
+  const grip = $('grip');
+  const sheet = $('sheet');
+  const clampH = v => Math.max(180, Math.min(window.innerHeight * 0.82, v));
+  const setH = v => {
+    const h = clampH(v);
+    document.documentElement.style.setProperty('--sheet-h', h + 'px');
+    settings.sheetH = Math.round(h);
+  };
+  if (settings.sheetH) setH(settings.sheetH);
+
+  let startY = 0, startH = 0, moved = false, id = null;
+  grip.addEventListener('pointerdown', e => {
+    if (document.body.classList.contains('collapsed')) return;
+    id = e.pointerId; startY = e.clientY; startH = sheet.getBoundingClientRect().height;
+    moved = false;
+    document.body.classList.add('resizing');
+    grip.setPointerCapture(id);
+  });
+  grip.addEventListener('pointermove', e => {
+    if (id === null || e.pointerId !== id) return;
+    const dy = e.clientY - startY;
+    if (Math.abs(dy) > 4) moved = true;
+    if (moved) { setH(startH - dy); e.preventDefault(); }
+  });
+  const end = e => {
+    if (id === null || (e && e.pointerId !== id)) return;
+    try { grip.releasePointerCapture(id); } catch (err) { /* 続行 */ }
+    id = null;
+    document.body.classList.remove('resizing');
+    if (moved) saveSettings(); else toggleSheet();
+  };
+  grip.addEventListener('pointerup', end);
+  grip.addEventListener('pointercancel', end);
+  grip.addEventListener('click', e => { if (moved) e.preventDefault(); });
+})();
+
+// 設定のグループは、ひとつ開くと他が閉じる（縦に伸びて操作しにくくならないように）
+for (const d of document.querySelectorAll('#sheet details.grp')) {
+  d.addEventListener('toggle', () => {
+    if (!d.open) return;
+    for (const o of document.querySelectorAll('#sheet details.grp')) if (o !== d) o.open = false;
+    d.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  });
+}
+
+/** グループの見出しに、今の選択を小さく出す */
+function syncGroupLabels() {
+  const pick = id => {
+    const el = document.querySelector('#' + id + ' .chip.on');
+    return el ? el.textContent.trim() : '';
+  };
+  const set = (id, text) => { const el = $(id); if (el) el.textContent = text ? '・' + text : ''; };
+  set('nowFrame', pick('frameChips'));
+  set('nowBody', [pick('bodyChips'), (+$('headRatio').value).toFixed(1) + '頭身'].filter(Boolean).join(' / '));
+  set('nowLook', [pick('viewChips'), pick('matChips')].filter(Boolean).join(' / '));
+}
+window.__syncGroupLabels = syncGroupLabels;
+// チップを押したときと、起動直後に見出しを更新する
+$('sheet').addEventListener('click', () => setTimeout(syncGroupLabels, 0));
+$('headRatio').addEventListener('input', syncGroupLabels);
+setTimeout(syncGroupLabels, 300);
+setTimeout(syncGroupLabels, 1500);
 $('btnCollapse').addEventListener('click', toggleSheet);
 
 // ---- 状態表示 --------------------------------------------------------------

@@ -196,34 +196,42 @@
 
   <!-- 設定 -->
   <div class="page" data-page="setting" hidden>
-    <div class="sub">見る範囲</div>
-    <div class="scroller" id="frameChips"></div>
-    <div class="scroller" id="sideChips" hidden></div>
+    <details class="grp" open>
+      <summary>見る範囲<span class="now" id="nowFrame"></span></summary>
+      <div class="scroller" id="frameChips"></div>
+      <div class="scroller" id="sideChips" hidden></div>
+    </details>
 
-    <div class="sub">体型</div>
-    <div class="scroller" id="bodyChips"></div>
+    <details class="grp">
+      <summary>体つき<span class="now" id="nowBody"></span></summary>
+      <div class="sub">体型</div>
+      <div class="scroller" id="bodyChips"></div>
+      <div class="sub">頭身<span class="dim">（低いほどデフォルメが効きます）</span></div>
+      <label class="row"><span class="lbl">頭身</span>
+        <input type="range" id="headRatio" min="2" max="9" step="0.1" value="7.5"><output id="outHead">7.5</output></label>
+      <button id="btnHeadReset" class="wide ghost">このモデル本来の頭身に戻す</button>
+    </details>
 
-    <div class="sub">頭身<span class="dim">（低いほどデフォルメが効きます）</span></div>
-    <label class="row"><span class="lbl">頭身</span>
-      <input type="range" id="headRatio" min="2" max="9" step="0.1" value="7.5"><output id="outHead">7.5</output></label>
-    <button id="btnHeadReset" class="wide ghost">このモデル本来の頭身に戻す</button>
-    <div class="sub">表示するモデル</div>
-    <div class="scroller" id="viewChips"></div>
-    <div class="sub">素体の質感</div>
-    <div class="scroller" id="matChips"></div>
-    <label class="row"><span class="lbl">素体の透明</span>
-      <input type="range" id="skinOpacity" min="0.08" max="1" step="0.01" value="1"><output id="outOpacity">100%</output></label>
-    <label class="row toggle"><span class="lbl">面の線を出す</span>
-      <input type="checkbox" id="wireOn"></label>
-    <label class="row toggle"><span class="lbl">面で捉えた頭部</span>
-      <input type="checkbox" id="headPlanes"></label>
-    <label class="row toggle"><span class="lbl">骨格を重ねる</span>
-      <input type="checkbox" id="boneView"></label>
-    <label class="row toggle"><span class="lbl">基準姿勢に合わせる</span>
-      <input type="checkbox" id="canonRest" checked></label>
-    <p class="hint" id="viewNote">骨格モデルが無くても、モデル自身のボーンから骨格を組み立てて表示できます。</p>
+    <details class="grp">
+      <summary>見え方<span class="now" id="nowLook"></span></summary>
+      <div class="sub">表示するモデル</div>
+      <div class="scroller" id="viewChips"></div>
+      <div class="sub">素体の質感</div>
+      <div class="scroller" id="matChips"></div>
+      <label class="row"><span class="lbl">素体の透明</span>
+        <input type="range" id="skinOpacity" min="0.08" max="1" step="0.01" value="1"><output id="outOpacity">100%</output></label>
+      <label class="row toggle"><span class="lbl">面の線を出す</span>
+        <input type="checkbox" id="wireOn"></label>
+      <label class="row toggle"><span class="lbl">面で捉えた頭部</span>
+        <input type="checkbox" id="headPlanes"></label>
+      <label class="row toggle"><span class="lbl">骨格を重ねる</span>
+        <input type="checkbox" id="boneView"></label>
+      <label class="row toggle"><span class="lbl">基準姿勢に合わせる</span>
+        <input type="checkbox" id="canonRest" checked></label>
+      <p class="hint" id="viewNote">骨格モデルが無くても、モデル自身のボーンから骨格を組み立てて表示できます。</p>
+    </details>
 
-    <details>
+    <details class="grp">
       <summary>ライトと影</summary>
       <label class="row"><span class="lbl">方位</span>
         <input type="range" id="lightAz" min="-180" max="180" step="1" value="35"><output id="outAz">35°</output></label>
@@ -241,7 +249,7 @@
         <input type="range" id="envInt" min="0" max="1.6" step="0.01" value="0.55"><output id="outEnv">0.55</output></label>
     </details>
 
-    <details>
+    <details class="grp">
       <summary>カメラと床</summary>
       <label class="row"><span class="lbl">レンズ</span>
         <input type="range" id="lens" min="18" max="135" step="1" value="40"><output id="outLens">40mm</output></label>
@@ -250,7 +258,7 @@
       <button id="btnFrame" class="wide ghost">全体を表示</button>
     </details>
 
-    <details>
+    <details class="grp">
       <summary>モデル</summary>
       <div id="slotRows"></div>
       <button id="btnSample" class="wide ghost">サンプル素体を読み込む</button>
@@ -279,7 +287,7 @@
       </details>
     </details>
 
-    <details>
+    <details class="grp">
       <summary>困ったとき</summary>
       <p class="hint" id="buildTag"></p>
       <button id="btnPurge" class="wide ghost">キャッシュを消して再読込</button>

@@ -242,13 +242,32 @@ function solveHide(pts, box, sy, sxz) {
   const cz = box.zc || 0;
   const lift = box.top - DESIGN_CROWN * sy;
   const shiftZ = cz - DESIGN_ZC * sy * sxz;
+
+  // 殻の「外側の面」だけを取り出す。
+  // 眼窩は殻の内側へ深くへこんでいて、そこまで判定に入れると
+  // 元の頭を必要以上に縮めることになる（窪みは眼の板でふさがるので見えない）。
+  const NA = 18, NB = 12;
+  const best = new Map();
+  for (let i = 0; i < pts.length; i++) {
+    const p = pts[i];
+    const x = p[0] * sy * sxz, y = p[1] * sy + lift, z = p[2] * sy * sxz + shiftZ;
+    const r = Math.sqrt(x * x + y * y + z * z);
+    if (r < 1e-9) continue;
+    const ia = Math.floor((Math.atan2(z, x) / (Math.PI * 2) + 0.5) * NA) % NA;
+    const ib = Math.min(NB - 1, Math.floor(Math.acos(Math.max(-1, Math.min(1, y / r))) / Math.PI * NB));
+    const k = ia * NB + ib;
+    const cur = best.get(k);
+    if (!cur || r > cur[3]) best.set(k, [x, y, z, r]);
+  }
+  const outer = [...best.values()];
+
   const clears = h => {
-    for (let i = 0; i < pts.length; i++) {
-      const p = pts[i];
-      const dx = (p[0] * sy * sxz) / (a * h);
-      const dy = (p[1] * sy + lift - cy * h) / (b * h);
-      const dz = (p[2] * sy * sxz + shiftZ - cz * h) / (c * h);
-      if (dx * dx + dy * dy + dz * dz < 1.05) return false;   // 殻の点が頭の中＝はみ出す
+    for (let i = 0; i < outer.length; i++) {
+      const q = outer[i];
+      const dx = q[0] / (a * h);
+      const dy = (q[1] - cy * h) / (b * h);
+      const dz = (q[2] - cz * h) / (c * h);
+      if (dx * dx + dy * dy + dz * dz < 1.05) return false;   // 外側の面が頭の中＝はみ出す
     }
     return true;
   };
@@ -284,14 +303,19 @@ export function buildHeadPlanes(headBone, parent, opts = {}) {
     // あごは首のボーンの高さ。無ければ、頭の高さの経験則（頭頂の 0.5 倍下）で置く。
     const chin = opts.neckRel < 0 ? Math.max(opts.neckRel, -top * 1.2) : -top * 0.5;
     box = { top, bottom: chin, chin, headH: top - chin,
-            half: (top - chin) * 0.36, depth: (top - chin) * 0.95, zc: -(top - chin) * 0.05 };
+            half: (top - chin) * 0.29, depth: (top - chin) * 0.82, zc: -(top - chin) * 0.05 };
   }
 
   const shell = buildShell();
+  // 収まり判定に使う面。眼窩は殻の内側へ深くへこんでいるが、
+  // 目の板・鼻・唇でふさがるので、それらも一緒に「外側の面」として見る。
+  const probe = shell.tri
+    .concat(buildNose(), buildLips(), buildEye(1), buildEye(-1));
   let sy = 1, sxz = 1, lift = 0, shiftZ = 0, hide = 0.9;
   if (box && box.headH > 1e-4) {
-    // 縦は「あご〜頭頂」をぴったり合わせる。これで首を覆わず、頭頂もずれない。
-    sy = box.headH / (DESIGN_CROWN - DESIGN_CHIN);
+    // 縦は、殻の「いちばん下」があごの高さ（＝首のボーン）に来るように合わせる。
+    // あご先を基準にすると、その下の下顎の面が首へ食い込んで首が隠れる。
+    sy = box.headH / (DESIGN_CROWN - DESIGN_BOTTOM);
 
     // ただし、実測が小さく出たときに殻まで小さくなると、元の頭に埋まって
     // 「顔が少し小さくなるだけ」になってしまう。
@@ -301,8 +325,8 @@ export function buildHeadPlanes(headBone, parent, opts = {}) {
       if (sy < floorSy) {
         sy = floorSy;
         box = Object.assign({}, box, {
-          chin: box.top - sy * (DESIGN_CROWN - DESIGN_CHIN),
-          headH: sy * (DESIGN_CROWN - DESIGN_CHIN),
+          chin: box.top - sy * (DESIGN_CROWN - DESIGN_BOTTOM),
+          headH: sy * (DESIGN_CROWN - DESIGN_BOTTOM),
         });
       }
     }
@@ -310,9 +334,9 @@ export function buildHeadPlanes(headBone, parent, opts = {}) {
     // 横と奥行は、元の頭がちゃんと殻の内側へ入るところまで広げる。
     // 眼窩は殻の内側へ深くへこんでいるので、ここを決め打ちにすると
     // 元の頭が眼窩を突き抜けて、殻がまるごと隠れてしまう。
-    for (const k of [1.0, 1.1, 1.22, 1.36, 1.5]) {
+    for (const k of [1.0, 1.06, 1.12]) {
       sxz = k;
-      hide = solveHide(shell.tri, box, sy, k);
+      hide = solveHide(probe, box, sy, k);
       if (hide >= 0.88) break;
     }
     lift = box.top - DESIGN_CROWN * sy;
