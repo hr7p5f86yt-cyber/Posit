@@ -310,6 +310,11 @@ export class Viewer {
       const names = slot.skeleton.bones.slice(0, 24).map(b => b.name);
       const how = slot.mappedBy === 'structure' ? '骨のつながりから割り出し' : 'ボーン名から';
       lines.push(`${s.name}（${slot.skeleton.bones.length}本・関節 ${Object.keys(slot.boneMap).length}・${how}）`);
+      const r3 = v => (Math.round(v * 1000) / 1000).toFixed(3);
+      lines.push(slot.headBox
+        ? `  頭の実測: 高さ ${r3(slot.headBox.height)} ／ 半幅 ${r3(slot.headBox.half)}`
+          + ` ／ 頂点 ${slot.headBox.count} 個 ／ 頭身 ${r3(slot.headRatio0 || 0)}`
+        : `  頭の実測: 使えず（骨から推定・頭身 ${r3(slot.headRatio0 || 0)}）`);
       const got = JOINTS.map(j => j.key).filter(k => slot.boneMap[k]);
       const miss = JOINTS.map(j => j.key).filter(k => !slot.boneMap[k]);
       if (got.length) lines.push('  取れた関節: ' + got.map(k => `${k}=${slot.boneMap[k].name}`).join(', '));
@@ -778,11 +783,23 @@ export class Viewer {
       slot.totalH0 = total;
       // スキンの重みから頭の実寸が取れたら、そちらを正とする
       slot.headBox = this._measureHeadBox(slot);
-      if (slot.headBox && slot.headBox.height > 1e-3) {
-        slot.headH0 = slot.headBox.height;
-        slot.bodyH0 = total - slot.headH0;
-        slot.headRatio0 = total / slot.headH0;
-        slot.crownH0 = Math.max(1e-4, slot.headBox.top);   // 頭のボーン→頭頂（実測）
+      // 実測が妥当なときだけ採用する。重みの付き方によっては一部しか拾えず、
+      // 頭が実際よりずっと小さく出ることがあるため。
+      const hb2 = slot.headBox;
+      if (hb2 && hb2.height > 1e-3) {
+        const ratio = total / hb2.height;
+        const shape = hb2.half > 1e-4 ? hb2.height / (hb2.half * 2) : 99;
+        const ok = ratio >= 3 && ratio <= 12      // 頭身として現実的か
+          && shape >= 0.9 && shape <= 2.4         // 縦横の比が頭らしいか
+          && hb2.top > 0 && hb2.count >= 60;      // 頭頂がボーンより上にあるか
+        if (ok) {
+          slot.headH0 = hb2.height;
+          slot.bodyH0 = total - slot.headH0;
+          slot.headRatio0 = ratio;
+          slot.crownH0 = Math.max(1e-4, hb2.top);
+        } else {
+          slot.headBox = null;                    // 使わない（殻の大きさも骨から決める）
+        }
       }
       const hp = slot.boneMap.hips;
       slot.hipY0 = hp ? Math.max(0, hp.getWorldPosition(new THREE.Vector3()).y - box.min.y)
@@ -860,8 +877,11 @@ export class Viewer {
     for (const s of SLOTS) {
       const slot = this.slots[s.key];
       if (!slot.skeleton || !slot.restPos) continue;
-      const r0 = slot.headRatio0 || 7.5;
-      const r = Math.max(2, Math.min(12, this.headRatio === null ? r0 : this.headRatio));
+      const r0 = Math.max(2, Math.min(12, slot.headRatio0 || 7.5));
+      // スライダーに触っていないときは、読み込んだモデルをそのまま出す。
+      // ここで r0 を丸めてしまうと、起動しただけで体型が崩れる。
+      const untouched = this.headRatio === null;
+      const r = untouched ? r0 : Math.max(2, Math.min(12, this.headRatio));
       const headH = slot.headH0 || 0.22;                    // あご先から頭頂まで
       const A = slot.headBoneY0 || (slot.bodyH0 || 1.48);   // 足元から頭のボーンまで
       const B = slot.crownH0 || headH;                      // 頭のボーンから頭頂まで
@@ -870,24 +890,27 @@ export class Viewer {
 
       // 頭の高さ = headH*kh、背丈 = 頭のボーンの高さ + B*kh。
       // 背丈を T に据え置いたまま 背丈/頭の高さ = r にすると kh は一意に決まる。
-      const kh = Math.max(0.05, T / (r * headH));
+      const kh = untouched ? 1 : Math.max(0.05, T / (r * headH));
       const headBoneY = Math.max(1e-3, T - B * kh);   // 頭のボーンが来るべき高さ
-      const kb = Math.max(0.15, headBoneY / A);       // 体ぜんたいの倍率
+      const kb = untouched ? 1 : Math.max(0.15, headBoneY / A);   // 体ぜんたいの倍率
 
       // 低頭身ほどデフォルメを強める。
       //   脚と腕をさらに詰め、そのぶん胴を伸ばして頭のボーンの高さを保つ。
       //   ボーンごと縮めるので、長さと一緒に太さも詰まる（関節から先が飛び出さない）。
       const span = Math.max(1e-6, r0 - 2);
-      const deform = Math.max(0, Math.min(1, (r0 - r) / span));
-      const kl = 1 - 0.30 * deform;                   // 脚
-      const ka = 1 - 0.38 * deform;                   // 腕
+      const deform = untouched ? 0 : Math.max(0, Math.min(1, (r0 - r) / span));
       // 胴は「脚を詰めたぶん」を引き受けて、頭のボーンの高さを元どおりにする。
       //   頭のボーンの高さ = L*kb*kl + (Sy-L)*kb + (A-Sy)*kb*kt
+      //   ここから kt = 1 + L*(1-kl)/(A-Sy)。
+      // 胴が伸びすぎるとリグによっては胸が異様に広がるので、
+      // kt に上限を置き、超えるぶんは「脚の詰め幅」のほうを先に減らす。
       const Sy = Math.min(A - 1e-3, Math.max(L, slot.spineY0 || L));
-      const rest = (A - Sy) * kb;
-      const kt = rest > 1e-6
-        ? Math.max(0.5, Math.min(2.6, (headBoneY - L * kb * kl - (Sy - L) * kb) / rest))
-        : 1;
+      const gap = Math.max(1e-4, A - Sy);
+      const KT_MAX = 1.8;
+      const maxDrop = Math.max(0, (KT_MAX - 1) * gap / Math.max(1e-4, L));
+      const kl = 1 - Math.min(0.30 * deform, maxDrop);   // 脚
+      const ka = 1 - 0.38 * deform;                      // 腕
+      const kt = untouched ? 1 : 1 + L * (1 - kl) / gap;
 
       // いったん元に戻す
       for (const b of slot.skeleton.bones) {
@@ -900,8 +923,11 @@ export class Viewer {
       const hips = slot.boneMap.hips;
       if (hips) hips.scale.setScalar(kb);
       const head = slot.boneMap.head;
+      // 面で捉えた頭部のときは、元の頭を殻の内側に隠れる分だけ縮める。
+      // 縮めすぎると首の頂点まで引っ張られて首が消えるので、縮小量は殻の側で決める。
       const hide = (this.headPlanesOn && slot === this.slots.skin
-        && slot.headPlanes && slot.headPlanes.parts.length) ? 0.62 : 1;       // 面取り頭部のときは元の頭を隠す
+        && slot.headPlanes && slot.headPlanes.parts.length)
+        ? (slot.headPlanes.hide || 0.62) : 1;
       const spine = slot.boneMap.spine || slot.boneMap.chest;
       if (spine && Math.abs(kt - 1) > 1e-3) spine.scale.setScalar(kt);
       const chainK = (hips ? kb : 1) * (spine ? kt : 1);
@@ -1007,7 +1033,8 @@ export class Viewer {
     const group = new THREE.Group();
     head.add(group);
     slot.headPlaneGroup = group;
-    slot.headPlanes = buildHeadPlanes(head, group, { box: slot.headBox, crownH: slot.crownH0 });
+    slot.headPlanes = buildHeadPlanes(head, group,
+      { box: slot.headBox, crownH: slot.crownH0, headH: slot.headH0 });
     head.scale.copy(keepHead);
     if (hips && keepHips) hips.scale.copy(keepHips);
     head.updateWorldMatrix(true, false);

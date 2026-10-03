@@ -222,6 +222,7 @@ function materials() {
 export const DESIGN_CROWN  = 0.190;   // この形での「頭のボーン→頭頂」の高さ（m）
 export const DESIGN_BOTTOM = -0.106;  // あごの底
 export const DESIGN_HALF   = 0.100;   // 頭蓋のいちばん広い半幅（耳は含まない）
+export const DESIGN_DEPTH  = 0.281;   // 後頭部から鼻先まで
 
 export function buildHeadPlanes(headBone, parent, opts = {}) {
   if (!headBone || !parent) return { parts: [], lines: [] };
@@ -235,14 +236,27 @@ export function buildHeadPlanes(headBone, parent, opts = {}) {
   // モデルの頭の実寸に合わせる。
   // 高さと幅の両方で収まる倍率を選ぶので、元の頭より大きくなることがない。
   const box = opts.box;
-  let fit = 1, lift = 0;
+  let fit = 1, lift = 0, hide = 0.8;
   if (box && box.height > 1e-4) {
     const byH = box.height / (DESIGN_CROWN - DESIGN_BOTTOM);
     const byW = box.half > 1e-4 ? box.half / DESIGN_HALF : byH;
-    fit = Math.min(byH, byW * 1.15);   // 少しなら横に広くてよい（頭を差し替えるため）
+    fit = Math.min(byH, byW * 1.25);   // 高さを優先しつつ、横は少しだけ広くてよい
     lift = box.top - DESIGN_CROWN * fit;      // 頭頂をそろえる
-  } else if (opts.crownH > 1e-4) {
-    fit = opts.crownH / DESIGN_CROWN;
+
+    // 元の頭をどこまで縮めれば殻の内側に収まるか。
+    // 縮めすぎると首まで引っ張られて消えるので、収まる範囲でいちばん大きく残す。
+    const shellBottom = DESIGN_BOTTOM * fit + lift;
+    const lim = [0.85];
+    if (box.half > 1e-5) lim.push(0.92 * DESIGN_HALF * fit / box.half);
+    if (box.depth > 1e-5) lim.push(0.92 * DESIGN_DEPTH * fit / box.depth);
+    if (box.bottom < -1e-5) lim.push(0.96 * shellBottom / box.bottom);
+    hide = Math.max(0.4, Math.min(...lim));
+  } else if (opts.headH > 1e-4) {
+    // 実測できなかったときは、骨から推した頭の高さに合わせる。
+    // 「頭のボーン→頭頂」だけで決めると、ボーンが頭の下寄りにあるリグで大きくなりすぎる。
+    fit = opts.headH / (DESIGN_CROWN - DESIGN_BOTTOM);
+    lift = (opts.crownH > 1e-4 ? opts.crownH : DESIGN_CROWN * fit) - DESIGN_CROWN * fit;
+    hide = 0.75;
   }
   const u = fit / s;
 
@@ -292,5 +306,5 @@ export function buildHeadPlanes(headBone, parent, opts = {}) {
   for (const sx of [-1, 1]) add(toGeometry(buildEye(sx)), mats.eye);   // 目（眼窩に収まる板）
   for (const sx of [-1, 1]) add(toGeometry(buildEar(sx)), mats.skin);  // 耳
 
-  return { parts, lines };
+  return { parts, lines, hide };
 }
