@@ -123,25 +123,24 @@
       <button data-seg="history">履歴</button>
     </div>
 
-    <div id="presetWrap">
+    <div class="pager" id="posePager">
+      <section class="pane" id="presetWrap">
       <div class="scroller" id="poseCats"></div>
       <div class="grid" id="poseList"></div>
-    </div>
-
-    <div id="handWrap" hidden>
+      </section>
+      <section class="pane" id="handWrap">
       <div class="scroller" id="handSide"></div>
       <div class="grid" id="handList"></div>
       <p class="hint" id="handNote"></p>
-    </div>
-
-    <div id="faceWrap" hidden>
+      </section>
+      <section class="pane" id="faceWrap">
       <div class="grid" id="faceList"></div>
       <p class="hint" id="faceNote"></p>
-    </div>
-
-    <div id="historyWrap" hidden>
+      </section>
+      <section class="pane" id="historyWrap">
       <div id="historyList"></div>
       <button id="btnClearHistory" class="ghost wide">履歴を消す</button>
+      </section>
     </div>
 
     <div class="bar" id="poseBar">
@@ -196,24 +195,29 @@
 
   <!-- 設定 -->
   <div class="page" data-page="setting" hidden>
-    <details class="grp" open>
-      <summary>見る範囲<span class="now" id="nowFrame"></span></summary>
+    <div class="seg scroll" id="setSeg">
+      <button class="on" data-pane="0">見る範囲</button>
+      <button data-pane="1">体つき</button>
+      <button data-pane="2">見え方</button>
+      <button data-pane="3">ライトと影</button>
+      <button data-pane="4">カメラと床</button>
+      <button data-pane="5">モデル</button>
+      <button data-pane="6">困ったとき</button>
+    </div>
+    <div class="pager" id="setPager">
+      <section class="pane" data-name="見る範囲">
       <div class="scroller" id="frameChips"></div>
       <div class="scroller" id="sideChips" hidden></div>
-    </details>
-
-    <details class="grp">
-      <summary>体つき<span class="now" id="nowBody"></span></summary>
+      </section>
+      <section class="pane" data-name="体つき">
       <div class="sub">体型</div>
       <div class="scroller" id="bodyChips"></div>
       <div class="sub">頭身<span class="dim">（低いほどデフォルメが効きます）</span></div>
       <label class="row"><span class="lbl">頭身</span>
         <input type="range" id="headRatio" min="2" max="9" step="0.1" value="7.5"><output id="outHead">7.5</output></label>
       <button id="btnHeadReset" class="wide ghost">このモデル本来の頭身に戻す</button>
-    </details>
-
-    <details class="grp">
-      <summary>見え方<span class="now" id="nowLook"></span></summary>
+      </section>
+      <section class="pane" data-name="見え方">
       <div class="sub">表示するモデル</div>
       <div class="scroller" id="viewChips"></div>
       <div class="sub">素体の質感</div>
@@ -229,10 +233,8 @@
       <label class="row toggle"><span class="lbl">基準姿勢に合わせる</span>
         <input type="checkbox" id="canonRest" checked></label>
       <p class="hint" id="viewNote">骨格モデルが無くても、モデル自身のボーンから骨格を組み立てて表示できます。</p>
-    </details>
-
-    <details class="grp">
-      <summary>ライトと影</summary>
+      </section>
+      <section class="pane" data-name="ライトと影">
       <label class="row"><span class="lbl">方位</span>
         <input type="range" id="lightAz" min="-180" max="180" step="1" value="35"><output id="outAz">35°</output></label>
       <label class="row"><span class="lbl">高さ</span>
@@ -247,19 +249,15 @@
         <input type="range" id="exposure" min="0.3" max="2.2" step="0.01" value="1"><output id="outExp">1.00</output></label>
       <label class="row"><span class="lbl">環境光</span>
         <input type="range" id="envInt" min="0" max="1.6" step="0.01" value="0.55"><output id="outEnv">0.55</output></label>
-    </details>
-
-    <details class="grp">
-      <summary>カメラと床</summary>
+      </section>
+      <section class="pane" data-name="カメラと床">
       <label class="row"><span class="lbl">レンズ</span>
         <input type="range" id="lens" min="18" max="135" step="1" value="40"><output id="outLens">40mm</output></label>
       <label class="row toggle"><span class="lbl">床グリッド</span>
         <input type="checkbox" id="gridOn" checked></label>
       <button id="btnFrame" class="wide ghost">全体を表示</button>
-    </details>
-
-    <details class="grp">
-      <summary>モデル</summary>
+      </section>
+      <section class="pane" data-name="モデル">
       <div id="slotRows"></div>
       <button id="btnSample" class="wide ghost">サンプル素体を読み込む</button>
       <input type="file" id="file" multiple
@@ -285,14 +283,13 @@
           <li><b>手・高精細</b> <a href="https://sketchfab.com/3d-models/hand-rig-a348cf6087eb4fd98a83b026593823ad" target="_blank" rel="noopener">Hand Rig</a><span>CC BY 4.0 / 563k / 指まで完全リグ</span></li>
         </ul>
       </details>
-    </details>
-
-    <details class="grp">
-      <summary>困ったとき</summary>
+      </section>
+      <section class="pane" data-name="困ったとき">
       <p class="hint" id="buildTag"></p>
       <button id="btnPurge" class="wide ghost">キャッシュを消して再読込</button>
       <p class="hint" id="diag"></p>
-    </details>
+      </section>
+    </div>
   </div>
 
   <nav id="tabbar">

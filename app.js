@@ -5,7 +5,7 @@ import { POSE_CATEGORIES, POSE_PRESETS, HAND_SHAPES, FACE_PRESETS, toSpec } from
 import { PoseHistory, relativeTime, HISTORY_LIMIT } from './history.js';
 import { CroquisSession, CROQUIS_SECONDS, CROQUIS_COUNTS } from './croquis.js';
 
-export const BUILD = '2026-10-03g';
+export const BUILD = '2026-10-04a';
 
 const SAMPLE_URL = 'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r169/examples/models/gltf/Xbot.glb';
 const SETTINGS_KEY = 'posit.settings.v1';
@@ -116,25 +116,50 @@ const toggleSheet = () => document.body.classList.toggle('collapsed');
   grip.addEventListener('click', e => { if (moved) e.preventDefault(); });
 })();
 
-// 設定のグループは、ひとつ開くと他が閉じる（縦に伸びて操作しにくくならないように）
-for (const d of document.querySelectorAll('#sheet details.grp')) {
-  d.addEventListener('toggle', () => {
-    if (!d.open) return;
-    for (const o of document.querySelectorAll('#sheet details.grp')) if (o !== d) o.open = false;
-    d.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+// 横スライドと見出しボタンを連動させる
+function linkPager(pagerId, buttons, onChange) {
+  const pager = $(pagerId);
+  if (!pager) return;
+  const panes = [...pager.querySelectorAll('.pane')];
+  const mark = i => {
+    buttons.forEach((b, k) => b.classList.toggle('on', k === i));
+    if (buttons[i] && buttons[i].scrollIntoView) {
+      buttons[i].scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
+    }
+    if (onChange) onChange(i, panes[i]);
+  };
+  buttons.forEach((b, i) => b.addEventListener('click', () => {
+    pager.scrollTo({ left: pager.clientWidth * i, behavior: 'smooth' });
+    mark(i);
+  }));
+  let timer = null;
+  pager.addEventListener('scroll', () => {
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(() => {
+      const i = Math.round(pager.scrollLeft / Math.max(1, pager.clientWidth));
+      mark(Math.max(0, Math.min(panes.length - 1, i)));
+    }, 60);
   });
+  return { pager, panes, go: i => { pager.scrollLeft = pager.clientWidth * i; mark(i); } };
 }
 
-/** グループの見出しに、今の選択を小さく出す */
+const setPager = linkPager('setPager', [...document.querySelectorAll('#setSeg button')]);
+
+/** 設定の見出しボタンに、今の選択を小さく添える */
 function syncGroupLabels() {
   const pick = id => {
     const el = document.querySelector('#' + id + ' .chip.on');
     return el ? el.textContent.trim() : '';
   };
-  const set = (id, text) => { const el = $(id); if (el) el.textContent = text ? '・' + text : ''; };
-  set('nowFrame', pick('frameChips'));
-  set('nowBody', [pick('bodyChips'), (+$('headRatio').value).toFixed(1) + '頭身'].filter(Boolean).join(' / '));
-  set('nowLook', [pick('viewChips'), pick('matChips')].filter(Boolean).join(' / '));
+  const btns = [...document.querySelectorAll('#setSeg button')];
+  const add = (i, text) => {
+    if (!btns[i]) return;
+    const base = btns[i].dataset.base || (btns[i].dataset.base = btns[i].textContent.trim());
+    btns[i].textContent = text ? base + ' · ' + text : base;
+  };
+  add(0, pick('frameChips'));
+  add(1, (+$('headRatio').value).toFixed(1) + '頭身');
+  add(2, pick('viewChips'));
 }
 window.__syncGroupLabels = syncGroupLabels;
 // チップを押したときと、起動直後に見出しを更新する
@@ -269,18 +294,20 @@ $('btnRandomPose').addEventListener('click', () => {
 
 const SEG_WRAPS = { preset: 'presetWrap', hand: 'handWrap', face: 'faceWrap', history: 'historyWrap' };
 
+const SEG_ORDER = ['preset', 'hand', 'face', 'history'];
+
 function showSeg(seg) {
-  for (const x of document.querySelectorAll('#poseSeg button')) {
-    x.classList.toggle('on', x.dataset.seg === seg);
-  }
-  for (const [k, id] of Object.entries(SEG_WRAPS)) $(id).hidden = k !== seg;
-  $('poseBar').hidden = seg !== 'preset';
-  if (seg === 'hand') buildHandList();
-  if (seg === 'face') buildFaceList();
+  const i = Math.max(0, SEG_ORDER.indexOf(seg));
+  if (posePager) posePager.go(i);
 }
-for (const b of document.querySelectorAll('#poseSeg button')) {
-  b.addEventListener('click', () => showSeg(b.dataset.seg));
-}
+const posePager = linkPager('posePager',
+  [...document.querySelectorAll('#poseSeg button')],
+  i => {
+    const seg = SEG_ORDER[i] || 'preset';
+    $('poseBar').hidden = seg !== 'preset';
+    if (seg === 'hand') buildHandList();
+    if (seg === 'face') buildFaceList();
+  });
 
 // ---- 手の形 ---------------------------------------------------------------
 

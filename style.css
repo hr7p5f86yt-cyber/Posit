@@ -74,7 +74,7 @@ body.collapsed #btnCollapse svg { transform: rotate(180deg); }
 
 #sheet {
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 20;
-  height: var(--sheet-h, 44vh); min-height: 180px; max-height: 82vh;
+  height: var(--sheet-h, 38vh); min-height: 170px; max-height: 82vh;
   display: flex; flex-direction: column;
   background: var(--sheet);
   -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px);
@@ -312,29 +312,32 @@ ul.links span { display: block; margin-left: 92px; font-size: 11px; color: var(-
   border-radius: 10px; padding: 10px; max-height: 190px; overflow-y: auto;
 }
 
-/* ---------- 設定のグループ ---------- */
+/* ---------- 横にスライドして切り替える ---------- */
 
-details.grp {
-  border: 1px solid var(--line); border-radius: 12px;
-  margin: 8px 0; background: rgba(255,255,255,0.025);
+.pager {
+  flex: 1; min-height: 0;
+  display: flex; overflow-x: auto; overflow-y: hidden;
+  scroll-snap-type: x mandatory; -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
 }
-details.grp > summary {
-  list-style: none; cursor: pointer;
-  padding: 12px 14px; font-size: 15px; font-weight: 600;
-  display: flex; align-items: center; gap: 8px;
+.pager::-webkit-scrollbar { display: none; }
+.pane {
+  flex: 0 0 100%; width: 100%; scroll-snap-align: start; scroll-snap-stop: always;
+  overflow-y: auto; -webkit-overflow-scrolling: touch;
+  padding: 2px 2px 10px;
 }
-details.grp > summary::-webkit-details-marker { display: none; }
-details.grp > summary::after {
-  content: ''; margin-left: auto; width: 8px; height: 8px;
-  border-right: 2px solid #8a94a6; border-bottom: 2px solid #8a94a6;
-  transform: rotate(45deg); transition: transform 0.18s;
+/* 面の中は上下に素直にスクロールさせる（横は親に任せる） */
+.pane > * { touch-action: pan-y; }
+
+.seg.scroll {
+  display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none;
+  padding: 2px 0 8px; flex: none;
 }
-details.grp[open] > summary::after { transform: rotate(-135deg); }
-details.grp[open] > summary { border-bottom: 1px solid var(--line); }
-details.grp > *:not(summary) { margin-left: 14px; margin-right: 14px; }
-details.grp > *:first-of-type { margin-top: 10px; }
-details.grp > *:last-child { margin-bottom: 12px; }
-.now { font-size: 12px; font-weight: 400; color: #8a94a6; }
+.seg.scroll::-webkit-scrollbar { display: none; }
+.seg.scroll button { flex: 0 0 auto; white-space: nowrap; }
+
+/* ページ全体は縦に並べ、面だけがスクロールする */
+.page { display: flex; flex-direction: column; }
 
 /* つまみを下へ引くと低く、上へ引くと高くできる */
 #grip { touch-action: none; cursor: ns-resize; }
