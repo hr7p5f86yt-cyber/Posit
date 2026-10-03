@@ -223,6 +223,7 @@ export const DESIGN_CROWN  = 0.190;   // この形での「頭のボーン→頭
 export const DESIGN_BOTTOM = -0.106;  // あごの底
 export const DESIGN_HALF   = 0.100;   // 頭蓋のいちばん広い半幅（耳は含まない）
 export const DESIGN_DEPTH  = 0.281;   // 後頭部から鼻先まで
+export const DESIGN_CHIN   = -0.092;  // あご先（ここから下は首にかかる）
 
 export function buildHeadPlanes(headBone, parent, opts = {}) {
   if (!headBone || !parent) return { parts: [], lines: [] };
@@ -238,19 +239,19 @@ export function buildHeadPlanes(headBone, parent, opts = {}) {
   const box = opts.box;
   let fit = 1, lift = 0, hide = 0.8;
   if (box && box.height > 1e-4) {
-    const byH = box.height / (DESIGN_CROWN - DESIGN_BOTTOM);
+    // あご〜頭頂の高さに合わせる。箱の底（首の中）に合わせると首を覆ってしまう。
+    const headH = box.headH > 1e-4 ? box.headH : box.height;
+    const byH = headH / (DESIGN_CROWN - DESIGN_CHIN);
     const byW = box.half > 1e-4 ? box.half / DESIGN_HALF : byH;
     fit = Math.min(byH, byW * 1.25);   // 高さを優先しつつ、横は少しだけ広くてよい
     lift = box.top - DESIGN_CROWN * fit;      // 頭頂をそろえる
 
     // 元の頭をどこまで縮めれば殻の内側に収まるか。
     // 縮めすぎると首まで引っ張られて消えるので、収まる範囲でいちばん大きく残す。
-    const shellBottom = DESIGN_BOTTOM * fit + lift;
-    const lim = [0.85];
-    if (box.half > 1e-5) lim.push(0.92 * DESIGN_HALF * fit / box.half);
-    if (box.depth > 1e-5) lim.push(0.92 * DESIGN_DEPTH * fit / box.depth);
-    if (box.bottom < -1e-5) lim.push(0.96 * shellBottom / box.bottom);
-    hide = Math.max(0.4, Math.min(...lim));
+    const lim = [0.95];
+    if (box.half > 1e-5) lim.push(0.95 * DESIGN_HALF * fit / box.half);
+    if (box.depth > 1e-5) lim.push(0.95 * DESIGN_DEPTH * fit / box.depth);
+    hide = Math.max(0.55, Math.min(...lim));
   } else if (opts.headH > 1e-4) {
     // 実測できなかったときは、骨から推した頭の高さに合わせる。
     // 「頭のボーン→頭頂」だけで決めると、ボーンが頭の下寄りにあるリグで大きくなりすぎる。

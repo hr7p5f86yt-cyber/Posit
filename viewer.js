@@ -189,7 +189,20 @@ export class Viewer {
     scene.add(this.container);
 
     this._resize();
-    window.addEventListener('resize', () => this._resize());
+    const bump = () => this._resize();
+    window.addEventListener('resize', bump);
+    // iOS は回転した直後だと、まだ古い大きさを返すことがある。
+    // 落ち着いたころにもう一度測り直す。
+    window.addEventListener('orientationchange', () => {
+      bump();
+      for (const t of [100, 300, 700]) setTimeout(bump, t);
+    });
+    if (window.visualViewport) window.visualViewport.addEventListener('resize', bump);
+    // いちばん確実なのは、キャンバスの箱そのものを見張ること
+    if (window.ResizeObserver) {
+      this._sizeWatch = new ResizeObserver(bump);
+      this._sizeWatch.observe(this.canvas);
+    }
   }
 
   _initLights() {
@@ -248,10 +261,16 @@ export class Viewer {
   }
 
   _resize() {
-    const w = this.canvas.clientWidth || window.innerWidth;
-    const h = this.canvas.clientHeight || window.innerHeight;
+    // clientWidth は回転の途中で古い値を返すことがあるので、実測の箱を優先する
+    const r = this.canvas.getBoundingClientRect ? this.canvas.getBoundingClientRect() : null;
+    const w = Math.round((r && r.width) || this.canvas.clientWidth || window.innerWidth);
+    const h = Math.round((r && r.height) || this.canvas.clientHeight || window.innerHeight);
+    if (w < 1 || h < 1) return;
+    if (w === this._lastW && h === this._lastH) return;
+    this._lastW = w; this._lastH = h;
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     this.renderer.setSize(w, h, false);
-    this.camera.aspect = w / Math.max(h, 1);
+    this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
   }
 
@@ -732,6 +751,7 @@ export class Viewer {
     let n = 0;
     const lo = new THREE.Vector3(1e9, 1e9, 1e9);
     const hi = new THREE.Vector3(-1e9, -1e9, -1e9);
+    const ys = [], axs = [];        // あごの位置を探すのに使う
 
     for (const m of slot.meshes) {
       const g = m.geometry;
@@ -751,11 +771,34 @@ export class Viewer {
         m.localToWorld(v);
         head.worldToLocal(v).multiplyScalar(hs);     // 頭のボーン基準・メートル
         lo.min(v); hi.max(v); n++;
+        ys.push(v.y); axs.push(Math.abs(v.x));
       }
     }
     if (n < 24) return null;
+
+    // あご（＝首との境目）を探す。
+    // 頭のボーンには首の上の方の頂点もぶら下がっているので、箱の底をあごだと思うと
+    // 面で捉えた頭部が首まで覆ってしまう。下から見て幅が広がりきる高さをあごとみなす。
+    const BINS = 28;
+    const span = Math.max(1e-6, hi.y - lo.y);
+    const prof = new Array(BINS).fill(0);
+    for (let i = 0; i < ys.length; i++) {
+      const k = Math.min(BINS - 1, Math.max(0, Math.floor((ys[i] - lo.y) / span * BINS)));
+      if (axs[i] > prof[k]) prof[k] = axs[i];
+    }
+    const widest = Math.max(...prof);
+    let chin = lo.y;
+    if (widest > 1e-6) {
+      for (let k = 0; k < BINS; k++) {
+        if (prof[k] >= widest * 0.62) { chin = lo.y + (k + 0.5) * span / BINS; break; }
+      }
+    }
+    // 見つからない／頭の半分より上まで行ってしまったときは、箱の底を使う
+    if (!(chin > lo.y) || chin > lo.y + span * 0.5) chin = lo.y;
+
     return {
-      top: hi.y, bottom: lo.y, height: hi.y - lo.y,
+      top: hi.y, bottom: lo.y, chin, height: hi.y - lo.y,
+      headH: hi.y - chin,
       half: Math.max(Math.abs(lo.x), Math.abs(hi.x)),
       zc: (lo.z + hi.z) / 2, depth: hi.z - lo.z, count: n,
     };
