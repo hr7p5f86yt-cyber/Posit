@@ -819,6 +819,9 @@ export class Viewer {
     }
     const chin = Math.max(lo.y, Math.min(neckRel, hi.y - 1e-3));
 
+    // 頭のボーンより上に頂点がなければ、拾えているのは頭ではない
+    if (!(hi.y > 0) || !(hi.y - chin > 1e-3)) return null;
+
     return {
       top: hi.y, bottom: lo.y, chin, height: hi.y - lo.y,
       headH: hi.y - chin,
@@ -851,30 +854,26 @@ export class Viewer {
       slot.totalH0 = total;
       // スキンの重みから頭の実寸が取れたら、そちらを正とする
       slot.headBox = this._measureHeadBox(slot);
-      // 実測が妥当なときだけ採用する。重みの付き方によっては一部しか拾えず、
-      // 頭が実際よりずっと小さく出ることがあるため。
+      // 実測が妥当なときだけ採用する。
+      // モデルによっては見当違いの頂点を拾うことがあるので、骨から分かる
+      // 「頭のボーン→頭頂」と突き合わせ、合わなければ必ず捨てる。
       const hb2 = slot.headBox;
-      if (hb2 && hb2.headH > 1e-3) {
-        const ratio = total / hb2.headH;
-        const shape = hb2.half > 1e-4 ? hb2.headH / (hb2.half * 2) : 99;
-        const ok = ratio >= 3 && ratio <= 13      // 頭身として現実的か
-          && shape >= 0.8 && shape <= 2.8         // 縦横の比が頭らしいか
-          && hb2.top > 0 && hb2.count >= 24;      // 頭頂がボーンより上にあるか
-        if (ok) {
-          slot.headH0 = hb2.headH;
-          slot.bodyH0 = total - slot.headH0;
-          slot.headRatio0 = ratio;
-          slot.crownH0 = Math.max(1e-4, hb2.top);
-        } else {
-          slot.headBox = null;                    // 使わない（殻の大きさも骨から決める）
-        }
+      const cb = slot.crownBone0;
+      const ok = !!hb2
+        && hb2.headH > 1e-3
+        && hb2.count >= 24
+        && hb2.top > cb * 0.3 && hb2.top < cb * 2.5          // 頭頂の高さが骨と合うか
+        && hb2.headH > cb * 0.5 && hb2.headH < cb * 3.0      // 頭の高さが現実的か
+        && hb2.half > cb * 0.15 && hb2.half < cb * 1.5       // 幅が現実的か
+        && total / hb2.headH >= 3 && total / hb2.headH <= 13;
+      if (ok) {
+        slot.headH0 = hb2.headH;
+        slot.bodyH0 = total - slot.headH0;
+        slot.headRatio0 = total / hb2.headH;
+        slot.crownH0 = Math.max(1e-4, hb2.top);
+      } else {
+        slot.headBox = null;                      // 使わない（殻は骨から決める）
       }
-      const hp = slot.boneMap.hips;
-      slot.hipY0 = hp ? Math.max(0, hp.getWorldPosition(new THREE.Vector3()).y - box.min.y)
-                      : slot.headBoneY0 * 0.6;
-      // 胴を伸び縮みさせるときに使うボーンの高さ
-      const sp = slot.boneMap.spine || slot.boneMap.chest;
-      slot.spineY0 = sp ? sp.getWorldPosition(new THREE.Vector3()).y - box.min.y : slot.hipY0;
     }
     // 元の骨の間隔を覚えておく（頭身を変えるときに縮める）
     slot.restPos = new Map();

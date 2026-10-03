@@ -272,9 +272,16 @@ export function buildHeadPlanes(headBone, parent, opts = {}) {
 
   // モデルの頭の実寸に合わせる。
   // 実測できなかったときは、頭頂と首のボーンから箱を組み立てて、同じ当てはめ方に乗せる。
+  // 渡された箱が頭らしくなければ使わない。
+  // 位置合わせに使う値なので、ここが狂うと殻が明後日の場所へ飛ぶ。
   let box = opts.box;
+  const cb = opts.crownH || 0;
+  if (box && !(box.top > cb * 0.3 && box.top < cb * 2.5
+      && box.headH > cb * 0.5 && box.headH < cb * 3.0)) box = null;
+
   if (!box && opts.crownH > 1e-4) {
     const top = opts.crownH;
+    // あごは首のボーンの高さ。無ければ、頭の高さの経験則（頭頂の 0.5 倍下）で置く。
     const chin = opts.neckRel < 0 ? Math.max(opts.neckRel, -top * 1.2) : -top * 0.5;
     box = { top, bottom: chin, chin, headH: top - chin,
             half: (top - chin) * 0.36, depth: (top - chin) * 0.95, zc: -(top - chin) * 0.05 };
