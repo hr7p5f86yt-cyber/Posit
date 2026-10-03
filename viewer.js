@@ -7,7 +7,9 @@ import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { JOINTS, JOINT_BY_KEY, JOINT_GROUPS, mapBones, mapBonesByStructure, mapFingers, fingerCount, clampAngles, limitExcess, wrapDeg, normalizeName } from './bones.js';
 import { parseSpec, parseFingerSpec } from './poses.js';
 import { buildSkeletonView } from './skeletonView.js';
-import { buildHeadPlanes } from './headPlanes.js';
+import { buildHeadPlanes, FIG_HEADS, HEADH_MIN, HEADH_MAX } from './headPlanes.js';
+// 不具合を調べるときの入り口（画面には出ない）
+if (typeof window !== 'undefined') window.__positTHREE = THREE;
 
 /** 例外を握りつぶさず、どの処理で落ちたかを画面に出す */
 function guard(label, fn) {
@@ -330,15 +332,19 @@ export class Viewer {
       const how = slot.mappedBy === 'structure' ? '骨のつながりから割り出し' : 'ボーン名から';
       lines.push(`${s.name}（${slot.skeleton.bones.length}本・関節 ${Object.keys(slot.boneMap).length}・${how}）`);
       const r3 = v => (Math.round(v * 1000) / 1000).toFixed(3);
+      lines.push(`  背丈 ${r3(slot.totalH0 || 0)} ／ 頭のボーン ${r3(slot.headBoneY0 || 0)}`
+        + ` ／ ボーン→頭頂 ${r3(slot.crownBone0 || 0)}`
+        + ` ／ 頭の高さ ${r3(slot.headH0 || 0)} ／ 頭身 ${r3(slot.headRatio0 || 0)}`);
       lines.push(slot.headBox
         ? `  頭の実測(${slot.headBox.source}): あご〜頭頂 ${r3(slot.headBox.headH)}`
           + ` ／ 箱の底 ${r3(slot.headBox.bottom)} ／ あご ${r3(slot.headBox.chin)}`
           + ` ／ 半幅 ${r3(slot.headBox.half)} ／ 頂点 ${slot.headBox.count} 個`
-          + ` ／ 頭身 ${r3(slot.headRatio0 || 0)}`
-        : `  頭の実測: 使えず（骨から推定・頭身 ${r3(slot.headRatio0 || 0)}）`);
+        : '  頭の実測: 使えず（身長 ÷ 7.5 から算出）');
       if (slot.headPlanes && slot.headPlanes.parts.length) {
-        lines.push(`  面の頭部: 縦 ${r3(slot.headPlanes.sy || 0)}`
-          + ` ／ 横 ${r3(slot.headPlanes.sxz || 0)} ／ 元の頭の縮小 ${r3(slot.headPlanes.hide || 0)}`);
+        lines.push(`  面の頭部: 高さ ${r3(slot.headPlanes.headH || 0)}`
+          + ` ／ あご ${r3(slot.headPlanes.chin || 0)} ／ 首 ${r3(slot.headPlanes.neckRel || 0)}`
+          + ` ／ 縦 ${r3(slot.headPlanes.sy || 0)} 横 ${r3(slot.headPlanes.sxz || 0)}`
+          + ` ／ 元の頭の縮小 ${r3(slot.headPlanes.hide || 0)}`);
       }
       const got = JOINTS.map(j => j.key).filter(k => slot.boneMap[k]);
       const miss = JOINTS.map(j => j.key).filter(k => !slot.boneMap[k]);
@@ -840,9 +846,6 @@ export class Viewer {
     const headH = box.max.y - neckY;
     const total = box.max.y - box.min.y;
     if (headH > 1e-4 && total > 1e-4) {
-      slot.headH0 = headH;
-      slot.bodyH0 = total - headH;
-      slot.headRatio0 = total / headH;
       // 頭身を変えるときに必要な三つの高さ
       //   headBoneY0 … 頭の骨の高さ（ここから下は体として縮む）
       //   crownH0    … 頭の骨から頭頂まで（ここは頭として拡大する）
@@ -852,20 +855,36 @@ export class Viewer {
       slot.crownH0 = Math.max(1e-4, total - slot.headBoneY0);
       slot.crownBone0 = slot.crownH0;      // 実測で上書きしない、骨だけから出した値
       slot.totalH0 = total;
-      // スキンの重みから頭の実寸が取れたら、そちらを正とする
-      slot.headBox = this._measureHeadBox(slot);
-      // 実測が妥当なときだけ採用する。
-      // モデルによっては見当違いの頂点を拾うことがあるので、骨から分かる
-      // 「頭のボーン→頭頂」と突き合わせ、合わなければ必ず捨てる。
-      const hb2 = slot.headBox;
+      // 腰と背骨の高さ（頭身を下げたときに、脚を詰めて胴で取り返すのに使う）。
+      // ここが取れていないと胴の伸ばし量がずれ、背丈が据え置きにならない。
+      const hipB = slot.boneMap.hips;
+      const spB = slot.boneMap.spine || slot.boneMap.chest;
+      slot.hipY0 = hipB ? hipB.getWorldPosition(new THREE.Vector3()).y - box.min.y : 0;
+      slot.spineY0 = spB ? spB.getWorldPosition(new THREE.Vector3()).y - box.min.y : 0;
+
+      // 頭の高さ（あご先〜頭頂）は解剖学的な比率から決める。
+      // おとなは 身長 ÷ 7.5（ANSUR 1988 の実測で 7.56 男 / 7.46 女）。
+      // 「頭頂〜首のボーン」をそのまま頭の高さにすると、素体によっては
+      // 胸の上までを頭に数えてしまい、頭が 3〜4 割大きくなる
+      // （首のボーンが胸骨の上＝頭頂から 1.37 頭分のところに置かれているため）。
       const cb = slot.crownBone0;
+      const anatH = Math.max(cb * HEADH_MIN,
+        Math.min(cb * HEADH_MAX, total / FIG_HEADS));
+      slot.headH0 = anatH;
+      slot.bodyH0 = total - anatH;
+      slot.headRatio0 = total / anatH;
+
+      // スキンの重みから頭の実寸が取れて、解剖学的な値とも食い違わなければ、
+      // そちらを正とする。モデルによっては見当違いの頂点を拾うので、
+      // 骨から分かる「頭のボーン→頭頂」とも突き合わせ、合わなければ必ず捨てる。
+      slot.headBox = this._measureHeadBox(slot);
+      const hb2 = slot.headBox;
       const ok = !!hb2
         && hb2.headH > 1e-3
         && hb2.count >= 24
         && hb2.top > cb * 0.3 && hb2.top < cb * 2.5          // 頭頂の高さが骨と合うか
-        && hb2.headH > cb * 0.5 && hb2.headH < cb * 3.0      // 頭の高さが現実的か
         && hb2.half > cb * 0.15 && hb2.half < cb * 1.5       // 幅が現実的か
-        && total / hb2.headH >= 3 && total / hb2.headH <= 13;
+        && Math.abs(hb2.headH - anatH) < anatH * 0.25;       // 解剖学的な値と 25% 以内
       if (ok) {
         slot.headH0 = hb2.headH;
         slot.bodyH0 = total - slot.headH0;
@@ -1109,7 +1128,8 @@ export class Viewer {
     }
     slot.headPlanes = buildHeadPlanes(head, group, {
       box: slot.headBox,
-      crownH: slot.crownBone0 || slot.crownH0,   // 殻が小さくなりすぎないための下限に使う
+      crownH: slot.crownBone0 || slot.crownH0,   // 頭のボーン→頭頂（上下に挟むのに使う）
+      totalH: slot.totalH0,                      // 背丈（頭の高さ＝背丈÷7.5）
       headH: slot.headH0, neckRel,
     });
     head.scale.copy(keepHead);
@@ -1144,9 +1164,10 @@ export class Viewer {
     if (!hp || !hp.parts.length) return '面の頭部: 作れていません';
     const r = v => (Math.round((v || 0) * 1000) / 1000).toFixed(3);
     const b = slot.headBox;
-    return `縦${r(hp.sy)} 横${r(hp.sxz)} 縮小${r(hp.hide)} ／ `
-      + (b ? `頭(${b.source}) 高${r(b.headH)} 半幅${r(b.half)} 底${r(b.bottom)} あご${r(b.chin)}`
-           : `頭=骨から推定 冠${r(slot.crownH0)}`);
+    const h1 = v => (Math.round((v || 0) * 10) / 10).toFixed(1);
+    return `頭の高さ ${r(hp.headH)}m（${h1(hp.heads)}頭身）`
+      + ` ／ 頭頂 ${r(hp.top)} あご ${r(hp.chin)} 首 ${r(hp.neckRel)}`
+      + ` ／ ${b ? `実測(${b.source})` : '身長から算出'}`;
   }
 
   /** 面で捉えた頭部が今の表示で使えるか */

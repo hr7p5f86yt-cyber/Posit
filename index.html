@@ -96,6 +96,9 @@
   <button id="btnCollapse" class="icon" title="パネルの開閉">
     <svg viewBox="0 0 24 24"><path d="M7 14l5-5 5 5"/></svg>
   </button>
+  <button id="btnHelp" class="icon sm quiet" title="困ったとき" aria-label="困ったとき">
+    <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.7 9.4a2.4 2.4 0 113.9 2c-.85.65-1.5 1.15-1.5 2.2"/><circle cx="12" cy="17" r="1.05" fill="currentColor" stroke="none"/></svg>
+  </button>
   <span id="selBadge"></span>
   <div class="spacer"></div>
   <button id="btnUndo" class="icon" title="1つ戻す">
@@ -123,29 +126,35 @@
       <button data-seg="history">履歴</button>
     </div>
 
-    <div class="pager" id="posePager">
-      <section class="pane" id="presetWrap">
-      <div class="scroller" id="poseCats"></div>
-      <div class="grid" id="poseList"></div>
+    <div class="swap" id="poseSwap">
+      <section class="pane on" id="presetWrap">
+        <div class="catbar">
+          <div class="scroller snap" id="poseCats"></div>
+          <div class="tools">
+            <button id="btnRandomPose" class="icon sm" title="ランダムなポーズ" aria-label="ランダムなポーズ">
+              <svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="4.5"/><circle cx="9" cy="9" r="1.3" fill="currentColor" stroke="none"/><circle cx="15" cy="9" r="1.3" fill="currentColor" stroke="none"/><circle cx="9" cy="15" r="1.3" fill="currentColor" stroke="none"/><circle cx="15" cy="15" r="1.3" fill="currentColor" stroke="none"/></svg>
+            </button>
+            <button id="btnPhoto" class="icon sm" title="写真からポーズを読み取る" aria-label="写真からポーズを読み取る">
+              <svg viewBox="0 0 24 24"><path d="M3 9a2 2 0 012-2h1.8l1.3-2h7.8l1.3 2H19a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><circle cx="12" cy="13" r="3.3"/></svg>
+            </button>
+          </div>
+        </div>
+        <div class="pager" id="poseList"></div>
+        <div class="dots" id="poseDots"></div>
       </section>
       <section class="pane" id="handWrap">
-      <div class="scroller" id="handSide"></div>
-      <div class="grid" id="handList"></div>
-      <p class="hint" id="handNote"></p>
+        <div class="scroller snap" id="handSide"></div>
+        <div class="grid" id="handList"></div>
+        <p class="hint" id="handNote"></p>
       </section>
       <section class="pane" id="faceWrap">
-      <div class="grid" id="faceList"></div>
-      <p class="hint" id="faceNote"></p>
+        <div class="grid" id="faceList"></div>
+        <p class="hint" id="faceNote"></p>
       </section>
       <section class="pane" id="historyWrap">
-      <div id="historyList"></div>
-      <button id="btnClearHistory" class="ghost wide">履歴を消す</button>
+        <div id="historyList"></div>
+        <button id="btnClearHistory" class="ghost wide">履歴を消す</button>
       </section>
-    </div>
-
-    <div class="bar" id="poseBar">
-      <button id="btnRandomPose" class="primary">ランダム</button>
-      <button id="btnPhoto" class="ghost">写真から</button>
     </div>
     <input type="file" id="photoFile" accept="image/*" hidden>
   </div>
@@ -167,8 +176,9 @@
         <input type="range" id="axZ" min="-180" max="180" step="1" value="0">
         <output id="outZ">0°</output></label>
     </div>
-    <p class="hint">人形を直接タップしても関節を選べます。</p>
-    <div id="jointList"></div>
+    <div class="seg scroll" id="jointSeg"></div>
+    <div class="pager" id="jointList"></div>
+    <p class="hint tiny">まとまりは左右にスライドしても切り替えられます。人形を直接タップしても選べます。</p>
     <label class="row toggle"><span class="lbl">可動域を制限</span>
       <input type="checkbox" id="limitsOn" checked></label>
   </div>
@@ -202,7 +212,6 @@
       <button data-pane="3">ライトと影</button>
       <button data-pane="4">カメラと床</button>
       <button data-pane="5">モデル</button>
-      <button data-pane="6">困ったとき</button>
     </div>
     <div class="pager" id="setPager">
       <section class="pane" data-name="見る範囲">
@@ -284,12 +293,8 @@
         </ul>
       </details>
       </section>
-      <section class="pane" data-name="困ったとき">
-      <p class="hint" id="buildTag"></p>
-      <button id="btnPurge" class="wide ghost">キャッシュを消して再読込</button>
-      <p class="hint" id="diag"></p>
-      </section>
     </div>
+    <div class="dots" id="setDots"></div>
   </div>
 
   <nav id="tabbar">
@@ -335,6 +340,16 @@
       <button id="photoApply" class="primary" disabled>当てる</button>
       <button id="photoClose" class="ghost">閉じる</button>
     </div>
+  </div>
+</div>
+
+<div id="helpBox" hidden>
+  <div class="card wide-card">
+    <strong>困ったとき</strong>
+    <p class="hint" id="buildTag"></p>
+    <button id="btnPurge" class="wide ghost">キャッシュを消して再読込</button>
+    <p class="hint" id="diag">タップすると状態を表示します。</p>
+    <button id="helpClose" class="primary wide">閉じる</button>
   </div>
 </div>
 

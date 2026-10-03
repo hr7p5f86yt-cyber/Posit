@@ -220,14 +220,33 @@ function materials() {
  * @returns {{parts: THREE.Mesh[], lines: THREE.LineSegments[]}}
  */
 export const DESIGN_CROWN  = 0.190;   // この形での「頭のボーン→頭頂」の高さ（m）
-export const DESIGN_BOTTOM = -0.106;  // あごの底
+export const DESIGN_BOTTOM = -0.106;  // あごの底（殻のいちばん下）
 export const DESIGN_HALF   = 0.100;   // 頭蓋のいちばん広い半幅（耳は含まない）
 export const DESIGN_DEPTH  = 0.281;   // 後頭部から鼻先まで
-export const DESIGN_CHIN   = -0.092;  // あご先（ここから下は首にかかる）
+export const DESIGN_CHIN   = -0.092;  // あご先＝頭の高さの下端
 export const DESIGN_ZC     = -0.014;  // 前後方向の中心
 // 面で捉えた頭部を出すときは、元の頭をここまで縮めて見えなくする。
 // 0 にはせず、ごく小さく残す（頭のボーンにぶら下がる殻の縮尺に使うため）。
 export const HIDE_HEAD     = 0.02;
+
+// ---- おとなの頭の実測比率 ------------------------------------------------
+// 米陸軍の人体計測 ANSUR(1988) の 50 パーセンタイルから出した値。
+//   身長 ÷ 頭の高さ（頭頂〜あご先） … 7.56（男）/ 7.46（女）
+//   頭の幅   ÷ 頭の高さ … 0.655 / 0.661
+//   頭の奥行（眉間〜後頭部）÷ 頭の高さ … 0.849 / 0.858
+//   耳の穴は頭頂から 0.565、目線は 0.515 のところ
+//   首の付け根（胸骨の上のくぼみ）は頭頂から 1.37 頭分、
+//   首の骨の出っぱり（第七頸椎）は 1.02 頭分＝ほぼあごと同じ高さ
+// 頭を回す関節（環椎後頭関節）は頭頂から 0.65 頭分のところにあり、
+// そこにボーンがある素体なら 頭の高さ ÷（ボーン→頭頂）= 1.54 になる。
+// Mixamo のように頭のボーンがもっと下（あごの近く）にある素体もあるので、
+// 縦の寸法はボーンではなく「身長 ÷ 7.5」から決め、ボーンでは上下に挟むだけにする。
+export const FIG_HEADS = 7.5;    // 身長 ÷ 頭の高さ
+export const HEADH_MIN = 1.05;   // 頭の高さ ÷（頭のボーン→頭頂）の下限
+export const HEADH_MAX = 1.75;   // 同・上限
+// この形は実測比より 6% ほど横に広いので、幅と奥行をまとめて詰める。
+//   幅 0.702→0.660、奥行（眉間〜後頭部）0.890→0.837、鼻先まで 0.996→0.937
+export const SXZ_CAL   = 0.94;
 
 /**
  * 元の頭を「あごから上の楕円体」とみなし、殻の内側に収まる最大の縮小率を二分法で解く。
@@ -250,33 +269,42 @@ export function buildHeadPlanes(headBone, parent, opts = {}) {
   // 実測できなかったときは、頭頂と首のボーンから箱を組み立てて、同じ当てはめ方に乗せる。
   // 渡された箱が頭らしくなければ使わない。
   // 位置合わせに使う値なので、ここが狂うと殻が明後日の場所へ飛ぶ。
-  let box = opts.box;
-  const cb = opts.crownH || 0;
-  if (box && !(box.top > cb * 0.3 && box.top < cb * 2.5
-      && box.headH > cb * 0.5 && box.headH < cb * 3.0)) box = null;
+  const cb = opts.crownH || 0;        // 頭のボーン→頭頂（bbox と骨から分かる・信頼できる）
+  const total = opts.totalH || 0;     // 背丈
+  const meas = opts.box;              // 頭の重みから測った箱（前後の中心だけ使う）
 
-  // 実測できないときは、骨から頭の高さを決める。
-  //   頭頂  … 頭のボーンから crownH 上（bbox から分かる）
-  //   あご  … 頭のボーンから crownH の 0.45 倍下（人の頭のふつうの比率）
-  //           ただし首のボーンより上に置き、首が殻の外に残るようにする
-  if (!box && cb > 1e-4) {
-    const top = cb;
-    let chin = -cb * 0.45;
-    if (opts.neckRel < 0) chin = Math.max(chin, opts.neckRel + cb * 0.10);
-    box = { top, bottom: chin, chin, headH: top - chin,
-            half: (top - chin) * 0.33, depth: (top - chin) * 0.88, zc: -(top - chin) * 0.05 };
+  // 頭の高さは「身長 ÷ 7.5」で決める。
+  // 頭の重みから測った箱はモデルによってあごを首まで拾ってしまい、
+  // 頭が 3〜4 割大きくなるので、縦の寸法には使わない。
+  // 実測が解剖学的な値と合っていればそれを使う（viewer 側で突き合わせ済み）
+  let headH = opts.headH > 1e-4 ? opts.headH
+    : (total > 1e-4 ? total / FIG_HEADS : cb * 1.45);
+  if (cb > 1e-4) {
+    // 頭のボーンは必ず頭の中にあるので、頭頂までの距離から上下に挟む
+    headH = Math.max(cb * HEADH_MIN, Math.min(cb * HEADH_MAX, headH));
+    // あご先が首のボーンより下へ行かないようにする（行くと首が殻に隠れる）
+    if (opts.neckRel < 0) {
+      headH = Math.min(headH, Math.max(cb * HEADH_MIN, cb - opts.neckRel));
+    }
   }
+  const top = cb;
+  const chin = top - headH;
+  // 前後の中心は、まともな値のときだけ実測に合わせる
+  let zc = 0;
+  if (meas && Number.isFinite(meas.zc) && Math.abs(meas.zc) < headH * 0.35) zc = meas.zc;
 
+  // あご先（DESIGN_CHIN）が chin に、頭頂（DESIGN_CROWN）が top に来るように合わせる。
+  // 殻のいちばん下（DESIGN_BOTTOM）はあご先より少し下＝あごの底なので、
+  // 首の始まりにちょうど乗る。
   let sy = 1, lift = 0, shiftZ = 0;
-  if (box && box.headH > 1e-4) {
-    // 殻のいちばん下があごの高さに来るように合わせる
-    sy = box.headH / (DESIGN_CROWN - DESIGN_BOTTOM);
-    lift = box.top - DESIGN_CROWN * sy;
-    shiftZ = (box.zc || 0) - DESIGN_ZC * sy;
+  if (headH > 1e-4) {
+    sy = headH / (DESIGN_CROWN - DESIGN_CHIN);
+    lift = top - DESIGN_CROWN * sy;
+    shiftZ = zc - DESIGN_ZC * sy;
   }
   const shell = buildShell();
-  // 元の頭は丸ごと消すので、殻を太らせて包む必要がない
-  const sxz = 1;
+  // 元の頭は丸ごと消すので、殻を太らせて包む必要はない。幅は実測比への補正だけ。
+  const sxz = SXZ_CAL;
   const hide = HIDE_HEAD;
   const ux = sy * sxz / s, uy = sy / s, uz = sy * sxz / s;
 
@@ -325,5 +353,7 @@ export function buildHeadPlanes(headBone, parent, opts = {}) {
   for (const sx of [-1, 1]) add(toGeometry(buildEye(sx)), mats.eye);   // 目（眼窩に収まる板）
   for (const sx of [-1, 1]) add(toGeometry(buildEar(sx)), mats.skin);  // 耳
 
-  return { parts, lines, hide, sy, sxz };
+  return { parts, lines, hide, sy, sxz, headH, chin, top,
+           neckRel: Number.isFinite(opts.neckRel) ? opts.neckRel : 0,
+           heads: total > 1e-4 && headH > 1e-4 ? total / headH : 0 };
 }

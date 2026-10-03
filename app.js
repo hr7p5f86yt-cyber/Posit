@@ -5,7 +5,7 @@ import { POSE_CATEGORIES, POSE_PRESETS, HAND_SHAPES, FACE_PRESETS, toSpec } from
 import { PoseHistory, relativeTime, HISTORY_LIMIT } from './history.js';
 import { CroquisSession, CROQUIS_SECONDS, CROQUIS_COUNTS } from './croquis.js';
 
-export const BUILD = '2026-10-04a';
+export const BUILD = '2026-10-04b';
 
 const SAMPLE_URL = 'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r169/examples/models/gltf/Xbot.glb';
 const SETTINGS_KEY = 'posit.settings.v1';
@@ -15,6 +15,8 @@ const $ = id => document.getElementById(id);
 
 mark('モジュール読込');
 const viewer = new Viewer($('view'));
+// 不具合を調べるときの入り口（画面には出ない）
+window.__posit = { viewer };
 const history = new PoseHistory();
 window.__positViewer = viewer;
 mark('シーン作成');
@@ -70,7 +72,7 @@ function showTab(name) {
     p.hidden = p.dataset.page !== name;
   }
   document.body.classList.remove('collapsed');
-  if (window.__syncGroupLabels) window.__syncGroupLabels();
+  if (window.__positRelayout) window.__positRelayout();
 }
 for (const b of document.querySelectorAll('#tabbar button')) {
   b.addEventListener('click', () => showTab(b.dataset.tab));
@@ -109,65 +111,86 @@ const toggleSheet = () => document.body.classList.toggle('collapsed');
     try { grip.releasePointerCapture(id); } catch (err) { /* 続行 */ }
     id = null;
     document.body.classList.remove('resizing');
-    if (moved) saveSettings(); else toggleSheet();
+    if (moved) { saveSettings(); if (window.__positRelayout) window.__positRelayout(); }
+    else toggleSheet();
   };
   grip.addEventListener('pointerup', end);
   grip.addEventListener('pointercancel', end);
   grip.addEventListener('click', e => { if (moved) e.preventDefault(); });
 })();
 
-// 横スライドと見出しボタンを連動させる
-function linkPager(pagerId, buttons, onChange) {
+// 横スライドと見出しボタン・点の表示を連動させる
+function linkPager(pagerId, buttons, onChange, dotsId) {
   const pager = $(pagerId);
-  if (!pager) return;
-  const panes = [...pager.querySelectorAll('.pane')];
-  const mark = i => {
-    buttons.forEach((b, k) => b.classList.toggle('on', k === i));
-    if (buttons[i] && buttons[i].scrollIntoView) {
-      buttons[i].scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
+  if (!pager) return null;
+  const panes = [...pager.querySelectorAll(':scope > .pane')];
+  // 作り直したときに前の見張りが残らないようにする
+  if (pager.__pagerOff) pager.__pagerOff();
+
+  let dots = null, counter = null;
+  if (dotsId) {
+    dots = $(dotsId);
+    if (dots) {
+      dots.innerHTML = '';
+      dots.hidden = panes.length < 2;
+      // 点が多すぎると読めないので、13ページ以上は「3 / 15」と数で出す
+      if (panes.length > 12) {
+        dots.classList.add('count');
+        counter = document.createElement('b');
+        dots.appendChild(counter);
+      } else {
+        dots.classList.remove('count');
+        for (let i = 0; i < panes.length; i++) dots.appendChild(document.createElement('i'));
+      }
     }
+  }
+
+  let cur = -1;
+  const mark = i => {
+    if (buttons) {
+      buttons.forEach((b, k) => b.classList.toggle('on', k === i));
+      if (buttons[i] && buttons[i].scrollIntoView) {
+        buttons[i].scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
+      }
+    }
+    if (counter) counter.textContent = `${i + 1} / ${panes.length}`;
+    else if (dots) [...dots.children].forEach((d, k) => d.classList.toggle('on', k === i));
+    if (i === cur) return;
+    cur = i;
     if (onChange) onChange(i, panes[i]);
   };
-  buttons.forEach((b, i) => b.addEventListener('click', () => {
-    pager.scrollTo({ left: pager.clientWidth * i, behavior: 'smooth' });
-    mark(i);
-  }));
+  if (buttons) {
+    buttons.forEach((b, i) => b.addEventListener('click', () => {
+      pager.scrollTo({ left: pager.clientWidth * i, behavior: 'smooth' });
+      mark(i);
+    }));
+  }
   let timer = null;
-  pager.addEventListener('scroll', () => {
+  const onScroll = () => {
     if (timer) clearTimeout(timer);
     timer = setTimeout(() => {
       const i = Math.round(pager.scrollLeft / Math.max(1, pager.clientWidth));
       mark(Math.max(0, Math.min(panes.length - 1, i)));
     }, 60);
-  });
+  };
+  pager.addEventListener('scroll', onScroll);
+  pager.__pagerOff = () => pager.removeEventListener('scroll', onScroll);
   return { pager, panes, go: i => { pager.scrollLeft = pager.clientWidth * i; mark(i); } };
 }
 
-const setPager = linkPager('setPager', [...document.querySelectorAll('#setSeg button')]);
+const setPager = linkPager('setPager',
+  [...document.querySelectorAll('#setSeg button')], null, 'setDots');
+if (setPager) setPager.go(0);
 
-/** 設定の見出しボタンに、今の選択を小さく添える */
-function syncGroupLabels() {
-  const pick = id => {
-    const el = document.querySelector('#' + id + ' .chip.on');
-    return el ? el.textContent.trim() : '';
-  };
-  const btns = [...document.querySelectorAll('#setSeg button')];
-  const add = (i, text) => {
-    if (!btns[i]) return;
-    const base = btns[i].dataset.base || (btns[i].dataset.base = btns[i].textContent.trim());
-    btns[i].textContent = text ? base + ' · ' + text : base;
-  };
-  add(0, pick('frameChips'));
-  add(1, (+$('headRatio').value).toFixed(1) + '頭身');
-  add(2, pick('viewChips'));
-}
-window.__syncGroupLabels = syncGroupLabels;
-// チップを押したときと、起動直後に見出しを更新する
-$('sheet').addEventListener('click', () => setTimeout(syncGroupLabels, 0));
-$('headRatio').addEventListener('input', syncGroupLabels);
-setTimeout(syncGroupLabels, 300);
-setTimeout(syncGroupLabels, 1500);
 $('btnCollapse').addEventListener('click', toggleSheet);
+
+// ---- 困ったとき（いつでも開ける小さなボタン）-------------------------------
+
+const openHelp = () => { $('helpBox').hidden = false; showDiagnostics(); };
+const closeHelp = () => { $('helpBox').hidden = true; };
+$('btnHelp').addEventListener('click', openHelp);
+$('helpClose').addEventListener('click', closeHelp);
+$('helpBox').addEventListener('click', e => { if (e.target === $('helpBox')) closeHelp(); });
 
 // ---- 状態表示 --------------------------------------------------------------
 
@@ -188,8 +211,8 @@ viewer.onStatus = msg => { if (msg && !/読み込み中/.test(msg)) showToast(ms
 viewer.onNotice = msg => { if (msg) { $('viewNote').textContent = msg; showToast(msg); } };
 viewer.onSlotsChanged = () => {
   buildSlotRows(); buildViewChips(); markMissingJoints(); syncHeadRatio();
-  if (!$('handWrap').hidden) buildHandList();
-  if (!$('faceWrap').hidden) buildFaceList();
+  if ($('handWrap').classList.contains('on')) buildHandList();
+  if ($('faceWrap').classList.contains('on')) buildFaceList();
 };
 
 viewer.onSelect = key => {
@@ -201,7 +224,7 @@ viewer.onSelect = key => {
   for (const el of document.querySelectorAll('.chip.j')) {
     el.classList.toggle('on', el.dataset.key === key);
   }
-  if (key) showTab('joint');
+  if (key) { showTab('joint'); focusJointGroup(key); }
 };
 
 // ---- スライダ --------------------------------------------------------------
@@ -253,6 +276,7 @@ function buildPoseCats() {
   const mk = (label, key) => {
     const b = document.createElement('button');
     b.className = 'chip cat' + (poseCategory === key ? ' on' : '');
+    b.dataset.cat = key == null ? '' : key;
     b.textContent = label;
     b.addEventListener('click', () => { poseCategory = key; buildPoseCats(); buildPoseList(); });
     wrap.appendChild(b);
@@ -264,16 +288,89 @@ function buildPoseCats() {
 const currentPoses = () =>
   poseCategory ? POSE_PRESETS.filter(p => p.category === poseCategory) : POSE_PRESETS;
 
-function buildPoseList() {
-  const wrap = $('poseList');
-  wrap.innerHTML = '';
-  for (const p of currentPoses()) {
-    const b = document.createElement('button');
-    b.textContent = p.name;
-    b.addEventListener('click', () => applyPose(p));
-    wrap.appendChild(b);
-  }
+// 1ページに並べるポーズの数。シートの高さに合わせて決めるので、
+// 1ページぶんが縦にはみ出さず、左右のスライドだけで全部を見られる。
+let posePerPage = 6;
+let posePages = [];
+let posePager = null;
+
+function posesPerPage() {
+  const el = $('poseList');
+  const h = el ? el.clientHeight : 0;
+  if (!h) return 6;
+  const rows = Math.floor((h - 24) / 56);      // 見出し 24px、1行 56px
+  return Math.max(2, Math.min(5, rows)) * 2;   // 2列なので倍にする
 }
+
+function poseGroups() {
+  const of = key => POSE_PRESETS.filter(p => p.category === key);
+  if (poseCategory) {
+    const c = POSE_CATEGORIES.find(x => x.key === poseCategory);
+    return [{ key: poseCategory, name: c ? c.name : 'ポーズ', poses: of(poseCategory) }];
+  }
+  return POSE_CATEGORIES
+    .map(c => ({ key: c.key, name: c.name, poses: of(c.key) }))
+    .filter(g => g.poses.length);
+}
+
+function buildPoseList(keepCat) {
+  const wrap = $('poseList');
+  posePerPage = posesPerPage();
+  wrap.innerHTML = '';
+  posePages = [];
+  for (const g of poseGroups()) {
+    const n = Math.max(1, Math.ceil(g.poses.length / posePerPage));
+    for (let i = 0; i < n; i++) {
+      posePages.push({
+        cat: g.key,
+        name: g.name + (n > 1 ? `（${i + 1}/${n}）` : ''),
+        poses: g.poses.slice(i * posePerPage, (i + 1) * posePerPage),
+      });
+    }
+  }
+  for (const pg of posePages) {
+    const pane = document.createElement('section');
+    pane.className = 'pane';
+    const t = document.createElement('div');
+    t.className = 'pane-title';
+    t.textContent = pg.name;
+    pane.appendChild(t);
+    const grid = document.createElement('div');
+    grid.className = 'grid';
+    for (const p of pg.poses) {
+      const b = document.createElement('button');
+      b.textContent = p.name;
+      b.addEventListener('click', () => applyPose(p));
+      grid.appendChild(b);
+    }
+    pane.appendChild(grid);
+    wrap.appendChild(pane);
+  }
+  posePager = linkPager('poseList', null, i => {
+    const pg = posePages[i];
+    for (const el of document.querySelectorAll('#poseCats .chip')) {
+      el.classList.toggle('at', !poseCategory && !!pg && el.dataset.cat === pg.cat);
+    }
+  }, 'poseDots');
+  const back = keepCat ? posePages.findIndex(pg => pg.cat === keepCat) : 0;
+  if (posePager) posePager.go(Math.max(0, back));
+}
+
+/** シートの高さが変わったら、1ページぶんの数を測り直す */
+function relayoutPoses() {
+  if (posesPerPage() === posePerPage) return;
+  const i = posePager ? Math.round(posePager.pager.scrollLeft
+    / Math.max(1, posePager.pager.clientWidth)) : 0;
+  buildPoseList(posePages[i] ? posePages[i].cat : null);
+}
+let poseLayoutTimer = null;
+const queueRelayout = () => {
+  if (poseLayoutTimer) clearTimeout(poseLayoutTimer);
+  poseLayoutTimer = setTimeout(relayoutPoses, 180);
+};
+window.addEventListener('resize', queueRelayout);
+window.addEventListener('orientationchange', queueRelayout);
+window.__positRelayout = queueRelayout;
 
 function applyPose(pose) {
   snapshot();
@@ -294,20 +391,20 @@ $('btnRandomPose').addEventListener('click', () => {
 
 const SEG_WRAPS = { preset: 'presetWrap', hand: 'handWrap', face: 'faceWrap', history: 'historyWrap' };
 
-const SEG_ORDER = ['preset', 'hand', 'face', 'history'];
-
 function showSeg(seg) {
-  const i = Math.max(0, SEG_ORDER.indexOf(seg));
-  if (posePager) posePager.go(i);
+  for (const k of Object.keys(SEG_WRAPS)) {
+    const el = $(SEG_WRAPS[k]);
+    if (el) el.classList.toggle('on', k === seg);
+  }
+  for (const b of document.querySelectorAll('#poseSeg button')) {
+    b.classList.toggle('on', b.dataset.seg === seg);
+  }
+  if (seg === 'hand') buildHandList();
+  if (seg === 'face') buildFaceList();
 }
-const posePager = linkPager('posePager',
-  [...document.querySelectorAll('#poseSeg button')],
-  i => {
-    const seg = SEG_ORDER[i] || 'preset';
-    $('poseBar').hidden = seg !== 'preset';
-    if (seg === 'hand') buildHandList();
-    if (seg === 'face') buildFaceList();
-  });
+for (const b of document.querySelectorAll('#poseSeg button')) {
+  b.addEventListener('click', () => showSeg(b.dataset.seg));
+}
 
 // ---- 手の形 ---------------------------------------------------------------
 
@@ -568,14 +665,20 @@ function buildCroquisChips() {
 
 // ---- 関節一覧 --------------------------------------------------------------
 
+let jointPager = null;
+
 function buildJointList() {
+  const seg = $('jointSeg');
   const wrap = $('jointList');
+  seg.innerHTML = '';
   wrap.innerHTML = '';
   for (const g of JOINT_GROUPS) {
-    const box = document.createElement('div');
-    const t = document.createElement('div');
-    t.className = 'group-title'; t.textContent = g.title;
-    box.appendChild(t);
+    const tab = document.createElement('button');
+    tab.textContent = g.title;
+    seg.appendChild(tab);
+
+    const pane = document.createElement('section');
+    pane.className = 'pane';
     const chips = document.createElement('div');
     chips.className = 'group-chips';
     for (const key of g.keys) {
@@ -586,9 +689,18 @@ function buildJointList() {
       b.addEventListener('click', () => viewer.select(key));
       chips.appendChild(b);
     }
-    box.appendChild(chips);
-    wrap.appendChild(box);
+    pane.appendChild(chips);
+    wrap.appendChild(pane);
   }
+  jointPager = linkPager('jointList', [...seg.children], null);
+  if (jointPager) jointPager.go(0);
+}
+
+/** 選ばれている関節が入っているまとまりへページを送る */
+function focusJointGroup(key) {
+  if (!jointPager || !key) return;
+  const i = JOINT_GROUPS.findIndex(g => g.keys.includes(key));
+  if (i >= 0) jointPager.go(i);
 }
 
 function markMissingJoints() {
