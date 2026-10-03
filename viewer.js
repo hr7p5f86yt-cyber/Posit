@@ -847,6 +847,7 @@ export class Viewer {
       const hb = slot.boneMap.head;
       slot.headBoneY0 = hb ? hb.getWorldPosition(new THREE.Vector3()).y - box.min.y : neckY - box.min.y;
       slot.crownH0 = Math.max(1e-4, total - slot.headBoneY0);
+      slot.crownBone0 = slot.crownH0;      // 実測で上書きしない、骨だけから出した値
       slot.totalH0 = total;
       // スキンの重みから頭の実寸が取れたら、そちらを正とする
       slot.headBox = this._measureHeadBox(slot);
@@ -1107,8 +1108,11 @@ export class Viewer {
       neckRel = head.worldToLocal(
         slot.boneMap.neck.getWorldPosition(new THREE.Vector3())).multiplyScalar(hs2).y;
     }
-    slot.headPlanes = buildHeadPlanes(head, group,
-      { box: slot.headBox, crownH: slot.crownH0, headH: slot.headH0, neckRel });
+    slot.headPlanes = buildHeadPlanes(head, group, {
+      box: slot.headBox,
+      crownH: slot.crownBone0 || slot.crownH0,   // 殻が小さくなりすぎないための下限に使う
+      headH: slot.headH0, neckRel,
+    });
     head.scale.copy(keepHead);
     if (hips && keepHips) hips.scale.copy(keepHips);
     head.updateWorldMatrix(true, false);
@@ -1132,6 +1136,18 @@ export class Viewer {
     this._refreshHeadPlanes();
     this._applyClipping();
     return this.headPlanesAvailable;
+  }
+
+  /** 面で捉えた頭部の当てはめ具合を一行で返す（画面に出して確かめる用） */
+  headPlaneInfo() {
+    const slot = this.slots.skin;
+    const hp = slot && slot.headPlanes;
+    if (!hp || !hp.parts.length) return '面の頭部: 作れていません';
+    const r = v => (Math.round((v || 0) * 1000) / 1000).toFixed(3);
+    const b = slot.headBox;
+    return `縦${r(hp.sy)} 横${r(hp.sxz)} 縮小${r(hp.hide)} ／ `
+      + (b ? `頭(${b.source}) 高${r(b.headH)} 半幅${r(b.half)} 底${r(b.bottom)} あご${r(b.chin)}`
+           : `頭=骨から推定 冠${r(slot.crownH0)}`);
   }
 
   /** 面で捉えた頭部が今の表示で使えるか */

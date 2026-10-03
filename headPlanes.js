@@ -286,6 +286,20 @@ export function buildHeadPlanes(headBone, parent, opts = {}) {
     // 縦は「あご〜頭頂」をぴったり合わせる。これで首を覆わず、頭頂もずれない。
     sy = box.headH / (DESIGN_CROWN - DESIGN_CHIN);
 
+    // ただし、実測が小さく出たときに殻まで小さくなると、元の頭に埋まって
+    // 「顔が少し小さくなるだけ」になってしまう。
+    // 「頭のボーン→頭頂」から決まる大きさを下限にして、それ以下にはしない。
+    if (opts.crownH > 1e-4) {
+      const floorSy = (opts.crownH / DESIGN_CROWN) * 0.92;
+      if (sy < floorSy) {
+        sy = floorSy;
+        box = Object.assign({}, box, {
+          chin: box.top - sy * (DESIGN_CROWN - DESIGN_CHIN),
+          headH: sy * (DESIGN_CROWN - DESIGN_CHIN),
+        });
+      }
+    }
+
     // 横と奥行は、元の頭がちゃんと殻の内側へ入るところまで広げる。
     // 眼窩は殻の内側へ深くへこんでいるので、ここを決め打ちにすると
     // 元の頭が眼窩を突き抜けて、殻がまるごと隠れてしまう。

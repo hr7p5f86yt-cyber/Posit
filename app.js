@@ -5,7 +5,7 @@ import { POSE_CATEGORIES, POSE_PRESETS, HAND_SHAPES, FACE_PRESETS, toSpec } from
 import { PoseHistory, relativeTime, HISTORY_LIMIT } from './history.js';
 import { CroquisSession, CROQUIS_SECONDS, CROQUIS_COUNTS } from './croquis.js';
 
-export const BUILD = '2026-10-03d';
+export const BUILD = '2026-10-03e';
 
 const SAMPLE_URL = 'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r169/examples/models/gltf/Xbot.glb';
 const SETTINGS_KEY = 'posit.settings.v1';
@@ -663,6 +663,8 @@ $('headPlanes').addEventListener('change', e => {
   const ok = viewer.setHeadPlanes(e.target.checked);
   if (e.target.checked && !ok) {
     showToast('面で捉えた頭部は、組み込みの素体を表示しているときだけ使えます。');
+  } else if (e.target.checked) {
+    showToast(viewer.headPlaneInfo());
   }
 });
 $('boneView').addEventListener('change', e => viewer.setBoneViewOn(e.target.checked));
