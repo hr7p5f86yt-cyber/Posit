@@ -226,6 +226,41 @@ export const DESIGN_DEPTH  = 0.281;   // 後頭部から鼻先まで
 export const DESIGN_CHIN   = -0.092;  // あご先（ここから下は首にかかる）
 export const DESIGN_ZC     = -0.014;  // 前後方向の中心
 
+/**
+ * 元の頭を「あごから上の楕円体」とみなし、殻の内側に収まる最大の縮小率を二分法で解く。
+ * 殻の点がひとつでも頭の中に入っていたら、その頭は殻からはみ出している。
+ * @param {Array} pts    殻の頂点（design 単位）
+ * @param {Object} box   実測した頭（頭のボーン基準・メートル）
+ * @param {number} sy    縦の倍率
+ * @param {number} sxz   横・奥行の倍率
+ */
+function solveHide(pts, box, sy, sxz) {
+  const a = Math.max(1e-5, box.half);
+  const b = Math.max(1e-5, (box.top - box.chin) / 2);
+  const c = Math.max(1e-5, box.depth / 2);
+  const cy = (box.top + box.chin) / 2;
+  const cz = box.zc || 0;
+  const lift = box.top - DESIGN_CROWN * sy;
+  const shiftZ = cz - DESIGN_ZC * sy * sxz;
+  const clears = h => {
+    for (let i = 0; i < pts.length; i++) {
+      const p = pts[i];
+      const dx = (p[0] * sy * sxz) / (a * h);
+      const dy = (p[1] * sy + lift - cy * h) / (b * h);
+      const dz = (p[2] * sy * sxz + shiftZ - cz * h) / (c * h);
+      if (dx * dx + dy * dy + dz * dz < 1.05) return false;   // 殻の点が頭の中＝はみ出す
+    }
+    return true;
+  };
+  if (clears(0.97)) return 0.97;
+  let lo = 0.45, hi = 0.97;
+  for (let i = 0; i < 22; i++) {
+    const m = (lo + hi) / 2;
+    if (clears(m)) lo = m; else hi = m;
+  }
+  return lo;
+}
+
 export function buildHeadPlanes(headBone, parent, opts = {}) {
   if (!headBone || !parent) return { parts: [], lines: [] };
   const mats = materials();
@@ -236,9 +271,7 @@ export function buildHeadPlanes(headBone, parent, opts = {}) {
   const s = headBone.getWorldScale(new THREE.Vector3()).x || 1;
 
   // モデルの頭の実寸に合わせる。
-  // 高さと幅の両方で収まる倍率を選ぶので、元の頭より大きくなることがない。
-  // 実測できなかったときは、頭頂と首のボーンから箱を組み立てる。
-  // こうしておけば、どちらの場合も同じ当てはめ方になる。
+  // 実測できなかったときは、頭頂と首のボーンから箱を組み立てて、同じ当てはめ方に乗せる。
   let box = opts.box;
   if (!box && opts.crownH > 1e-4) {
     const top = opts.crownH;
@@ -247,23 +280,24 @@ export function buildHeadPlanes(headBone, parent, opts = {}) {
             half: (top - chin) * 0.36, depth: (top - chin) * 0.95, zc: -(top - chin) * 0.05 };
   }
 
-  let fit = 1, lift = 0, shiftZ = 0, hide = 0.9;
+  const shell = buildShell();
+  let sy = 1, sxz = 1, lift = 0, shiftZ = 0, hide = 0.9;
   if (box && box.headH > 1e-4) {
-    // あご〜頭頂の高さに合わせる。箱の底（首の中）に合わせると首を覆ってしまう。
-    const byH = box.headH / (DESIGN_CROWN - DESIGN_CHIN);
-    const byW = box.half > 1e-4 ? box.half / DESIGN_HALF : byH;
-    fit = Math.min(byH, byW * 1.25);          // 高さを優先しつつ、横は少しだけ広くてよい
-    lift = box.top - DESIGN_CROWN * fit;      // 頭頂をそろえる
-    shiftZ = (box.zc || 0) - DESIGN_ZC * fit; // 前後の中心もそろえる（あごが前へ出ないように）
+    // 縦は「あご〜頭頂」をぴったり合わせる。これで首を覆わず、頭頂もずれない。
+    sy = box.headH / (DESIGN_CROWN - DESIGN_CHIN);
 
-    // 元の頭をどこまで縮めれば殻の内側に収まるか。
-    // 縮めすぎると首まで引っ張られて消えるので、収まる範囲でいちばん大きく残す。
-    const lim = [0.95];
-    if (box.half > 1e-5) lim.push(0.95 * DESIGN_HALF * fit / box.half);
-    if (box.depth > 1e-5) lim.push(0.95 * DESIGN_DEPTH * fit / box.depth);
-    hide = Math.max(0.55, Math.min(...lim));
+    // 横と奥行は、元の頭がちゃんと殻の内側へ入るところまで広げる。
+    // 眼窩は殻の内側へ深くへこんでいるので、ここを決め打ちにすると
+    // 元の頭が眼窩を突き抜けて、殻がまるごと隠れてしまう。
+    for (const k of [1.0, 1.1, 1.22, 1.36, 1.5]) {
+      sxz = k;
+      hide = solveHide(shell.tri, box, sy, k);
+      if (hide >= 0.88) break;
+    }
+    lift = box.top - DESIGN_CROWN * sy;
+    shiftZ = (box.zc || 0) - DESIGN_ZC * sy * sxz;
   }
-  const u = fit / s;
+  const ux = sy * sxz / s, uy = sy / s, uz = sy * sxz / s;
 
   // 骨の「前・上・横」をローカル座標で知る
   const o = headBone.getWorldPosition(new THREE.Vector3());
@@ -278,12 +312,12 @@ export function buildHeadPlanes(headBone, parent, opts = {}) {
   const add = (geo, material, pos, lineGeo) => {
     const m = new THREE.Mesh(geo, material);
     m.quaternion.copy(quat);
-    m.scale.setScalar(u);
+    m.scale.set(ux, uy, uz);
     m.position.copy(up).multiplyScalar(lift / s).addScaledVector(fwd, shiftZ / s);
     if (pos) {
-      m.position.addScaledVector(side, pos[0] * u)
-        .addScaledVector(up, pos[1] * u)
-        .addScaledVector(fwd, pos[2] * u);
+      m.position.addScaledVector(side, pos[0] * ux)
+        .addScaledVector(up, pos[1] * uy)
+        .addScaledVector(fwd, pos[2] * uz);
     }
     m.castShadow = true;
     m.receiveShadow = true;
@@ -304,12 +338,11 @@ export function buildHeadPlanes(headBone, parent, opts = {}) {
     return m;
   };
 
-  const shell = buildShell();
   add(toGeometry(shell.tri), mats.skin, null, toLineGeometry(shell.seg));  // 頭の塊
   add(toGeometry(buildNose()), mats.skin);         // 鼻
   add(toGeometry(buildLips()), mats.skin);         // 口もと
   for (const sx of [-1, 1]) add(toGeometry(buildEye(sx)), mats.eye);   // 目（眼窩に収まる板）
   for (const sx of [-1, 1]) add(toGeometry(buildEar(sx)), mats.skin);  // 耳
 
-  return { parts, lines, hide, fit };
+  return { parts, lines, hide, sy, sxz };
 }

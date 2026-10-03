@@ -336,6 +336,10 @@ export class Viewer {
           + ` ／ 半幅 ${r3(slot.headBox.half)} ／ 頂点 ${slot.headBox.count} 個`
           + ` ／ 頭身 ${r3(slot.headRatio0 || 0)}`
         : `  頭の実測: 使えず（骨から推定・頭身 ${r3(slot.headRatio0 || 0)}）`);
+      if (slot.headPlanes && slot.headPlanes.parts.length) {
+        lines.push(`  面の頭部: 縦 ${r3(slot.headPlanes.sy || 0)}`
+          + ` ／ 横 ${r3(slot.headPlanes.sxz || 0)} ／ 元の頭の縮小 ${r3(slot.headPlanes.hide || 0)}`);
+      }
       const got = JOINTS.map(j => j.key).filter(k => slot.boneMap[k]);
       const miss = JOINTS.map(j => j.key).filter(k => !slot.boneMap[k]);
       if (got.length) lines.push('  取れた関節: ' + got.map(k => `${k}=${slot.boneMap[k].name}`).join(', '));
