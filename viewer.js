@@ -331,8 +331,10 @@ export class Viewer {
       lines.push(`${s.name}（${slot.skeleton.bones.length}本・関節 ${Object.keys(slot.boneMap).length}・${how}）`);
       const r3 = v => (Math.round(v * 1000) / 1000).toFixed(3);
       lines.push(slot.headBox
-        ? `  頭の実測: 高さ ${r3(slot.headBox.height)} ／ 半幅 ${r3(slot.headBox.half)}`
-          + ` ／ 頂点 ${slot.headBox.count} 個 ／ 頭身 ${r3(slot.headRatio0 || 0)}`
+        ? `  頭の実測(${slot.headBox.source}): あご〜頭頂 ${r3(slot.headBox.headH)}`
+          + ` ／ 箱の底 ${r3(slot.headBox.bottom)} ／ あご ${r3(slot.headBox.chin)}`
+          + ` ／ 半幅 ${r3(slot.headBox.half)} ／ 頂点 ${slot.headBox.count} 個`
+          + ` ／ 頭身 ${r3(slot.headRatio0 || 0)}`
         : `  頭の実測: 使えず（骨から推定・頭身 ${r3(slot.headRatio0 || 0)}）`);
       const got = JOINTS.map(j => j.key).filter(k => slot.boneMap[k]);
       const miss = JOINTS.map(j => j.key).filter(k => !slot.boneMap[k]);
@@ -735,14 +737,20 @@ export class Viewer {
    * 頭のボーン（とその先）に主に引っ張られる頂点だけを集めて、頭のボーン基準の
    * 箱を作る。戻り値の単位はメートル、y は頭のボーンからの高さ。
    */
+  /**
+   * 頭の実際の大きさを測る。単位はメートル、y は頭のボーンからの高さ。
+   * 二通りのモデルに対応する。
+   *   1. スキンのモデル … 頭のボーン（とその先）に主に引っ張られる頂点
+   *   2. パーツ分けのモデル … 頭のボーンにぶら下がった、スキンでないメッシュ
+   * 球体関節のデッサン人形は 2 のことが多く、1 だけだと何も拾えない。
+   */
   _measureHeadBox(slot) {
     const head = slot.boneMap.head;
-    if (!head || !slot.skeleton || !slot.meshes.length) return null;
+    if (!head || !slot.skeleton) return null;
     const ids = new Set();
     slot.skeleton.bones.forEach((b, i) => {
       for (let c = b; c; c = c.parent) if (c === head) { ids.add(i); break; }
     });
-    if (!ids.size) return null;
 
     slot.pivot.updateMatrixWorld(true);
     head.updateWorldMatrix(true, false);
@@ -751,16 +759,21 @@ export class Viewer {
     let n = 0;
     const lo = new THREE.Vector3(1e9, 1e9, 1e9);
     const hi = new THREE.Vector3(-1e9, -1e9, -1e9);
-    const ys = [], axs = [];        // あごの位置を探すのに使う
+    const take = () => {
+      head.worldToLocal(v).multiplyScalar(hs);      // 頭のボーン基準・メートル
+      lo.min(v); hi.max(v); n++;
+    };
 
-    for (const m of slot.meshes) {
+    // 1) スキンの重みで頭に属する頂点
+    for (const m of (slot.meshes || [])) {
       const g = m.geometry;
       const pos = g && g.attributes && g.attributes.position;
       const si = g && g.attributes && g.attributes.skinIndex;
       const sw = g && g.attributes && g.attributes.skinWeight;
-      if (!pos || !si || !sw) continue;
+      if (!pos || !si || !sw || !ids.size) continue;
       m.updateWorldMatrix(true, false);
-      for (let i = 0; i < pos.count; i++) {
+      const step = Math.max(1, Math.floor(pos.count / 20000));
+      for (let i = 0; i < pos.count; i += step) {
         let best = -1, bw = 0;
         for (let k = 0; k < 4; k++) {
           const w = sw.getComponent(i, k);
@@ -769,38 +782,45 @@ export class Viewer {
         if (bw <= 0 || !ids.has(best)) continue;
         v.set(pos.getX(i), pos.getY(i), pos.getZ(i));
         m.localToWorld(v);
-        head.worldToLocal(v).multiplyScalar(hs);     // 頭のボーン基準・メートル
-        lo.min(v); hi.max(v); n++;
-        ys.push(v.y); axs.push(Math.abs(v.x));
+        take();
+      }
+    }
+
+    // 2) 頭のボーンにぶら下がったパーツ（スキンでないメッシュ）
+    const parts = [];
+    head.traverse(o => {
+      if (o.isMesh && !o.isSkinnedMesh && !o.userData.headPlane && !o.userData.bonePart) parts.push(o);
+    });
+    for (const m of parts) {
+      const pos = m.geometry && m.geometry.attributes && m.geometry.attributes.position;
+      if (!pos) continue;
+      m.updateWorldMatrix(true, false);
+      const step = Math.max(1, Math.floor(pos.count / 20000));
+      for (let i = 0; i < pos.count; i += step) {
+        v.set(pos.getX(i), pos.getY(i), pos.getZ(i));
+        m.localToWorld(v);
+        take();
       }
     }
     if (n < 24) return null;
 
-    // あご（＝首との境目）を探す。
-    // 頭のボーンには首の上の方の頂点もぶら下がっているので、箱の底をあごだと思うと
-    // 面で捉えた頭部が首まで覆ってしまう。下から見て幅が広がりきる高さをあごとみなす。
-    const BINS = 28;
-    const span = Math.max(1e-6, hi.y - lo.y);
-    const prof = new Array(BINS).fill(0);
-    for (let i = 0; i < ys.length; i++) {
-      const k = Math.min(BINS - 1, Math.max(0, Math.floor((ys[i] - lo.y) / span * BINS)));
-      if (axs[i] > prof[k]) prof[k] = axs[i];
+    // あご（＝首との境目）。首のボーンより下は首なので、そこで切る。
+    // 頭のメッシュが首にかかっていないモデルでは、箱の底がそのままあごになる。
+    let neckRel = -Infinity;
+    const neck = slot.boneMap.neck;
+    if (neck) {
+      neck.updateWorldMatrix(true, false);
+      const nv = neck.getWorldPosition(new THREE.Vector3());
+      neckRel = head.worldToLocal(nv).multiplyScalar(hs).y;
     }
-    const widest = Math.max(...prof);
-    let chin = lo.y;
-    if (widest > 1e-6) {
-      for (let k = 0; k < BINS; k++) {
-        if (prof[k] >= widest * 0.62) { chin = lo.y + (k + 0.5) * span / BINS; break; }
-      }
-    }
-    // 見つからない／頭の半分より上まで行ってしまったときは、箱の底を使う
-    if (!(chin > lo.y) || chin > lo.y + span * 0.5) chin = lo.y;
+    const chin = Math.max(lo.y, Math.min(neckRel, hi.y - 1e-3));
 
     return {
       top: hi.y, bottom: lo.y, chin, height: hi.y - lo.y,
       headH: hi.y - chin,
       half: Math.max(Math.abs(lo.x), Math.abs(hi.x)),
       zc: (lo.z + hi.z) / 2, depth: hi.z - lo.z, count: n,
+      source: parts.length ? 'パーツ' : 'スキン',
     };
   }
 
@@ -829,14 +849,14 @@ export class Viewer {
       // 実測が妥当なときだけ採用する。重みの付き方によっては一部しか拾えず、
       // 頭が実際よりずっと小さく出ることがあるため。
       const hb2 = slot.headBox;
-      if (hb2 && hb2.height > 1e-3) {
-        const ratio = total / hb2.height;
-        const shape = hb2.half > 1e-4 ? hb2.height / (hb2.half * 2) : 99;
-        const ok = ratio >= 3 && ratio <= 12      // 頭身として現実的か
-          && shape >= 0.9 && shape <= 2.4         // 縦横の比が頭らしいか
-          && hb2.top > 0 && hb2.count >= 60;      // 頭頂がボーンより上にあるか
+      if (hb2 && hb2.headH > 1e-3) {
+        const ratio = total / hb2.headH;
+        const shape = hb2.half > 1e-4 ? hb2.headH / (hb2.half * 2) : 99;
+        const ok = ratio >= 3 && ratio <= 13      // 頭身として現実的か
+          && shape >= 0.8 && shape <= 2.8         // 縦横の比が頭らしいか
+          && hb2.top > 0 && hb2.count >= 24;      // 頭頂がボーンより上にあるか
         if (ok) {
-          slot.headH0 = hb2.height;
+          slot.headH0 = hb2.headH;
           slot.bodyH0 = total - slot.headH0;
           slot.headRatio0 = ratio;
           slot.crownH0 = Math.max(1e-4, hb2.top);
@@ -1076,8 +1096,15 @@ export class Viewer {
     const group = new THREE.Group();
     head.add(group);
     slot.headPlaneGroup = group;
+    let neckRel = -Infinity;
+    if (slot.boneMap.neck) {
+      const hs2 = head.getWorldScale(new THREE.Vector3()).x || 1;
+      slot.boneMap.neck.updateWorldMatrix(true, false);
+      neckRel = head.worldToLocal(
+        slot.boneMap.neck.getWorldPosition(new THREE.Vector3())).multiplyScalar(hs2).y;
+    }
     slot.headPlanes = buildHeadPlanes(head, group,
-      { box: slot.headBox, crownH: slot.crownH0, headH: slot.headH0 });
+      { box: slot.headBox, crownH: slot.crownH0, headH: slot.headH0, neckRel });
     head.scale.copy(keepHead);
     if (hips && keepHips) hips.scale.copy(keepHips);
     head.updateWorldMatrix(true, false);

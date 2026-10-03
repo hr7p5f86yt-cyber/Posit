@@ -224,6 +224,7 @@ export const DESIGN_BOTTOM = -0.106;  // あごの底
 export const DESIGN_HALF   = 0.100;   // 頭蓋のいちばん広い半幅（耳は含まない）
 export const DESIGN_DEPTH  = 0.281;   // 後頭部から鼻先まで
 export const DESIGN_CHIN   = -0.092;  // あご先（ここから下は首にかかる）
+export const DESIGN_ZC     = -0.014;  // 前後方向の中心
 
 export function buildHeadPlanes(headBone, parent, opts = {}) {
   if (!headBone || !parent) return { parts: [], lines: [] };
@@ -236,15 +237,24 @@ export function buildHeadPlanes(headBone, parent, opts = {}) {
 
   // モデルの頭の実寸に合わせる。
   // 高さと幅の両方で収まる倍率を選ぶので、元の頭より大きくなることがない。
-  const box = opts.box;
-  let fit = 1, lift = 0, hide = 0.8;
-  if (box && box.height > 1e-4) {
+  // 実測できなかったときは、頭頂と首のボーンから箱を組み立てる。
+  // こうしておけば、どちらの場合も同じ当てはめ方になる。
+  let box = opts.box;
+  if (!box && opts.crownH > 1e-4) {
+    const top = opts.crownH;
+    const chin = opts.neckRel < 0 ? Math.max(opts.neckRel, -top * 1.2) : -top * 0.5;
+    box = { top, bottom: chin, chin, headH: top - chin,
+            half: (top - chin) * 0.36, depth: (top - chin) * 0.95, zc: -(top - chin) * 0.05 };
+  }
+
+  let fit = 1, lift = 0, shiftZ = 0, hide = 0.9;
+  if (box && box.headH > 1e-4) {
     // あご〜頭頂の高さに合わせる。箱の底（首の中）に合わせると首を覆ってしまう。
-    const headH = box.headH > 1e-4 ? box.headH : box.height;
-    const byH = headH / (DESIGN_CROWN - DESIGN_CHIN);
+    const byH = box.headH / (DESIGN_CROWN - DESIGN_CHIN);
     const byW = box.half > 1e-4 ? box.half / DESIGN_HALF : byH;
-    fit = Math.min(byH, byW * 1.25);   // 高さを優先しつつ、横は少しだけ広くてよい
+    fit = Math.min(byH, byW * 1.25);          // 高さを優先しつつ、横は少しだけ広くてよい
     lift = box.top - DESIGN_CROWN * fit;      // 頭頂をそろえる
+    shiftZ = (box.zc || 0) - DESIGN_ZC * fit; // 前後の中心もそろえる（あごが前へ出ないように）
 
     // 元の頭をどこまで縮めれば殻の内側に収まるか。
     // 縮めすぎると首まで引っ張られて消えるので、収まる範囲でいちばん大きく残す。
@@ -252,12 +262,6 @@ export function buildHeadPlanes(headBone, parent, opts = {}) {
     if (box.half > 1e-5) lim.push(0.95 * DESIGN_HALF * fit / box.half);
     if (box.depth > 1e-5) lim.push(0.95 * DESIGN_DEPTH * fit / box.depth);
     hide = Math.max(0.55, Math.min(...lim));
-  } else if (opts.headH > 1e-4) {
-    // 実測できなかったときは、骨から推した頭の高さに合わせる。
-    // 「頭のボーン→頭頂」だけで決めると、ボーンが頭の下寄りにあるリグで大きくなりすぎる。
-    fit = opts.headH / (DESIGN_CROWN - DESIGN_BOTTOM);
-    lift = (opts.crownH > 1e-4 ? opts.crownH : DESIGN_CROWN * fit) - DESIGN_CROWN * fit;
-    hide = 0.75;
   }
   const u = fit / s;
 
@@ -275,7 +279,7 @@ export function buildHeadPlanes(headBone, parent, opts = {}) {
     const m = new THREE.Mesh(geo, material);
     m.quaternion.copy(quat);
     m.scale.setScalar(u);
-    m.position.copy(up).multiplyScalar(lift / s);
+    m.position.copy(up).multiplyScalar(lift / s).addScaledVector(fwd, shiftZ / s);
     if (pos) {
       m.position.addScaledVector(side, pos[0] * u)
         .addScaledVector(up, pos[1] * u)
@@ -307,5 +311,5 @@ export function buildHeadPlanes(headBone, parent, opts = {}) {
   for (const sx of [-1, 1]) add(toGeometry(buildEye(sx)), mats.eye);   // 目（眼窩に収まる板）
   for (const sx of [-1, 1]) add(toGeometry(buildEar(sx)), mats.skin);  // 耳
 
-  return { parts, lines, hide };
+  return { parts, lines, hide, fit };
 }
