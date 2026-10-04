@@ -7,7 +7,7 @@ import { CroquisSession, CROQUIS_SECONDS, CROQUIS_COUNTS } from './croquis.js';
 import { LightBall } from './lightBall.js';
 import * as THREE from 'three';
 
-export const BUILD = '2026-10-04g';
+export const BUILD = '2026-10-05a';
 
 const SAMPLE_URL = 'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r169/examples/models/gltf/Xbot.glb';
 const SETTINGS_KEY = 'posit.settings.v1';
@@ -45,9 +45,13 @@ function loadSettings() {
       sheetH: typeof s.sheetH === 'number' ? s.sheetH : 0,
     };
   } catch (e) {
-    return { seconds: 30, count: 10, cqCats: [], cqModel: 'skin', cqFrame: 'full', cqWire: false, cqAngle: 'random',
-      cqSide: 'random', cqBody: 'keep', cqHandShape: true, lightBall: true, sheetH: 0 };
+    return defaultSettings();
   }
+}
+
+function defaultSettings() {
+  return { seconds: 30, count: 10, cqCats: [], cqModel: 'skin', cqFrame: 'full', cqWire: false, cqAngle: 'random',
+    cqSide: 'random', cqBody: 'keep', cqHandShape: true, lightBall: true, sheetH: 0 };
 }
 function saveSettings() {
   try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch (e) { /* 続行 */ }
@@ -991,7 +995,7 @@ const LIGHT_PRESETS = [
 ];
 let lightPreset = 'std';
 
-function applyLightPreset(p) {
+function applyLightPreset(p, quiet) {
   lightPreset = p.key;
   setRange('lightInt', intToPos(p.int));
   setRange('fillInt', p.fill);
@@ -1001,7 +1005,7 @@ function applyLightPreset(p) {
   const a = p.az * Math.PI / 180, e = p.el * Math.PI / 180;
   lightBall.setFromView(new THREE.Vector3(Math.sin(a) * Math.cos(e), Math.sin(e), Math.cos(a) * Math.cos(e)));
   buildLightPresets();
-  showToast('ライト: ' + p.label);
+  if (!quiet) showToast('ライト: ' + p.label);
 }
 
 function buildLightPresets() {
@@ -1122,6 +1126,57 @@ $('btnMirror').addEventListener('click', () => {
 });
 $('btnResetJoint').addEventListener('click', () => { snapshot(); viewer.resetSelected(); syncSliders(); });
 $('btnFrame').addEventListener('click', () => viewer.frameModel());
+
+// ---- すべての設定を初期値に戻す ---------------------------------------------
+//   ポーズ・履歴・読み込んだモデルはそのまま。見え方・体つき・ライト・カメラ・
+//   クロッキーの設定・パネルの高さを、はじめて開いたときの状態に戻す
+
+function setCheck(id, on) {
+  const el = $(id);
+  el.checked = on;
+  el.dispatchEvent(new Event('change'));    // 画面の印と中身がずれていても必ず当て直す
+}
+
+function resetAllSettings() {
+  if (!window.confirm('すべての設定を初期値に戻しますか？\n（ポーズ・履歴・読み込んだモデルはそのままです）')) return;
+  // クロッキーとパネルの設定
+  Object.assign(settings, defaultSettings());
+  saveSettings();
+  document.documentElement.style.removeProperty('--sheet-h');
+  // 体つき
+  viewer.setBodyType('neutral');
+  viewer.resetHeadRatio();
+  syncHeadRatio();
+  // 見え方
+  if (viewer.slots.skin && viewer.slots.skin.loaded) viewer.applyViewMode('skin');
+  viewer.applyMaterialMode('clay');
+  setRange('skinOpacity', 1);
+  setCheck('wireOn', false);
+  setCheck('headPlanes', false);
+  setCheck('boneView', false);
+  setCheck('canonRest', true);
+  setCheck('limitsOn', true);
+  // 見る範囲とカメラ（ライトの向きはカメラが基準なので先に戻す）
+  viewer.setPartView('full', 'R');
+  setRange('lens', 40);
+  viewer.frameModel();
+  setCheck('gridOn', true);
+  // ライトと影
+  applyLightPreset(LIGHT_PRESETS[0], true);
+  setCheck('lightBallOn', true);
+  $('lightPop').hidden = true;
+  // 画面の表示を合わせる
+  buildFrameChips();
+  buildBodyChips();
+  buildViewChips();
+  buildMaterialChips();
+  buildCroquisChips();
+  syncSliders();
+  if (window.__positRelayout) window.__positRelayout();
+  $('helpBox').hidden = true;
+  showToast('すべての設定を初期値に戻しました');
+}
+for (const id of ['btnResetAll', 'btnResetAll2']) $(id).addEventListener('click', resetAllSettings);
 
 // ---- 困ったとき -----------------------------------------------------------
 

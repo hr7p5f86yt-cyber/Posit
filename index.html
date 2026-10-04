@@ -298,6 +298,8 @@
              accept=".glb,.gltf,.fbx,.zip,.bin,model/gltf-binary,model/gltf+json,application/zip" hidden>
       <p class="hint"><b>Sketchfab からの zip はそのまま選べます</b>（中の scene.gltf と scene.bin を自動で結びつけます）。GLB / FBX の1ファイル、Mixamo の FBX もそのまま使えます。展開済みなら scene.gltf と scene.bin をまとめて選んでください。3つのスロットはリグが違っていても同じポーズが当たります。</p>
       <div id="boneReport" class="hint"></div>
+      <button id="btnResetAll" class="wide ghost danger">すべての設定を初期値に戻す</button>
+      <p class="hint tiny">見え方・体つき・ライト・カメラ・クロッキーの設定を、はじめて開いたときの状態に戻します。ポーズ・履歴・読み込んだモデルはそのままです。</p>
       <details class="inner">
         <summary>読み込んだモデルの中身</summary>
         <p class="hint">ポーズが当たらないときは、ここに出るボーン名を教えてください。対応表に足します。</p>
@@ -372,6 +374,7 @@
   <div class="card wide-card">
     <strong>困ったとき</strong>
     <p class="hint" id="buildTag"></p>
+    <button id="btnResetAll2" class="wide ghost">すべての設定を初期値に戻す</button>
     <button id="btnPurge" class="wide ghost">キャッシュを消して再読込</button>
     <p class="hint" id="diag">タップすると状態を表示します。</p>
     <button id="helpClose" class="primary wide">閉じる</button>

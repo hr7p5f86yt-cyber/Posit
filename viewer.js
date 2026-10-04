@@ -9,6 +9,7 @@ import { parseSpec, parseFingerSpec } from './poses.js';
 import { buildSkeletonView } from './skeletonView.js';
 import { buildHeadPlanes, FIG_HEADS, HEADH_MIN, HEADH_MAX } from './headPlanes.js';
 import { buildBodyMorphs } from './bodyShape.js';
+import { deformFactors, installSegmentScale, setSegment, clearSegments } from './proportions.js';
 // 不具合を調べるときの入り口（画面には出ない）
 if (typeof window !== 'undefined') window.__positTHREE = THREE;
 
@@ -990,6 +991,17 @@ export class Viewer {
     // 元の骨の間隔を覚えておく（頭身を変えるときに縮める）
     slot.restPos = new Map();
     for (const b of slot.skeleton.bones) slot.restPos.set(b, b.position.clone());
+    // 頭身を変えるときに「長さ」と「太さ」を別々に変える骨と、その骨の向き
+    installSegmentScale(slot.skeleton.bones);
+    slot.segInfo = this._segmentInfo(slot);
+    // モデル自身の脚と胴の比率（頭身を大きく変えたときに、表の比率へ寄せる元）
+    {
+      const floor = new THREE.Box3().setFromObject(slot.root).min.y;
+      const yOf = k => slot.boneMap[k] ? slot.boneMap[k].getWorldPosition(new THREE.Vector3()).y - floor : null;
+      const T0 = slot.totalH0 || 1.7;
+      const th = yOf('thighL'), nk = yOf('neck');
+      slot.modelFrac = th && nk ? { legs0: th / T0, body0: (nk - th) / T0, neckY0: nk } : null;
+    }
 
     // 頭より先の骨は、頭の拡大にまかせて間隔を触らない
     slot.headSubtree = new Set();
@@ -1072,71 +1084,19 @@ export class Viewer {
       const slot = this.slots[s.key];
       if (!slot.skeleton || !slot.restPos) continue;
       const r0 = Math.max(2, Math.min(12, slot.headRatio0 || 7.5));
-      // スライダーに触っていないときは、読み込んだモデルをそのまま出す。
-      // ここで r0 を丸めてしまうと、起動しただけで体型が崩れる。
+      // スライダーに触っていないときは、読み込んだモデルをそのまま出す
       const untouched = this.headRatio === null;
       const r = untouched ? r0 : Math.max(2, Math.min(12, this.headRatio));
-      const headH = slot.headH0 || 0.22;                    // あご先から頭頂まで
-      const A = slot.headBoneY0 || (slot.bodyH0 || 1.48);   // 足元から頭のボーンまで
-      const B = slot.crownH0 || headH;                      // 頭のボーンから頭頂まで
-      const L = Math.min(A * 0.95, slot.hipY0 || A * 0.6);  // 足元から腰まで（＝脚の長さ）
-      const T = slot.totalH0 || (A + B);                    // 元の背丈
-
-      // 頭の高さ = headH*kh、背丈 = 頭のボーンの高さ + B*kh。
-      // 背丈を T に据え置いたまま 背丈/頭の高さ = r にすると kh は一意に決まる。
-      const kh = untouched ? 1 : Math.max(0.05, T / (r * headH));
-      const headBoneY = Math.max(1e-3, T - B * kh);   // 頭のボーンが来るべき高さ
-      const kb = untouched ? 1 : Math.max(0.15, headBoneY / A);   // 体ぜんたいの倍率
-
-      // 低頭身ほどデフォルメを強める。
-      //   脚と腕をさらに詰め、そのぶん胴を伸ばして頭のボーンの高さを保つ。
-      //   ボーンごと縮めるので、長さと一緒に太さも詰まる（関節から先が飛び出さない）。
-      const span = Math.max(1e-6, r0 - 2);
-      const deform = untouched ? 0 : Math.max(0, Math.min(1, (r0 - r) / span));
-      // 胴は「脚を詰めたぶん」を引き受けて、頭のボーンの高さを元どおりにする。
-      //   頭のボーンの高さ = L*kb*kl + (Sy-L)*kb + (A-Sy)*kb*kt
-      //   ここから kt = 1 + L*(1-kl)/(A-Sy)。
-      // 胴が伸びすぎるとリグによっては胸が異様に広がるので、
-      // kt に上限を置き、超えるぶんは「脚の詰め幅」のほうを先に減らす。
-      const Sy = Math.min(A - 1e-3, Math.max(L, slot.spineY0 || L));
-      const gap = Math.max(1e-4, A - Sy);
-      const KT_MAX = 1.8;
-      const maxDrop = Math.max(0, (KT_MAX - 1) * gap / Math.max(1e-4, L));
-      const kl = 1 - Math.min(0.30 * deform, maxDrop);   // 脚
-      const ka = 1 - 0.38 * deform;                      // 腕
-      const kt = untouched ? 1 : 1 + L * (1 - kl) / gap;
+      const B = slot.crownH0 || slot.headH0 || 0.22;        // 頭のボーンから頭頂まで
+      const T = slot.totalH0 || 1.7;                        // 元の背丈
 
       // いったん元に戻す
       for (const b of slot.skeleton.bones) {
         const rp = slot.restPos.get(b);
         if (rp) b.position.copy(rp);
         b.scale.setScalar(1);
+        b.userData.seg = null;
       }
-
-      // 体は腰から丸ごと縮め、頭だけその上で大きくする
-      const hips = slot.boneMap.hips;
-      if (hips) hips.scale.setScalar(kb);
-      const head = slot.boneMap.head;
-      // 面で捉えた頭部のときは、元の頭を殻の内側に隠れる分だけ縮める。
-      // 縮めすぎると首の頂点まで引っ張られて首が消えるので、縮小量は殻の側で決める。
-      const hide = (this.headPlanesOn && slot === this.slots.skin
-        && slot.headPlanes && slot.headPlanes.parts.length)
-        ? (slot.headPlanes.hide || 0.62) : 1;
-      const spine = slot.boneMap.spine || slot.boneMap.chest;
-      if (spine && Math.abs(kt - 1) > 1e-3) spine.scale.setScalar(kt);
-      const chainK = (hips ? kb : 1) * (spine ? kt : 1);
-      if (head) head.scale.setScalar((chainK > 1e-6 ? kh / chainK : kh) * hide);
-
-      for (const key of ['thighL', 'thighR']) {
-        const b = slot.boneMap[key];
-        if (b) b.scale.setScalar(kl);
-      }
-      for (const key of ['upperArmL', 'upperArmR']) {
-        const b = slot.boneMap[key];
-        if (b) b.scale.setScalar(ka);
-      }
-      if (slot.headPlaneGroup) slot.headPlaneGroup.scale.setScalar(1 / hide);
-      if (slot.skullGroup) slot.skullGroup.scale.setScalar(1 / hide);
 
       // 肩幅: 鎖骨の長さ（肩関節を鎖骨に沿って外へ／内へ）
       for (const key of ['upperArmL', 'upperArmR']) {
@@ -1152,15 +1112,85 @@ export class Viewer {
         if (!lat || bt.hip === 1) continue;
         b.position.addScaledVector(lat, b.position.dot(lat) * (bt.hip - 1));
       }
+
+      // 頭身: 部位ごとに長さと太さを変える（proportions.js の比率の表から）
+      const f = untouched ? null : deformFactors(r, r0, slot.modelFrac);
+      const kh = f ? f.head : 1;
+      if (f && slot.modelFrac && slot.headBoneY0) {
+        // 首: 頭は頭のボーンを中心に大きくなるので、あご先は頭のボーンより下へ大きく下がる。
+        // 首の長さをそのまま縮めると、あごが胸の中に沈む（2 頭身で胸の上が頭に埋まる）。
+        // 「あご先〜首の付け根」が表の長さになるように、首の骨の長さを決める
+        const neckLen0 = Math.max(1e-4, slot.headBoneY0 - slot.modelFrac.neckY0);
+        const chinOff0 = (slot.headH0 || B) - B;             // 頭のボーンからあご先まで（下向き）
+        const chinNeck0 = Math.max(0.004 * T, neckLen0 - chinOff0);
+        // 4 頭身より下では、頭を胴にのせる（首がほとんど見えない）。マネキンの首の玉の分だけ詰める
+        const sit = Math.max(0, Math.min(1, (4 - r) / 2)) * 0.022 * T;
+        f.neckL = Math.max(0.2, (Math.max(0, chinNeck0 * f.neckL - sit) + kh * chinOff0) / neckLen0);
+      }
+      if (f) {
+        for (const it of slot.segInfo || []) {
+          const [w, l] = {
+            trunk: [f.trunkW, f.trunkL],
+            neck: [1, f.neckL],
+            clav: [f.limbW, f.trunkW],
+            arm: [f.limbW, f.armL],
+            leg: [f.limbW, f.legL],
+            foot: [f.footW, f.footL],
+          }[it.kind];
+          setSegment(it.bone, it.dir, w, l);
+        }
+      }
+      const footW = f ? f.footW : 1;
+      const handK = f ? f.hand : 1;
+
       // 手の大きさと、人差し指・薬指の長さ
       for (const sd of ['L', 'R']) {
         const hb = slot.boneMap['hand' + sd];
-        if (hb && bt.hand && bt.hand !== 1) hb.scale.setScalar(bt.hand);
+        const k = (bt.hand || 1) * handK;
+        if (hb && Math.abs(k - 1) > 1e-4) hb.scale.setScalar(k);
         const fs = slot.fingers && slot.fingers[sd];
         if (!fs) continue;
         if (fs.index && fs.index[1] && bt.index !== 1) fs.index[1].scale.setScalar(bt.index);
         if (fs.ring && fs.ring[1] && bt.ring !== 1) fs.ring[1].scale.setScalar(bt.ring);
       }
+
+      // 背丈を据え置く: 頭のボーンまでの高さ Y を基準姿勢で測り、
+      // 体ぜんたいの倍率 kb で「kb·Y + 頭の大きさ·B = 元の背丈」になるようにする
+      const hips = slot.boneMap.hips;
+      const head = slot.boneMap.head;
+      let kb = 1;
+      if (f && hips && head) {
+        // 足りない（余る）長さは、まず脚と胴の長さで取り返す（太さは変えない）。
+        // 残ったわずかな差だけを体ぜんたいの倍率で合わせる
+        const want = T - kh * B;
+        for (let it = 0; it < 3; it++) {
+          const m = this._neutralHeights(slot);
+          if (!m) break;
+          const Y = m.head - m.low + (slot.restLowestY0 || 0) * footW;
+          const span = Math.max(1e-4, m.neck - m.low);
+          const c = Math.max(0.7, Math.min(1.4, 1 + (want - Y) / span));
+          if (Math.abs(c - 1) < 1e-3) break;
+          f.legL *= c; f.trunkL *= c;
+          for (const it2 of slot.segInfo || []) {
+            if (it2.kind === 'leg') setSegment(it2.bone, it2.dir, f.limbW, f.legL);
+            else if (it2.kind === 'trunk') setSegment(it2.bone, it2.dir, f.trunkW, f.trunkL);
+          }
+        }
+        const m = this._neutralHeights(slot);
+        if (m) {
+          const Y = m.head - m.low + (slot.restLowestY0 || 0) * footW;
+          kb = Math.max(0.2, Math.min(3, want / Math.max(1e-4, Y)));
+        }
+      }
+      if (hips && Math.abs(kb - 1) > 1e-5) hips.scale.setScalar(kb);
+      // 面で捉えた頭部のときは、元の頭を殻の内側に隠れる分だけ縮める
+      const hide = (this.headPlanesOn && slot === this.slots.skin
+        && slot.headPlanes && slot.headPlanes.parts.length)
+        ? (slot.headPlanes.hide || 0.62) : 1;
+      if (head) head.scale.setScalar((kh / kb) * hide);
+      if (slot.headPlaneGroup) slot.headPlaneGroup.scale.setScalar(1 / hide);
+      if (slot.skullGroup) slot.skullGroup.scale.setScalar(1 / hide);
+
       // 表面の変形（男性・女性）
       for (const m of [...slot.meshes, ...slot.wireMeshes]) {
         if (m.morphTargetInfluences && m.geometry && m.geometry.userData.bodyMorph) {
@@ -1171,10 +1201,72 @@ export class Viewer {
 
       slot.headScale = kh;
       slot.bodyScale = kb;
-      slot.restLowestY = (slot.restLowestY0 || 0) * kb;
+      slot.proportion = f;
+      slot.restLowestY = (slot.restLowestY0 || 0) * kb * footW;
     }
     this.applyAll();
     this._reapplyHandShapes();
+  }
+
+  /**
+   * 頭身で長さと太さを変える骨。kind ごとに倍率を決める。
+   * dir は骨の向き（骨の座標で、次の骨へ向かう単位ベクトル）。
+   */
+  _segmentInfo(slot) {
+    const map = slot.boneMap, out = [];
+    const dirTo = (b, c) => {
+      const p = c && (slot.restPos.get(c) || c.position);
+      return p && p.lengthSq() > 1e-12 ? p.clone().normalize() : null;
+    };
+    const add = (b, c, kind) => { const d = b && dirTo(b, c); if (d) out.push({ bone: b, dir: d, kind }); };
+    // 胴: 首の付け根から腰まで、親をたどる
+    if (map.neck && map.hips) {
+      let c = map.neck, b = c.parent, guardN = 0;
+      while (b && b.isBone && guardN++ < 12) {
+        add(b, c, 'trunk');
+        if (b === map.hips) break;
+        c = b; b = b.parent;
+      }
+    }
+    if (map.neck && map.head) add(map.neck, map.head, 'neck');
+    for (const sd of ['L', 'R']) {
+      if (map['shoulder' + sd] && map['upperArm' + sd] && map['upperArm' + sd].parent === map['shoulder' + sd]) {
+        add(map['shoulder' + sd], map['upperArm' + sd], 'clav');
+      }
+      add(map['upperArm' + sd], map['forearm' + sd], 'arm');
+      add(map['forearm' + sd], map['hand' + sd], 'arm');
+      add(map['thigh' + sd], map['shin' + sd], 'leg');
+      add(map['shin' + sd], map['foot' + sd], 'leg');
+      const ft = map['foot' + sd];
+      const toe = ft && ft.children.find(q => q.isBone);
+      if (toe) {
+        add(ft, toe, 'foot');
+        const end = toe.children.find(q => q.isBone);
+        if (end) add(toe, end, 'foot');
+      }
+    }
+    return out;
+  }
+
+  /** 基準姿勢（ポーズなし）での、頭のボーンと一番低い骨の高さ */
+  _neutralHeights(slot) {
+    if (!slot.neutralWorld || !slot.neutralParent) return null;
+    const bones = slot.skeleton.bones;
+    const saved = bones.map(b => b.quaternion.clone());
+    for (const b of bones) {
+      const nb = slot.neutralWorld.get(b), np = slot.neutralParent.get(b);
+      if (nb && np) b.quaternion.copy(np.clone().invert().multiply(nb));
+    }
+    slot.pivot.updateWorldMatrix(true, true);
+    const v = new THREE.Vector3();
+    let low = Infinity;
+    for (const b of bones) { b.getWorldPosition(v); if (v.y < low) low = v.y; }
+    const head = slot.boneMap.head.getWorldPosition(new THREE.Vector3()).y;
+    const nb = slot.boneMap.neck || slot.boneMap.head;
+    const neck = nb.getWorldPosition(new THREE.Vector3()).y;
+    bones.forEach((b, i) => b.quaternion.copy(saved[i]));
+    slot.pivot.updateWorldMatrix(true, true);
+    return { head, low, neck };
   }
 
   resetHeadRatio() { this.headRatio = null; this._applyProportions(); }
@@ -1697,7 +1789,12 @@ export class Viewer {
       if (rp) b.position.copy(rp);
       b.scale.setScalar(1);
     }
-    slot.pivot.updateWorldMatrix(true, true);
+    const savedSeg = bones.map(b => b.userData.seg || null);
+    clearSegments(bones);
+    // updateWorldMatrix ではスキンの bindMatrixInverse が更新されない（SkinnedMesh は
+    // updateMatrixWorld のときだけ更新する）。接地で全体が上下に動いたあとだと、
+    // 頂点の位置がその分ずれて測られ、骨格が見当違いの場所に組み立てられる
+    this.scene.updateMatrixWorld(true);
     try {
       // 頭の骨は、面で捉えた頭部のときに元の頭を縮めても大きさが変わらないよう、別の入れ物に入れる
       const head = slot.boneMap.head;
@@ -1710,7 +1807,7 @@ export class Viewer {
       const handFrame = { L: this._handFrame(slot, 'L'), R: this._handFrame(slot, 'R') };
       slot.boneParts = buildSkeletonView(slot, { handFrame, skullGroup: slot.skullGroup });
     } finally {
-      bones.forEach((b, i) => { b.position.copy(saved[i][0]); b.quaternion.copy(saved[i][1]); b.scale.copy(saved[i][2]); });
+      bones.forEach((b, i) => { b.position.copy(saved[i][0]); b.quaternion.copy(saved[i][1]); b.scale.copy(saved[i][2]); b.userData.seg = savedSeg[i]; });
       slot.pivot.updateWorldMatrix(true, true);
     }
     // 面で捉えた頭部で元の頭を縮めていても、頭の骨は元の大きさに戻す

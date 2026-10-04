@@ -58,6 +58,7 @@ button:disabled { opacity: 0.35; }
 button.ghost { background: rgba(42,48,57,0.7); }
 button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 700; }
 button.primary:active { background: #6fd0fa; }
+button.danger { color: #ffb4a2; border-color: rgba(255,180,162,0.35); }
 button.small { padding: 7px 12px; font-size: 13px; }
 button.wide { display: block; width: 100%; margin: 10px 0 2px; }
 button.big { padding: 15px; font-size: 16px; }
