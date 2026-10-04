@@ -24,6 +24,7 @@ function guard(label, fn) {
 }
 
 const DEG = Math.PI / 180;
+
 const AX = new THREE.Vector3(1, 0, 0);
 const AY = new THREE.Vector3(0, 1, 0);
 const AZ = new THREE.Vector3(0, 0, 1);
@@ -466,6 +467,8 @@ export class Viewer {
   _disposeSlot(slot) {
     for (const p of slot.boneParts) if (p.parent) p.parent.remove(p);
     slot.boneParts = [];
+    if (slot.skullGroup && slot.skullGroup.parent) slot.skullGroup.parent.remove(slot.skullGroup);
+    slot.skullGroup = null;
     if (slot.pivot) {
       this.container.remove(slot.pivot);
       slot.pivot.traverse(o => { if (o.geometry) o.geometry.dispose(); });
@@ -642,6 +645,7 @@ export class Viewer {
       }
     }
     if (this.canonicalRest) guard('手の向きの補正', () => this._correctHands(slot));
+    guard('指の軸', () => this._buildFingerAxes(slot));
     for (const b of slot.skeleton.bones) {
       slot.neutralWorld.set(b, b.getWorldQuaternion(new THREE.Quaternion()));
       const pq = new THREE.Quaternion();
@@ -652,8 +656,8 @@ export class Viewer {
 
   /**
    * 手のひらの向きを基準姿勢に合わせる。
-   * Swift版と同じく「指は真下・親指は前」（＝手のひらが体側を向く）に揃える。
-   * 指と親指の骨の位置から今の向きを測り、その差分だけ手の骨を回す。
+   * 「指は真下・指の付け根の並びは前後」（＝手のひらが腿を向き、親指が前に来る）に揃える。
+   * 指の骨の位置から今の向きを測り、その差分だけ手の骨を回す。
    */
   _correctHands(slot) {
     const target = (() => {
@@ -681,16 +685,24 @@ export class Viewer {
       const pick = re => kids.find(b => re.test(normalizeName(b.name)));
       const thumb = pick(/thumb/);
       const finger = pick(/middle/) || pick(/index/) || pick(/ring/);
-      if (!thumb || !finger) continue;
+      const index = pick(/index/), little = pick(/pinky|little/) || pick(/ring/);
+      if (!finger || (!thumb && !(index && little))) continue;
 
       const origin = hand.getWorldPosition(new THREE.Vector3());
       const fDir = finger.getWorldPosition(new THREE.Vector3()).sub(origin);
-      const tDir = thumb.getWorldPosition(new THREE.Vector3()).sub(origin);
-      if (fDir.lengthSq() < 1e-10 || tDir.lengthSq() < 1e-10) continue;
+      if (fDir.lengthSq() < 1e-10) continue;
       fDir.normalize();
-      tDir.normalize();
-
       const cy = fDir.clone().negate();
+      // 「前」に向けるのは指の付け根の並び（小指→人差し指）。
+      // 親指は手のひらの面から斜めに出ているので、親指を前に向けると手のひらが 30° ほどねじれる。
+      let tDir = null;
+      if (index && little && index !== little) {
+        tDir = index.getWorldPosition(new THREE.Vector3())
+          .sub(little.getWorldPosition(new THREE.Vector3()));
+      }
+      if (!tDir || tDir.lengthSq() < 1e-10) tDir = thumb.getWorldPosition(new THREE.Vector3()).sub(origin);
+      if (tDir.lengthSq() < 1e-10) continue;
+      tDir.normalize();
       const cx = tDir.clone().addScaledVector(cy, -tDir.dot(cy));
       if (cx.lengthSq() < 1e-6) continue;             // 親指と指が同じ向き = 測れない
       cx.normalize();
@@ -700,6 +712,68 @@ export class Viewer {
 
       const fix = target.clone().multiply(current.invert());
       this._setBoneWorldQuat(hand, fix.multiply(hand.getWorldQuaternion(new THREE.Quaternion())));
+    }
+  }
+
+  /**
+   * 指ごとの「曲げる・開く・ひねる」の軸を、基準姿勢での骨の位置から決める。
+   * 固定の軸で回すと、手のひらの向きや指の付き方がリグごとに違うので崩れる。
+   *   曲げる … 指先が手のひらの側へ向かう回転（親指は手のひらを横切って小指側へ）
+   *   開く   … 手のひらの面の中で親指側へ向かう回転（親指は人差し指から離れる向き）
+   *   ひねる … 指の骨の長さ方向まわり
+   * 軸はどれも「動かしたい向き」との外積で作るので、左右の手で勝手に鏡像になる。
+   */
+  _buildFingerAxes(slot) {
+    slot.fingerAxes = new Map();
+    const V3 = () => new THREE.Vector3();
+    for (const side of ['L', 'R']) {
+      const hf = this._handFrame(slot, side);
+      const set = slot.fingers && slot.fingers[side];
+      if (!hf || !set) continue;
+      for (const f of Object.keys(set)) {
+        const segs = set[f];
+        for (const k of Object.keys(segs)) {
+          const bone = segs[k];
+          const next = segs[+k + 1] || bone.children.find(c => c.isBone);
+          const o = bone.getWorldPosition(V3());
+          let d = next ? next.getWorldPosition(V3()).sub(o) : null;
+          if (!d || d.lengthSq() < 1e-12) d = hf.along.clone(); else d.normalize();
+          const axis = to => {
+            const t = to.clone().addScaledVector(d, -to.dot(d));
+            if (t.lengthSq() < 1e-8) return null;
+            return V3().crossVectors(d, t.normalize()).normalize();
+          };
+          let flex, spread;
+          if (f === 'thumb' && +k === 1) {
+            // 親指の付け根（CM関節）は解剖学の定義どおりに分ける。
+            //   曲げる … 手のひらの面の中で、手のひらを横切って小指側へ（手のひらの法線まわり）
+            //   開く   … 手のひらから前へ離す（掌側外転）
+            // 親指の付き方はリグごとに違う（手のひらの面に寝ているもの・前へ立っているもの）が、
+            // この分け方ならどちらでも同じ意味になる。
+            flex = hf.palmar.clone();
+            if (V3().crossVectors(flex, d).dot(hf.radial) > 0) flex.negate();   // ＋回転で小指側へ
+            spread = axis(hf.palmar);
+          } else if (f === 'thumb') {
+            // その先（MP・IP関節）は親指の腹の側＝人差し指と中指の第二関節のほうへ曲がる
+            const pip = [set.index && set.index[2], set.middle && set.middle[2]].filter(Boolean);
+            let goal = null;
+            if (pip.length) {
+              goal = V3();
+              for (const q of pip) goal.add(q.getWorldPosition(V3()));
+              goal.divideScalar(pip.length).sub(o);
+            }
+            flex = axis(goal || hf.radial.clone().negate().addScaledVector(hf.palmar, 0.3));
+            spread = axis(hf.radial.clone().sub(hf.along));
+          } else {
+            // 人差し指〜小指: 曲げる＝手のひらの側へ、開く＝親指の側へ
+            flex = axis(hf.palmar);
+            spread = axis(hf.radial);
+          }
+          if (flex && !spread) spread = V3().crossVectors(flex, d).normalize();
+          if (!flex || !spread) continue;
+          slot.fingerAxes.set(bone, { flex, spread, twist: d.clone() });
+        }
+      }
     }
   }
 
@@ -774,14 +848,22 @@ export class Viewer {
       lo.min(v); hi.max(v); n++;
     };
 
-    // 1) スキンの重みで頭に属する頂点
+    // 1) スキンの重みで頭に属する頂点。
+    //    頂点はスキンをかけた後の位置で測る（かける前の位置はモデルの作り方しだいで
+    //    まったく別の場所にあり、頭の箱が足元まで伸びてしまう）。
     for (const m of (slot.meshes || [])) {
       const g = m.geometry;
       const pos = g && g.attributes && g.attributes.position;
       const si = g && g.attributes && g.attributes.skinIndex;
       const sw = g && g.attributes && g.attributes.skinWeight;
-      if (!pos || !si || !sw || !ids.size) continue;
+      if (!pos || !si || !sw || !m.isSkinnedMesh || !m.skeleton) continue;
+      const mIds = new Set();
+      m.skeleton.bones.forEach((b, i) => {
+        for (let c = b; c; c = c.parent) if (c === head) { mIds.add(i); break; }
+      });
+      if (!mIds.size) continue;
       m.updateWorldMatrix(true, false);
+      m.skeleton.update();
       const step = Math.max(1, Math.floor(pos.count / 20000));
       for (let i = 0; i < pos.count; i += step) {
         let best = -1, bw = 0;
@@ -789,17 +871,22 @@ export class Viewer {
           const w = sw.getComponent(i, k);
           if (w > bw) { bw = w; best = si.getComponent(i, k); }
         }
-        if (bw <= 0 || !ids.has(best)) continue;
-        v.set(pos.getX(i), pos.getY(i), pos.getZ(i));
-        m.localToWorld(v);
+        if (bw <= 0 || !mIds.has(best)) continue;
+        v.fromBufferAttribute(pos, i);
+        m.applyBoneTransform(i, v);
+        v.applyMatrix4(m.matrixWorld);
         take();
       }
     }
 
-    // 2) 頭のボーンにぶら下がったパーツ（スキンでないメッシュ）
+    const nSkin = n;
+
+    // 2) 頭のボーンにぶら下がったパーツ（スキンでないメッシュ）。
+    //    こちらで足した骨格・面の頭部は数えない。
     const parts = [];
     head.traverse(o => {
-      if (o.isMesh && !o.isSkinnedMesh && !o.userData.headPlane && !o.userData.bonePart) parts.push(o);
+      if (o.isMesh && !o.isSkinnedMesh && !o.userData.headPlane && !o.userData.bonePart
+        && !o.userData.jointBone) parts.push(o);
     });
     for (const m of parts) {
       const pos = m.geometry && m.geometry.attributes && m.geometry.attributes.position;
@@ -833,7 +920,7 @@ export class Viewer {
       headH: hi.y - chin,
       half: Math.max(Math.abs(lo.x), Math.abs(hi.x)),
       zc: (lo.z + hi.z) / 2, depth: hi.z - lo.z, count: n,
-      source: parts.length ? 'パーツ' : 'スキン',
+      source: nSkin && parts.length ? 'スキン＋パーツ' : (nSkin ? 'スキン' : 'パーツ'),
     };
   }
 
@@ -1028,6 +1115,7 @@ export class Viewer {
         if (b) b.scale.setScalar(ka);
       }
       if (slot.headPlaneGroup) slot.headPlaneGroup.scale.setScalar(1 / hide);
+      if (slot.skullGroup) slot.skullGroup.scale.setScalar(1 / hide);
 
       // 肩幅・腰幅（体型）
       for (const key of ['shoulderL', 'shoulderR', 'thighL', 'thighR']) {
@@ -1180,8 +1268,10 @@ export class Viewer {
   // ---- 見る範囲（体の一部だけを切り出す）--------------------------------
 
   /**
-   * 表示する範囲を切り替える。手・足は手首／足首の少し上で切って、
-   * その部分だけを大きく見られるようにする。
+   * 表示する範囲を切り替える。
+   * 手・足は「片側の手（足）と、前腕（すね）の手首（足首）寄りの一部」だけを描く。
+   * 空間の範囲で切ると、気をつけのように手が腿の横にあるとき腿まで映るので、
+   * スキンの重みで「どの骨に属する面か」を見て選ぶ。
    */
   setPartView(part, side) {
     this.partView = part || 'full';
@@ -1203,24 +1293,111 @@ export class Viewer {
     return out;
   }
 
+  get _partOn() { return this.partView === 'hand' || this.partView === 'foot'; }
+
+  /** 手・足だけを見るときに残すボーン（前腕／すね と、その先すべて） */
+  _partBones(slot) {
+    if (!this._partOn || !slot.skeleton) return null;
+    const isHand = this.partView === 'hand';
+    const start = slot.boneMap[(isHand ? 'forearm' : 'shin') + this.partSide]
+      || slot.boneMap[(isHand ? 'hand' : 'foot') + this.partSide];
+    if (!start) return null;
+    const set = new Set();
+    (function walk(b) {
+      set.add(b);
+      for (const c of b.children) if (c.isBone) walk(c);
+    })(start);
+    return set;
+  }
+
+  /**
+   * 残すボーンに属する三角形だけを描くよう、形状のインデックスを差し替える。
+   * 表示・非表示のフラグには触らないので、ほかの切り替えとぶつからない。
+   */
+  _maskObject(o, keep) {
+    const g = o.geometry;
+    if (!g || !g.attributes || !g.attributes.position) return;
+    const ud = g.userData;
+    if (!ud.maskReady) { ud.fullIndex = g.index; ud.maskReady = true; ud.masks = {}; ud.maskKey = 'full'; }
+    if (!keep) {
+      if (ud.maskKey !== 'full') { g.setIndex(ud.fullIndex); ud.maskKey = 'full'; }
+      return;
+    }
+    const n = g.attributes.position.count;
+    const src = ud.fullIndex ? ud.fullIndex.array : null;
+    const isSkin = o.isSkinnedMesh && o.skeleton && g.attributes.skinIndex && g.attributes.skinWeight;
+    let key;
+    if (isSkin) {
+      key = this.partView + this.partSide;
+    } else {
+      // スキンでないもの（パーツ分けのモデル・骨格表示・面の頭部）は、
+      // 残すボーンの下にぶら下がっているかどうかで丸ごと出し入れする
+      let inside = false;
+      for (let p = o.parent; p; p = p.parent) if (keep.has(p)) { inside = true; break; }
+      key = inside ? 'full' : 'none';
+      if (key === 'full') {
+        if (ud.maskKey !== 'full') { g.setIndex(ud.fullIndex); ud.maskKey = 'full'; }
+        return;
+      }
+    }
+    if (ud.maskKey === key) return;
+    let idx = ud.masks[key];
+    if (!idx) {
+      const out = [];
+      if (isSkin) {
+        const bones = o.skeleton.bones;
+        const keepIdx = new Uint8Array(bones.length);
+        bones.forEach((b, i) => { if (keep.has(b)) keepIdx[i] = 1; });
+        const si = g.attributes.skinIndex, sw = g.attributes.skinWeight;
+        const w = new Float32Array(n);
+        for (let i = 0; i < n; i++) {
+          let sum = 0;
+          for (let k = 0; k < 4; k++) if (keepIdx[si.getComponent(i, k)]) sum += sw.getComponent(i, k);
+          w[i] = sum;
+        }
+        const per = o.isLineSegments ? 2 : 3;
+        const count = src ? src.length : n;
+        for (let t = 0; t + per <= count; t += per) {
+          let mx = 0;
+          for (let k = 0; k < per; k++) mx = Math.max(mx, w[src ? src[t + k] : t + k]);
+          if (mx >= 0.5) for (let k = 0; k < per; k++) out.push(src ? src[t + k] : t + k);
+        }
+      }
+      idx = new THREE.BufferAttribute(n > 65535 ? new Uint32Array(out) : new Uint16Array(out), 1);
+      ud.masks[key] = idx;
+    }
+    g.setIndex(idx);
+    ud.maskKey = key;
+  }
+
   _applyClipping() {
-    const on = this.partView === 'hand' || this.partView === 'foot';
+    const on = this._partOn;
     const planes = on ? [this.clipPlane] : null;
+    const keepBy = new Map();
+    for (const s of SLOTS) keepBy.set(s.key, this._partBones(this.slots[s.key]));
+    for (const s of SLOTS) {
+      const slot = this.slots[s.key];
+      const keep = keepBy.get(s.key);
+      const list = [...slot.meshes, ...slot.wireMeshes, ...slot.boneParts,
+        ...slot.headPlanes.parts, ...slot.headPlanes.lines];
+      for (const o of list) guard('見る範囲', () => this._maskObject(o, on ? keep : null));
+    }
     for (const o of this._clipTargets()) {
       const mats = Array.isArray(o.material) ? o.material : [o.material];
       for (const mat of mats) {
         if (!mat) continue;
         mat.clippingPlanes = planes;
         mat.clipShadows = true;
-        mat.side = on ? THREE.DoubleSide : THREE.FrontSide;
+        if (!o.userData.keepSide) mat.side = on ? THREE.DoubleSide : THREE.FrontSide;
         mat.needsUpdate = true;
       }
     }
+    this._updateClipPlane();
   }
 
-  /** 切る面を、いまの姿勢に合わせて動かす */
+  /** 切る面を、いまの姿勢に合わせて動かす（前腕／すねの途中で切る） */
   _updateClipPlane() {
-    if (this.partView !== 'hand' && this.partView !== 'foot') return;
+    if (!this._partOn) return;
     const p = this.primarySlot;
     if (!p) return;
     const isHand = this.partView === 'hand';
@@ -1231,27 +1408,61 @@ export class Viewer {
     const pa = a.getWorldPosition(new THREE.Vector3());
     const pb = b.getWorldPosition(new THREE.Vector3());
     const dir = pb.clone().sub(pa);
-    if (dir.lengthSq() < 1e-8) return;
-    dir.normalize();
-    // 手首（足首）より少し手前で切る＝腕（脚）が少しだけ残る
-    const cut = pb.clone().addScaledVector(dir, -(isHand ? 0.12 : 0.14));
+    const len = dir.length();
+    if (len < 1e-6) return;
+    dir.divideScalar(len);
+    // 手首から前腕の 4 割、足首からすねの 3.5 割だけ残す（腕・脚とのつながりが分かる）
+    const cut = pb.clone().addScaledVector(dir, -len * (isHand ? 0.40 : 0.35));
     this.clipPlane.setFromNormalAndCoplanarPoint(dir, cut);
   }
 
-  /** 骨の長さを変えたあと、骨格表示を作り直す */
+  /**
+   * 体型・頭身を変えたあとに呼ばれる。骨格は基準姿勢で組んでボーンの子にしてあり、
+   * ボーンの伸び縮みにそのまま付いていくので、まだ作っていないときだけ作る。
+   */
   rebuildBoneViews() {
     for (const s of SLOTS) {
       const slot = this.slots[s.key];
-      if (slot.skeleton) guard('骨格の作り直し', () => this._buildBoneView(slot));
+      if (slot.skeleton && !slot.boneParts.length && !slot.boneDirty) guard('骨格の作り直し', () => this._buildBoneView(slot));
     }
   }
 
+
+  /**
+   * 手の向き（いまの姿勢）。指の骨の位置から求める。
+   *   along  … 手首から中指の付け根へ
+   *   radial … 小指側から親指側へ（手のひらの面の中）
+   *   palmar … 手のひらが向いている側
+   */
+  _handFrame(slot, side) {
+    const hand = slot && slot.boneMap['hand' + side];
+    const fg = slot && slot.fingers && slot.fingers[side];
+    if (!hand || !fg) return null;
+    const P = b => b.getWorldPosition(new THREE.Vector3());
+    const base = f => fg[f] && fg[f][1];
+    const mid = base('middle') || base('index') || base('ring');
+    const rad = base('index') || base('middle');
+    const uln = base('pinky') || base('ring');
+    if (!mid || !rad || !uln || rad === uln) return null;
+    const o = P(hand);
+    const along = P(mid).sub(o);
+    if (along.lengthSq() < 1e-12) return null;
+    along.normalize();
+    const radial = P(rad).sub(P(uln));
+    radial.addScaledVector(along, -radial.dot(along));
+    if (radial.lengthSq() < 1e-12) return null;
+    radial.normalize();
+    const palmar = new THREE.Vector3().crossVectors(along, radial)
+      .multiplyScalar(side === 'L' ? 1 : -1);
+    return { origin: o, along, radial, palmar };
+  }
 
   /** 見る範囲をカメラで切り替える */
   frameOn(part, side) {
     const p = this.primarySlot;
     const at = new THREE.Vector3(0, 0.95, 0);
     let dist = 3.4;
+    let dir = new THREE.Vector3(0, 0.08, 1);
     const posOf = key => {
       const b = p && p.boneMap[key];
       return b ? b.getWorldPosition(new THREE.Vector3()) : null;
@@ -1264,14 +1475,44 @@ export class Viewer {
       const hd = posOf('head');
       if (hd) { at.copy(hd); at.y += 0.09; dist = 0.55; }
     } else if (part === 'hand') {
+      // 手の甲の斜め（親指側）から見る。手の形と手首のつながりがいちばん分かる向き
       const hn = posOf('hand' + sd);
-      if (hn) { at.copy(hn); dist = 0.34; }
+      const fg = p && p.fingers && p.fingers[sd];
+      const tipBone = fg && fg.middle && (fg.middle[3] || fg.middle[2] || fg.middle[1]);
+      if (hn) {
+        at.copy(hn);
+        if (tipBone) at.lerp(tipBone.getWorldPosition(new THREE.Vector3()), 0.25);
+        dist = 0.62;
+        const hf = this._handFrame(p, sd);
+        if (hf) {
+          dir = hf.palmar.clone().negate().multiplyScalar(0.8)
+            .addScaledVector(hf.radial, 0.45).add(new THREE.Vector3(0, 0.25, 0));
+        }
+      }
     } else if (part === 'foot') {
+      // 足は外くるぶし側の斜め前から見る（かかと・土踏まず・足首が一度に見える）
       const ft = posOf('foot' + sd);
-      if (ft) { at.copy(ft); dist = 0.38; }
+      if (ft) {
+        at.copy(ft);
+        const fb = p.boneMap['foot' + sd];
+        const toe = fb.children.find(c => c.isBone);
+        if (toe) {
+          const tp = toe.getWorldPosition(new THREE.Vector3());
+          at.lerp(tp, 0.45);
+          const fwd = tp.clone().sub(ft); fwd.y = 0;
+          if (fwd.lengthSq() > 1e-10) {
+            fwd.normalize();
+            const lat = new THREE.Vector3().crossVectors(fwd, new THREE.Vector3(0, 1, 0))
+              .multiplyScalar(sd === 'L' ? -1 : 1);
+            dir = fwd.multiplyScalar(0.75).addScaledVector(lat, 0.6).add(new THREE.Vector3(0, 0.4, 0));
+          }
+        }
+        dist = 0.75;
+      }
     }
+    dir.normalize();
     this.controls.target.copy(at);
-    this.camera.position.set(at.x, at.y + dist * 0.08, at.z + dist);
+    this.camera.position.copy(at).addScaledVector(dir, dist);
     this.controls.update();
   }
 
@@ -1283,18 +1524,68 @@ export class Viewer {
 
   // ---- 簡易骨格 -----------------------------------------------------------
 
+  /**
+   * 骨格表示を作り直す印を付ける。組み立ては重い（iPad で 1〜2 秒）ので、
+   * 実際に骨格を表示するときに初めて組み立てる。
+   */
   _buildBoneView(slot) {
     for (const p of slot.boneParts) if (p.parent) p.parent.remove(p);
     slot.boneParts = [];
-    if (!slot.skeleton) return;
-    slot.pivot.updateWorldMatrix(true, true);
-    slot.boneParts = buildSkeletonView(slot);
+    if (slot.skullGroup && slot.skullGroup.parent) slot.skullGroup.parent.remove(slot.skullGroup);
+    slot.skullGroup = null;
+    slot.boneDirty = !!slot.skeleton;
     this._refreshBoneView();
+  }
+
+  /** 骨格を今すぐ組み立てる */
+  _assembleBoneView(slot) {
+    slot.boneDirty = false;
+    if (!slot.skeleton || !slot.neutralWorld) return;
+    // 骨格は基準姿勢（ポーズなし・倍率 1）で組み立てる。組んだ後はボーンの子として一緒に動く。
+    const bones = slot.skeleton.bones;
+    const saved = bones.map(b => [b.position.clone(), b.quaternion.clone(), b.scale.clone()]);
+    for (const b of bones) {
+      const nb = slot.neutralWorld.get(b), np = slot.neutralParent.get(b);
+      if (nb && np) b.quaternion.copy(np.clone().invert().multiply(nb));
+      const rp = slot.restPos && slot.restPos.get(b);
+      if (rp) b.position.copy(rp);
+      b.scale.setScalar(1);
+    }
+    slot.pivot.updateWorldMatrix(true, true);
+    try {
+      // 頭の骨は、面で捉えた頭部のときに元の頭を縮めても大きさが変わらないよう、別の入れ物に入れる
+      const head = slot.boneMap.head;
+      if (head) {
+        slot.skullGroup = new THREE.Group();
+        slot.skullGroup.userData.bonePart = true;
+        head.add(slot.skullGroup);
+        slot.skullGroup.updateWorldMatrix(true, false);
+      }
+      const handFrame = { L: this._handFrame(slot, 'L'), R: this._handFrame(slot, 'R') };
+      slot.boneParts = buildSkeletonView(slot, { handFrame, skullGroup: slot.skullGroup });
+    } finally {
+      bones.forEach((b, i) => { b.position.copy(saved[i][0]); b.quaternion.copy(saved[i][1]); b.scale.copy(saved[i][2]); });
+      slot.pivot.updateWorldMatrix(true, true);
+    }
+    // 面で捉えた頭部で元の頭を縮めていても、頭の骨は元の大きさに戻す
+    this._applyProportions();
+    this._applyClipping();
   }
 
   _refreshBoneView() {
     const p = this.primarySlot;
     const on = this.boneViewOn || this.showBuiltinSkeleton;
+    if (on && p && p.boneDirty && !this._boneBuilding) {
+      // 先に「組み立て中」を出してから、次の描画のあとで組み立てる
+      this._boneBuilding = true;
+      this.onNotice('骨格を組み立てています…');
+      setTimeout(() => {
+        guard('骨格の生成', () => this._assembleBoneView(p));
+        this._boneBuilding = false;
+        this.onNotice('');
+        this._refreshBoneView();
+      }, 40);
+    }
     for (const s of SLOTS) {
       const slot = this.slots[s.key];
       const show = on && slot === p;
@@ -1461,14 +1752,6 @@ export class Viewer {
     this._ground();
   }
 
-  /** 手の形を当てる軸（基準姿勢での手の向きに合わせたワールド軸） */
-  _fingerAxes(side) {
-    // 左: 曲げ=+Z / ひねり=+Y / 開き=-X   右はその鏡
-    return side === 'L'
-      ? { x: new THREE.Vector3(0, 0, 1), y: new THREE.Vector3(0, 1, 0), z: new THREE.Vector3(-1, 0, 0) }
-      : { x: new THREE.Vector3(0, 0, -1), y: new THREE.Vector3(0, 1, 0), z: new THREE.Vector3(1, 0, 0) };
-  }
-
   /** 指の骨がいくつ使えるか */
   fingerBoneCount() {
     const p = this.primarySlot;
@@ -1484,22 +1767,25 @@ export class Viewer {
     for (const sd of sides) this.handShape[sd] = spec;
     guard('手の形', () => {
       const angles = parseFingerSpec(spec);
+      const q1 = new THREE.Quaternion(), q2 = new THREE.Quaternion(), q3 = new THREE.Quaternion();
       for (const sd of sides) {
-        const axes = this._fingerAxes(sd);
         for (const s of SLOTS) {
           const slot = this.slots[s.key];
           const set = slot.fingers[sd];
-          if (!set) continue;
+          if (!set || !slot.fingerAxes) continue;
           for (const finger of Object.keys(set)) {
             for (const segStr of Object.keys(set[finger])) {
               const bone = set[finger][segStr];
               const nb = slot.neutralWorld.get(bone);
               const np = slot.neutralParent.get(bone);
-              if (!nb || !np) continue;
+              const ax = slot.fingerAxes.get(bone);
+              if (!nb || !np || !ax) continue;
               const a = angles[finger + segStr] || { x: 0, y: 0, z: 0 };
-              const delta = new THREE.Quaternion().setFromAxisAngle(axes.x, a.x * DEG)
-                .multiply(new THREE.Quaternion().setFromAxisAngle(axes.z, a.z * DEG))
-                .multiply(new THREE.Quaternion().setFromAxisAngle(axes.y, a.y * DEG));
+              // X はマイナスで曲げる（Swift版からの書式を引き継ぐ）
+              q1.setFromAxisAngle(ax.flex, -a.x * DEG);
+              q2.setFromAxisAngle(ax.spread, a.z * DEG);
+              q3.setFromAxisAngle(ax.twist, a.y * DEG);
+              const delta = q1.clone().multiply(q2).multiply(q3);
               bone.quaternion.copy(np).invert().multiply(delta).multiply(nb);
             }
           }
