@@ -28,7 +28,7 @@ export const SHAPE = {
   waist:    { m: 0.04, f: -0.15 },   // ウエスト
   hip:      { m: -0.08, f: 0.17 },   // 腰（大転子）の横幅
   legShift: { m: -0.06, f: 0.085 },  // 脚の付け根の左右位置
-  breast:   { f: 0.056, r: 0.09 },  // 乳房の前への張り出し・半径
+  breast:   { f: 0.072, r: 0.09 },  // 乳房の前への張り出し・半径
   pec:      { m: 0.020 },            // 大胸筋の厚み
   trap:     { m: 0.016 },            // 僧帽筋（首の付け根から肩への盛り上がり）
   glute:    { m: 0.008, f: -0.036 }, // 臀部（マイナスが後ろへ張り出す）
@@ -176,6 +176,128 @@ export function buildBodyMorphs(slot, opts = {}) {
     tg.computeVertexNormals();
     const wn = tg.attributes.normal.array;
 
+    // 胸の殻のふち（下側・脇側で内へ巻き込んでいる縁）を探す。
+    // 乳房のふくらみがこの縁まで届くと、縁がめくれて内側が見え、横がえぐれたように見える。
+    // ふくらみは縁の手前でなめらかに消す（乳房の下のしわ＝乳房下溝と同じ位置になる）。
+    const zc0 = J.chest ? J.chest.z : J.hips.z;
+    const rim = [];
+    for (let i = 0; i < N; i++) {
+      const x = wp[i * 3], y = wp[i * 3 + 1], z = wp[i * 3 + 2];
+      if (y < yBreast - 0.24 * s || y > yBreast + 0.08 * s || z < zc0 - 0.02 * s) continue;
+      if (Math.abs(x - cx) > 0.2 * s) continue;
+      const ny = wn[i * 3 + 1], nz = wn[i * 3 + 2];
+      // 下を向いた面＝ふちの裏側。
+      // （殻の内張りは胸全体の裏にあるので含めない。内張りは表と同じだけ動くので、めくれない）
+      if (ny < -0.45 && nz > -0.6) rim.push(x, y, z);
+    }
+    const rimDist = (x, y, z) => {
+      let best = Infinity;
+      for (let k = 0; k < rim.length; k += 3) {
+        const d = (rim[k] - x) ** 2 + (rim[k + 1] - y) ** 2 + (rim[k + 2] - z) ** 2;
+        if (d < best) best = d;
+      }
+      return Math.sqrt(best);
+    };
+
+    // ---- 胸: 女性は乳房、男性は大胸筋の厚み ----
+    //   面の向き（法線）で効き方を決めると、横を向いた面（脇の下側）だけ押し出されずに
+    //   えぐれたように見える。そこで「胴の中心より前にあるか」という位置で効き方を決め、
+    //   最後に面のつながりに沿ってならして、しわや段差を消す。
+    const chestF = new Float32Array(N * 3), chestM = new Float32Array(N * 3);
+    const trunkW = new Float32Array(N);
+    for (let i = 0; i < N; i++) {
+      let wt = 0;
+      for (let k = 0; k < 4; k++) {
+        const w = sw.getComponent(i, k);
+        if (!w) continue;
+        const b = bones[si.getComponent(i, k)];
+        if (!head.has(b) && !armL.has(b) && !armR.has(b) && !legL.has(b) && !legR.has(b)) wt += w;
+      }
+      trunkW[i] = wt;
+    }
+    const R = SHAPE.breast.r * s;
+    for (let i = 0; i < N; i++) {
+      const wT = trunkW[i];
+      if (wT <= 0) continue;
+      const x = wp[i * 3], y = wp[i * 3 + 1], z = wp[i * 3 + 2];
+      if (Math.abs(y - yBreast) > 0.25 * s) continue;
+      let front = smooth((z - zc0) / (0.075 * s)) * wT;
+      // 殻のふちに近いところは動かさない（ふちから 3.5cm かけて効き始める）
+      // ふちの近くは丸く巻き込むように（直線的に減らすと角ができる）
+      if (front > 0 && rim.length) {
+        const t = Math.max(0, Math.min(1, (rimDist(x, y, z) - 0.004 * s) / (0.045 * s)));
+        front *= 1 - (1 - t) ** 2.5;
+      }
+      if (front <= 0) continue;
+      for (const sx of [1, -1]) {
+        const bx = cx + sx * 0.088 * s;
+        // 乳房の広がり: 外側（脇の方）へは殻のふちを越えない程度、内側（谷間）は狭く。
+        // 上は鎖骨の下からなだらかに、下はふくらみの重心があって丸い
+        const dx = (x - bx) * sx;                 // + が外側
+        const dy = y - (yBreast - 0.006 * s);
+        const u = dx / (R * (dx > 0 ? 1.0 : 0.66));
+        const v = dy / (R * (dy > 0 ? 1.25 : 0.88));
+        const r = Math.hypot(u, v);
+        if (r < 1) {
+          // 横から見た形: 上側（鎖骨の下〜乳頭）はなだらかな斜面、下側は丸いふくらみ。
+          // 正面から見た形: 左右それぞれ丸く、谷間で分かれる。
+          const hu = Math.sqrt(Math.max(0, 1 - u * u));
+          const kv = v > 0 ? Math.pow(Math.max(0, 1 - v), 1.25) : Math.sqrt(Math.max(0, 1 - v * v));
+          const a = hu * kv * smooth((1 - r) / 0.35) * front;
+          // 押し出す向き: 前へ、少し外へ、下側はわずかに下へ（重さで少し下がる）
+          const dir = V3(sx * 0.15, dy < 0 ? -0.12 : -0.03, 1).normalize().multiplyScalar(SHAPE.breast.f * s * a);
+          chestF[i * 3] += dir.x; chestF[i * 3 + 1] += dir.y; chestF[i * 3 + 2] += dir.z;
+        }
+        const pr = Math.hypot(x - (cx + sx * 0.078 * s), (y - (yBreast + 0.03 * s)) * 0.9) / (0.105 * s);
+        if (pr < 1) chestM[i * 3 + 2] += SHAPE.pec.m * s * smooth(1 - pr) * front;
+      }
+    }
+    // 面のつながりに沿ってならす（同じ位置にある頂点は 1 つとみなす）
+    {
+      const id = new Int32Array(N), keyOf = new Map();
+      for (let i = 0; i < N; i++) {
+        const k = Math.round(wp[i * 3] * 2e4) + ',' + Math.round(wp[i * 3 + 1] * 2e4) + ',' + Math.round(wp[i * 3 + 2] * 2e4);
+        let v = keyOf.get(k);
+        if (v === undefined) { v = keyOf.size; keyOf.set(k, v); }
+        id[i] = v;
+      }
+      const U = keyOf.size;
+      const nb = Array.from({ length: U }, () => new Set());
+      const idx = g.index ? g.index.array : null;
+      const T = idx ? idx.length : N;
+      for (let t = 0; t < T; t += 3) {
+        const a = id[idx ? idx[t] : t], b = id[idx ? idx[t + 1] : t + 1], c = id[idx ? idx[t + 2] : t + 2];
+        nb[a].add(b); nb[a].add(c); nb[b].add(a); nb[b].add(c); nb[c].add(a); nb[c].add(b);
+      }
+      const free = new Uint8Array(U);
+      for (let i = 0; i < N; i++) {
+        const y = wp[i * 3 + 1], x = wp[i * 3];
+        // ならすのは殻のふちと脇の近くだけ（谷間とふくらみの頂は形を残す）
+        if (trunkW[i] > 0.3 && Math.abs(y - yBreast) < 0.24 * s && Math.abs(x - cx) < 0.25 * s
+          && wp[i * 3 + 2] > zc0 - 0.03 * s && Math.abs(x - cx) > 0.045 * s
+          && rim.length && rimDist(x, y, wp[i * 3 + 2]) < 0.085 * s) free[id[i]] = 1;
+      }
+      for (const arr of [chestF, chestM]) {
+        let cur = new Float32Array(U * 3), cnt = new Float32Array(U);
+        for (let i = 0; i < N; i++) { const u = id[i]; cur[u * 3] += arr[i * 3]; cur[u * 3 + 1] += arr[i * 3 + 1]; cur[u * 3 + 2] += arr[i * 3 + 2]; cnt[u]++; }
+        for (let u = 0; u < U; u++) if (cnt[u] > 1) { cur[u * 3] /= cnt[u]; cur[u * 3 + 1] /= cnt[u]; cur[u * 3 + 2] /= cnt[u]; }
+        for (let it = 0; it < 10; it++) {
+          const nx = cur.slice();
+          for (let u = 0; u < U; u++) {
+            if (!free[u] || !nb[u].size) continue;
+            let ax = 0, ay = 0, az = 0;
+            for (const w of nb[u]) { ax += cur[w * 3]; ay += cur[w * 3 + 1]; az += cur[w * 3 + 2]; }
+            const k = 1 / nb[u].size;
+            nx[u * 3] = 0.5 * cur[u * 3] + 0.5 * ax * k;
+            nx[u * 3 + 1] = 0.5 * cur[u * 3 + 1] + 0.5 * ay * k;
+            nx[u * 3 + 2] = 0.5 * cur[u * 3 + 2] + 0.5 * az * k;
+          }
+          cur = nx;
+        }
+        for (let i = 0; i < N; i++) { const u = id[i]; arr[i * 3] = cur[u * 3]; arr[i * 3 + 1] = cur[u * 3 + 1]; arr[i * 3 + 2] = cur[u * 3 + 2]; }
+      }
+    }
+
     const dM = new Float32Array(N * 3), dF = new Float32Array(N * 3);
     for (let i = 0; i < N; i++) {
       const x = wp[i * 3], y = wp[i * 3 + 1], z = wp[i * 3 + 2];
@@ -215,23 +337,9 @@ export function buildBodyMorphs(slot, opts = {}) {
           dm.x += shift * SHAPE.legShift.m; df.x += shift * SHAPE.legShift.f;
         }
       }
-      // 2) 胸: 女性は乳房、男性は大胸筋の厚み（前を向いた面だけ）
-      if (wTrunk > 0 && n.z > 0.15) {
-        const front = smooth((n.z - 0.15) / 0.5) * wTrunk;
-        for (const sx of [1, -1]) {
-          const bx = cx + sx * 0.092 * s;
-          // 乳房は乳頭の高さより下にふくらみの重心がある（上側はなだらか、下側は丸く）
-          const dy = y - (yBreast - 0.012 * s);
-          const r = Math.hypot(x - bx, dy * (dy > 0 ? 0.85 : 1.25)) / (SHAPE.breast.r * s);
-          if (r < 1) {
-            // 円錐にならないよう、丸い（半球に近い）ふくらみにして、縁だけなだらかにつなぐ
-            const a = Math.sqrt(1 - r * r) * smooth((1 - r) / 0.45) * front;
-            df.addScaledVector(V3(sx * 0.14, -0.2, 1).normalize(), SHAPE.breast.f * s * a);
-          }
-          const pr = Math.hypot(x - (cx + sx * 0.078 * s), (y - (yBreast + 0.03 * s)) * 0.9) / (0.105 * s);
-          if (pr < 1) dm.z += SHAPE.pec.m * s * (1 - pr * pr) ** 2 * front;
-        }
-      }
+      // 2) 胸（乳房・大胸筋）は前もって計算して、面に沿ってなめらかにしてある
+      df.x += chestF[i * 3]; df.y += chestF[i * 3 + 1]; df.z += chestF[i * 3 + 2];
+      dm.x += chestM[i * 3]; dm.y += chestM[i * 3 + 1]; dm.z += chestM[i * 3 + 2];
       // 男性の僧帽筋: 首の付け根から肩先へ、上を向いた面を持ち上げる
       if (wTrunk > 0 && n.y > 0.2) {
         const t = bump(ax, 0.075 * s, 0.045 * s) * bump(y, ySN + 0.015 * s, 0.05 * s) * smooth((n.y - 0.2) / 0.4);
