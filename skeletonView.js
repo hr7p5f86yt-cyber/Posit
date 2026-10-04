@@ -213,8 +213,8 @@ export function measureBody(slot) {
     const wp = new Float32Array(n * 3);
     if (isSkin) m.skeleton.update();
     for (let i = 0; i < n; i++) {
-      v.fromBufferAttribute(pos, i);
-      if (isSkin) m.applyBoneTransform(i, v);
+      // スキンの素体は、体つきのモーフもかけた後の位置で測る
+      if (isSkin) m.getVertexPosition(i, v); else v.fromBufferAttribute(pos, i);
       v.applyMatrix4(m.matrixWorld);
       wp[i * 3] = v.x; wp[i * 3 + 1] = v.y; wp[i * 3 + 2] = v.z;
     }

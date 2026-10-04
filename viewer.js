@@ -8,6 +8,7 @@ import { JOINTS, JOINT_BY_KEY, JOINT_GROUPS, mapBones, mapBonesByStructure, mapF
 import { parseSpec, parseFingerSpec } from './poses.js';
 import { buildSkeletonView } from './skeletonView.js';
 import { buildHeadPlanes, FIG_HEADS, HEADH_MIN, HEADH_MAX } from './headPlanes.js';
+import { buildBodyMorphs } from './bodyShape.js';
 // 不具合を調べるときの入り口（画面には出ない）
 if (typeof window !== 'undefined') window.__positTHREE = THREE;
 
@@ -554,6 +555,8 @@ export class Viewer {
       guard('基準姿勢への補正', () => this._buildNeutral(slot));
       slot.restLowestY = this._lowestBoneY(slot);
       guard('頭身の測定', () => this._measureHeadRatio(slot));
+      // 男性・女性の体つき（表面を変形するモーフ）。基準姿勢のうちに作る
+      guard('体つきのモーフ', () => buildBodyMorphs(slot));
       guard('骨格の生成', () => this._buildBoneView(slot));
     }
 
@@ -1018,11 +1021,15 @@ export class Viewer {
   }
 
   /** 男女の体型ごとの、肩幅と腰幅の倍率 */
+  /**
+   * 体つき。clavicle … 鎖骨の長さ（肩関節が外へ出る量）、hip … 股関節の左右の間隔、
+   * morph … 表面の変形 [男性, 女性]（bodyShape.js）
+   */
   static get BODY_TYPES() {
     return {
-      neutral: { name: '中性', shoulder: 1.00, hip: 1.00 },
-      male:    { name: '男性', shoulder: 1.12, hip: 0.93 },
-      female:  { name: '女性', shoulder: 0.92, hip: 1.10 },
+      neutral: { name: '中性', clavicle: 1.00, hip: 1.00, morph: [0, 0] },
+      male:    { name: '男性', clavicle: 1.12, hip: 0.95, morph: [1, 0] },
+      female:  { name: '女性', clavicle: 0.90, hip: 1.06, morph: [0, 1] },
     };
   }
 
@@ -1030,6 +1037,11 @@ export class Viewer {
     if (!Viewer.BODY_TYPES[type]) return;
     this.bodyType = type;
     this._applyProportions();
+    // 骨格は新しい体の内側に収め直す（表示中なら作り直す）
+    for (const s of SLOTS) {
+      const slot = this.slots[s.key];
+      if (slot.skeleton && (slot.boneParts.length || slot.boneDirty)) this._buildBoneView(slot);
+    }
   }
 
   /**
@@ -1118,14 +1130,26 @@ export class Viewer {
       if (slot.headPlaneGroup) slot.headPlaneGroup.scale.setScalar(1 / hide);
       if (slot.skullGroup) slot.skullGroup.scale.setScalar(1 / hide);
 
-      // 肩幅・腰幅（体型）
-      for (const key of ['shoulderL', 'shoulderR', 'thighL', 'thighR']) {
+      // 肩幅: 鎖骨の長さ（肩関節を鎖骨に沿って外へ／内へ）
+      for (const key of ['upperArmL', 'upperArmR']) {
         const b = slot.boneMap[key];
-        if (!b) continue;
-        const w = key.startsWith('shoulder') ? bt.shoulder : bt.hip;
-        const lat = slot.lateral && slot.lateral.get(b);
-        if (!lat || w === 1) continue;
-        b.position.addScaledVector(lat, b.position.dot(lat) * (w - 1));
+        if (b && bt.clavicle !== 1 && b.parent && slot.boneMap['shoulder' + key.slice(-1)] === b.parent) {
+          b.position.multiplyScalar(bt.clavicle);
+        }
+      }
+      // 腰幅: 股関節の左右の間隔
+      for (const key of ['thighL', 'thighR']) {
+        const b = slot.boneMap[key];
+        const lat = b && slot.lateral && slot.lateral.get(b);
+        if (!lat || bt.hip === 1) continue;
+        b.position.addScaledVector(lat, b.position.dot(lat) * (bt.hip - 1));
+      }
+      // 表面の変形（男性・女性）
+      for (const m of [...slot.meshes, ...slot.wireMeshes]) {
+        if (m.morphTargetInfluences && m.geometry && m.geometry.userData.bodyMorph) {
+          m.morphTargetInfluences[0] = bt.morph[0];
+          m.morphTargetInfluences[1] = bt.morph[1];
+        }
       }
 
       slot.headScale = kh;
