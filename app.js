@@ -4,8 +4,10 @@ import { JOINTS, JOINT_BY_KEY, JOINT_GROUPS, jointLabel } from './bones.js';
 import { POSE_CATEGORIES, POSE_PRESETS, HAND_SHAPES, FACE_PRESETS, toSpec } from './poses.js';
 import { PoseHistory, relativeTime, HISTORY_LIMIT } from './history.js';
 import { CroquisSession, CROQUIS_SECONDS, CROQUIS_COUNTS } from './croquis.js';
+import { LightBall } from './lightBall.js';
+import * as THREE from 'three';
 
-export const BUILD = '2026-10-04e';
+export const BUILD = '2026-10-04f';
 
 const SAMPLE_URL = 'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r169/examples/models/gltf/Xbot.glb';
 const SETTINGS_KEY = 'posit.settings.v1';
@@ -36,10 +38,15 @@ function loadSettings() {
       cqFrame: s.cqFrame || 'full',
       cqWire: !!s.cqWire,
       cqAngle: s.cqAngle || 'random',
+      cqSide: s.cqSide || 'random',
+      cqBody: s.cqBody || 'keep',
+      cqHandShape: s.cqHandShape !== false,
+      lightBall: s.lightBall !== false,
       sheetH: typeof s.sheetH === 'number' ? s.sheetH : 0,
     };
   } catch (e) {
-    return { seconds: 30, count: 10, cqCats: [], cqModel: 'skin', cqFrame: 'full', cqWire: false, cqAngle: 'random', sheetH: 0 };
+    return { seconds: 30, count: 10, cqCats: [], cqModel: 'skin', cqFrame: 'full', cqWire: false, cqAngle: 'random',
+      cqSide: 'random', cqBody: 'keep', cqHandShape: true, lightBall: true, sheetH: 0 };
   }
 }
 function saveSettings() {
@@ -577,10 +584,55 @@ function angleLabel(az, el, mm) {
   return `${d}・${h}・${mm}mm`;
 }
 
+// ---- クロッキーの範囲・左右・体型 ----
+const CQ_SIDES = [
+  { value: 'random', label: '左右ランダム' },
+  { value: 'L', label: '左だけ' },
+  { value: 'R', label: '右だけ' },
+];
+const CQ_BODIES = [
+  { value: 'keep', label: 'いまのまま' },
+  { value: 'neutral', label: '中性' },
+  { value: 'male', label: '男性' },
+  { value: 'female', label: '女性' },
+  { value: 'random', label: '毎回ランダム' },
+];
+const pick = arr => arr[Math.floor(Math.random() * arr.length)];
+let cqMeta = { body: '', side: '' };
+let lastHandShape = null;
+
+/** 1枚ごとの体型と左右を決める（ポーズを当てる前に呼ぶ） */
+function croquisSetup() {
+  cqMeta = { body: '', side: '' };
+  if (settings.cqBody === 'random') {
+    const keys = ['neutral', 'male', 'female'].filter(k => k !== viewer.bodyType);
+    const k = pick(keys);
+    viewer.setBodyType(k);
+    cqMeta.body = BODY_TYPES.find(b => b.key === k).label;
+  }
+  const part = settings.cqFrame;
+  if (part === 'hand' || part === 'foot') {
+    const sd = settings.cqSide === 'random' ? pick(['L', 'R']) : settings.cqSide;
+    if (sd !== viewer.partSide || viewer.partView !== part) viewer.setPartView(part, sd);
+    cqMeta.side = (sd === 'L' ? '左' : '右') + (part === 'hand' ? '手' : '足');
+  }
+}
+
+/** 手だけのときは手の形もランダムに（平らな初期形は除く・前回と変える） */
+function croquisHandShape() {
+  if (settings.cqFrame !== 'hand' || !settings.cqHandShape || !viewer.fingerBoneCount()) return null;
+  const pool = HAND_SHAPES.filter(h => h.id !== 'flat' && h.id !== lastHandShape);
+  const h = pick(pool);
+  lastHandShape = h.id;
+  viewer.applyHandShape('both', h.spec);
+  return h;
+}
+
 /** 毎回ちがう向き・高さ・レンズで見せる（同じ向きばかりにならないよう前回と離す） */
 let lastAz = null;
 function croquisAngle() {
-  if (settings.cqAngle !== 'random') { $('cqAngleText').textContent = ''; return; }
+  const meta = [cqMeta.side, cqMeta.body].filter(Boolean);
+  if (settings.cqAngle !== 'random') { $('cqAngleText').textContent = meta.join('・'); return; }
   let az = rand(0, 360);
   if (lastAz !== null) for (let k = 0; k < 6 && Math.abs(((az - lastAz + 540) % 360) - 180) < 50; k++) az = rand(0, 360);
   lastAz = az;
@@ -589,16 +641,20 @@ function croquisAngle() {
   const lenses = [24, 35, 35, 50, 50, 50, 70, 85];
   const mm = lenses[Math.floor(Math.random() * lenses.length)];
   viewer.viewFromAngle(az, el, mm);
-  $('cqAngleText').textContent = angleLabel(az, el, mm);
+  // 手・足は骨の向きを基準に回すので、体の向きのことばは使わずレンズだけ出す
+  const part = settings.cqFrame === 'hand' || settings.cqFrame === 'foot';
+  $('cqAngleText').textContent = [...meta, part ? `${mm}mm` : angleLabel(az, el, mm)].join('・');
 }
 
 const croquis = new CroquisSession({
   history,
   onPose: (pose, index) => {
+    croquisSetup();
     viewer.applyPose(pose.spec);
+    const hs = croquisHandShape();
     croquisAngle();
     history.add({ poseId: pose.id, name: pose.name, spec: pose.spec });
-    $('cqName').textContent = pose.name;
+    $('cqName').textContent = hs ? hs.name : pose.name;
     $('cqIndex').textContent = croquis.count > 0 ? `${index} / ${croquis.count}` : `${index} 枚目`;
   },
   onTick: (remain, total) => {
@@ -624,10 +680,16 @@ async function startCroquis() {
   viewer.select(null);
   // 出題中だけ見え方を切り替え、終わったら戻す
   beforeCroquis = { view: viewer.viewMode, part: viewer.partView, side: viewer.partSide, wire: viewer.wireOn,
-    cam: viewer.camera.position.clone(), target: viewer.controls.target.clone() };
+    cam: viewer.camera.position.clone(), target: viewer.controls.target.clone(),
+    body: viewer.bodyType, hands: { ...viewer.handShape } };
   lastAz = null;
+  lastHandShape = null;
+  $('lightPop').hidden = true;
   if (settings.cqModel !== viewer.viewMode) viewer.applyViewMode(settings.cqModel);
-  viewer.setPartView(settings.cqFrame, viewer.partSide);
+  if (settings.cqBody !== 'keep' && settings.cqBody !== 'random' && settings.cqBody !== viewer.bodyType) {
+    viewer.setBodyType(settings.cqBody);
+  }
+  viewer.setPartView(settings.cqFrame, settings.cqSide === 'L' || settings.cqSide === 'R' ? settings.cqSide : viewer.partSide);
   viewer.setWireframe(settings.cqWire);
   try {
     if (navigator.wakeLock && navigator.wakeLock.request) {
@@ -647,6 +709,10 @@ function stopCroquis() {
   $('croquis').hidden = true;
   if (beforeCroquis) {
     viewer.applyViewMode(beforeCroquis.view);
+    if (viewer.bodyType !== beforeCroquis.body) viewer.setBodyType(beforeCroquis.body);
+    for (const sd of ['L', 'R']) {
+      if (viewer.handShape[sd] !== beforeCroquis.hands[sd]) viewer.applyHandShape(sd, beforeCroquis.hands[sd] || '');
+    }
     viewer.setPartView(beforeCroquis.part, beforeCroquis.side);
     viewer.setWireframe(beforeCroquis.wire);
     $('wireOn').checked = beforeCroquis.wire;
@@ -659,6 +725,7 @@ function stopCroquis() {
     }
     buildFrameChips();
     buildViewChips();
+    buildBodyChips();
     beforeCroquis = null;
   }
   buildHistory();
@@ -675,6 +742,7 @@ $('cqPause').addEventListener('click', () => {
 });
 $('cqDoneClose').addEventListener('click', () => { $('cqDone').hidden = true; });
 $('cqWire').addEventListener('change', e => { settings.cqWire = e.target.checked; saveSettings(); });
+$('cqHandShape').addEventListener('change', e => { settings.cqHandShape = e.target.checked; saveSettings(); });
 
 function buildChips(wrapId, options, isOn, onPick, cls) {
   const wrap = $(wrapId);
@@ -708,6 +776,20 @@ function buildCroquisChips() {
     FRAMES.map(f => ({ value: f.key, label: f.label })),
     o => settings.cqFrame === o.value,
     o => { settings.cqFrame = o.value; saveSettings(); buildCroquisChips(); });
+
+  const sided = settings.cqFrame === 'hand' || settings.cqFrame === 'foot';
+  $('cqSide').hidden = !sided;
+  if (sided) {
+    buildChips('cqSide', CQ_SIDES,
+      o => settings.cqSide === o.value,
+      o => { settings.cqSide = o.value; saveSettings(); buildCroquisChips(); });
+  }
+  $('cqHandShapeRow').hidden = settings.cqFrame !== 'hand';
+  $('cqHandShape').checked = settings.cqHandShape;
+
+  buildChips('cqBody', CQ_BODIES,
+    o => settings.cqBody === o.value,
+    o => { settings.cqBody = o.value; saveSettings(); buildCroquisChips(); });
 
   $('cqWire').checked = settings.cqWire;
 
@@ -873,9 +955,99 @@ bindRange('exposure', 'outExp', v => viewer.setExposure(v), v => v.toFixed(2));
 bindRange('envInt', 'outEnv', v => viewer.setEnvIntensity(v), v => v.toFixed(2));
 bindRange('lightAz', 'outAz', v => viewer.setLightDirection(v, viewer.lightElevation), v => `${v | 0}°`);
 bindRange('lightEl', 'outEl', v => viewer.setLightDirection(viewer.lightAzimuth, v), v => `${v | 0}°`);
-bindRange('lightInt', 'outInt', v => viewer.setLightIntensity(v), v => v.toFixed(2));
 bindRange('fillInt', 'outFill', v => viewer.setFillIntensity(v), v => v.toFixed(2));
 bindRange('shadowSoft', 'outSoft', v => viewer.setShadowSoftness(v), v => v.toFixed(1));
+
+// ---- ライト ---------------------------------------------------------------
+
+// 強さは 0〜20。弱いところを細かく、強いところは大きく動くように、つまみの位置を 2.2 乗で割り当てる
+const INT_MAX = 20;
+const posToInt = p => INT_MAX * Math.pow(Math.max(0, p) / 100, 2.2);
+const intToPos = i => 100 * Math.pow(Math.max(0, Math.min(INT_MAX, i)) / INT_MAX, 1 / 2.2);
+function setRange(id, v) { const el = $(id); el.value = v; el.dispatchEvent(new Event('input')); }
+
+bindRange('lightInt', 'outInt', v => {
+  const I = posToInt(v);
+  viewer.setLightIntensity(I);
+  $('lightIntQuick').value = v;
+  $('outIntQuick').textContent = I.toFixed(2);
+}, v => posToInt(v).toFixed(2));
+$('lightIntQuick').addEventListener('input', e => { lightPreset = null; buildLightPresets(); setRange('lightInt', e.target.value); });
+setRange('lightInt', intToPos(2.4));
+
+/**
+ * ライトの組み合わせ。az・el は「見ている方向」が基準
+ * （az … 右が +、0 が手前、180 が真後ろ。el … 上が +）。
+ */
+const LIGHT_PRESETS = [
+  { key: 'std',    label: '標準',     az: 35,  el: 45,  int: 2.4, fill: 0.35, env: 0.55, soft: 3,   exp: 1 },
+  { key: 'hard',   label: '強い明暗', az: 62,  el: 35,  int: 7,   fill: 0,    env: 0.04, soft: 0.5, exp: 1 },
+  { key: 'soft',   label: 'やわらか', az: 25,  el: 50,  int: 1.3, fill: 0.9,  env: 1.3,  soft: 10,  exp: 1 },
+  { key: 'side',   label: '真横から', az: 90,  el: 4,   int: 6,   fill: 0.03, env: 0.08, soft: 1,   exp: 1 },
+  { key: 'top',    label: '真上から', az: 0,   el: 84,  int: 6,   fill: 0.03, env: 0.1,  soft: 1.5, exp: 1 },
+  { key: 'rim',    label: '逆光',     az: 145, el: 18,  int: 15,  fill: 0.1,  env: 0.18, soft: 2,   exp: 1.15 },
+  { key: 'under',  label: '下から',   az: 12,  el: -40, int: 5,   fill: 0.03, env: 0.08, soft: 1.5, exp: 1 },
+  { key: 'bright', label: 'まぶしく', az: 40,  el: 40,  int: 16,  fill: 0.2,  env: 0.3,  soft: 2,   exp: 1 },
+];
+let lightPreset = 'std';
+
+function applyLightPreset(p) {
+  lightPreset = p.key;
+  setRange('lightInt', intToPos(p.int));
+  setRange('fillInt', p.fill);
+  setRange('envInt', p.env);
+  setRange('shadowSoft', p.soft);
+  setRange('exposure', p.exp);
+  const a = p.az * Math.PI / 180, e = p.el * Math.PI / 180;
+  lightBall.setFromView(new THREE.Vector3(Math.sin(a) * Math.cos(e), Math.sin(e), Math.cos(a) * Math.cos(e)));
+  buildLightPresets();
+  showToast('ライト: ' + p.label);
+}
+
+function buildLightPresets() {
+  for (const id of ['lightPresets', 'lightPresetsQuick']) {
+    buildChips(id, LIGHT_PRESETS, p => p.key === lightPreset, p => applyLightPreset(p));
+  }
+}
+
+// 光の玉
+const lightBall = new LightBall($('lightBall'), viewer, {
+  onDirection: (az, el) => {
+    az = ((az + 540) % 360) - 180;
+    setRange('lightAz', az);
+    setRange('lightEl', el);
+  },
+  onDragState: on => { viewer.showLightArrow(on); if (on) { lightPreset = null; buildLightPresets(); } },
+  onTap: () => { $('lightPop').hidden = !$('lightPop').hidden; },
+});
+$('lightPopMore').addEventListener('click', () => {
+  $('lightPop').hidden = true;
+  showTab('setting');
+  if (setPager) setPager.go(3);
+});
+// 小窓の外を触ったら閉じる
+document.addEventListener('pointerdown', e => {
+  if ($('lightPop').hidden) return;
+  if (e.target.closest && (e.target.closest('#lightPop') || e.target.closest('#lightBall'))) return;
+  $('lightPop').hidden = true;
+}, true);
+// 方位・高さのスライダーを動かしている間も、光の矢印を出す
+for (const id of ['lightAz', 'lightEl']) {
+  const el = $(id);
+  el.addEventListener('pointerdown', () => viewer.showLightArrow(true));
+  el.addEventListener('input', e => { if (e.isTrusted) { lightPreset = null; buildLightPresets(); } });
+  for (const ev of ['pointerup', 'pointercancel', 'change']) el.addEventListener(ev, () => viewer.showLightArrow(false));
+}
+for (const id of ['lightInt', 'fillInt', 'envInt', 'shadowSoft', 'exposure']) {
+  $(id).addEventListener('input', e => { if (e.isTrusted && lightPreset) { lightPreset = null; buildLightPresets(); } });
+}
+$('lightBallOn').checked = settings.lightBall;
+document.body.classList.toggle('noLightBall', !settings.lightBall);
+$('lightBallOn').addEventListener('change', e => {
+  settings.lightBall = e.target.checked; saveSettings();
+  document.body.classList.toggle('noLightBall', !settings.lightBall);
+  if (!settings.lightBall) $('lightPop').hidden = true;
+});
 bindRange('lens', 'outLens', v => viewer.setLens(v), v => `${v | 0}mm`);
 
 const FRAMES = [
@@ -997,6 +1169,7 @@ buildPoseList();
 buildCroquisChips();
 buildFrameChips();
 buildBodyChips();
+buildLightPresets();
 buildHistory();
 syncSliders();
 loadSample();

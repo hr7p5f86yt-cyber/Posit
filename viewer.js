@@ -556,7 +556,9 @@ export class Viewer {
       slot.restLowestY = this._lowestBoneY(slot);
       guard('頭身の測定', () => this._measureHeadRatio(slot));
       // 男性・女性の体つき（表面を変形するモーフ）。基準姿勢のうちに作る
-      guard('体つきのモーフ', () => buildBodyMorphs(slot));
+      guard('体つきのモーフ', () => buildBodyMorphs(slot, {
+        handFrame: { L: this._handFrame(slot, 'L'), R: this._handFrame(slot, 'R') },
+      }));
       guard('骨格の生成', () => this._buildBoneView(slot));
     }
 
@@ -1020,17 +1022,23 @@ export class Viewer {
     return p ? p.headRatio0 : 7.5;
   }
 
-  /** 男女の体型ごとの、肩幅と腰幅の倍率 */
   /**
    * 体つき。clavicle … 鎖骨の長さ（肩関節が外へ出る量）、hip … 股関節の左右の間隔、
+   * hand … 手の大きさ、index / ring … 人差し指・薬指の長さ（2D:4D 比）、
    * morph … 表面の変形 [男性, 女性]（bodyShape.js）
    */
   static get BODY_TYPES() {
     return {
-      neutral: { name: '中性', clavicle: 1.00, hip: 1.00, morph: [0, 0] },
-      male:    { name: '男性', clavicle: 1.12, hip: 0.95, morph: [1, 0] },
-      female:  { name: '女性', clavicle: 0.90, hip: 1.06, morph: [0, 1] },
+      neutral: { name: '中性', clavicle: 1.00, hip: 1.00, hand: 1.00, index: 1.00, ring: 1.00, morph: [0, 0] },
+      male:    { name: '男性', clavicle: 1.15, hip: 0.94, hand: 1.04, index: 0.98, ring: 1.03, morph: [1, 0] },
+      female:  { name: '女性', clavicle: 0.88, hip: 1.08, hand: 0.95, index: 1.01, ring: 0.985, morph: [0, 1] },
     };
+  }
+
+  /** いまの体型での手の大きさ（手だけを映すときの距離に使う） */
+  get handScale() {
+    const bt = Viewer.BODY_TYPES[this.bodyType] || Viewer.BODY_TYPES.neutral;
+    return bt.hand || 1;
   }
 
   setBodyType(type) {
@@ -1143,6 +1151,15 @@ export class Viewer {
         const lat = b && slot.lateral && slot.lateral.get(b);
         if (!lat || bt.hip === 1) continue;
         b.position.addScaledVector(lat, b.position.dot(lat) * (bt.hip - 1));
+      }
+      // 手の大きさと、人差し指・薬指の長さ
+      for (const sd of ['L', 'R']) {
+        const hb = slot.boneMap['hand' + sd];
+        if (hb && bt.hand && bt.hand !== 1) hb.scale.setScalar(bt.hand);
+        const fs = slot.fingers && slot.fingers[sd];
+        if (!fs) continue;
+        if (fs.index && fs.index[1] && bt.index !== 1) fs.index[1].scale.setScalar(bt.index);
+        if (fs.ring && fs.ring[1] && bt.ring !== 1) fs.ring[1].scale.setScalar(bt.ring);
       }
       // 表面の変形（男性・女性）
       for (const m of [...slot.meshes, ...slot.wireMeshes]) {
@@ -1558,7 +1575,7 @@ export class Viewer {
       // 手・足は骨の向きを基準に回す（手のどの面を見せるかを変える）
       dir.applyQuaternion(f.quat);
       center = this.controls.target.clone();
-      radius = this.partView === 'hand' ? 0.16 : 0.2;
+      radius = this.partView === 'hand' ? 0.16 * this.handScale : 0.2;
     } else {
       const p = this.primarySlot;
       if (!p) return;
@@ -1609,7 +1626,7 @@ export class Viewer {
       if (hn) {
         at.copy(hn);
         if (tipBone) at.lerp(tipBone.getWorldPosition(new THREE.Vector3()), 0.25);
-        dist = 0.62;
+        dist = 0.62 * this.handScale;
         const hf = this._handFrame(p, sd);
         if (hf) {
           dir = hf.palmar.clone().negate().multiplyScalar(0.8)
@@ -2279,6 +2296,57 @@ export class Viewer {
     );
     this.keyLight.target.position.set(0, 0.9, 0);
     this.keyLight.target.updateMatrixWorld();
+    if (this._arrowOn) this._placeLightArrow();
+  }
+
+  /**
+   * 光の向きを変えている間だけ、人形のそばに「光の矢印」を出す。
+   * 矢印の根元が光の来るところ、先が光の当たる先（見ている中心）。
+   */
+  showLightArrow(on) {
+    if (!this.lightArrow) {
+      const g = new THREE.Group();
+      const mat = new THREE.MeshBasicMaterial({ color: 0xffd84d, transparent: true, opacity: 0.92, depthTest: false });
+      const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 1, 10), mat);
+      shaft.position.y = 0.5;
+      const head = new THREE.Mesh(new THREE.ConeGeometry(0.04, 0.12, 14), mat);
+      head.position.y = 1.0;
+      const sun = new THREE.Mesh(new THREE.SphereGeometry(0.05, 16, 12), mat);
+      g.add(shaft, head, sun);
+      g.renderOrder = 999;
+      g.traverse(o => { o.raycast = () => {}; o.renderOrder = 999; o.castShadow = false; });
+      g.visible = false;
+      this.scene.add(g);
+      this.lightArrow = g;
+      this._arrowParts = { shaft, head, sun };
+    }
+    this._arrowOn = on;
+    clearTimeout(this._arrowTimer);
+    if (on) { this.lightArrow.visible = true; this._placeLightArrow(); }
+    else this._arrowTimer = setTimeout(() => { this.lightArrow.visible = false; }, 900);
+  }
+
+  _placeLightArrow() {
+    const g = this.lightArrow;
+    if (!g) return;
+    const tgt = this.controls.target;
+    const dist = this.camera.position.distanceTo(tgt);
+    const len = dist * 0.32;
+    const d = new THREE.Vector3(
+      Math.cos(this.lightElevation * DEG) * Math.sin(this.lightAzimuth * DEG),
+      Math.sin(this.lightElevation * DEG),
+      Math.cos(this.lightElevation * DEG) * Math.cos(this.lightAzimuth * DEG));
+    // 根元（光の来るところ）から中心の少し手前まで
+    const from = tgt.clone().addScaledVector(d, len * 1.25);
+    g.position.copy(from);
+    g.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), d.clone().negate());
+    const { shaft, head, sun } = this._arrowParts;
+    const L = len * 0.95;
+    shaft.scale.set(dist * 0.25, L - len * 0.12, dist * 0.25);
+    shaft.position.y = (L - len * 0.12) / 2;
+    head.scale.setScalar(dist * 0.25);
+    head.position.y = L - len * 0.06;
+    sun.scale.setScalar(dist * 0.3);
   }
 
   setLightIntensity(v) { this.keyLight.intensity = v; }

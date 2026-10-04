@@ -114,6 +114,17 @@
 
 <div id="toast" hidden></div>
 
+<div id="lightBall" title="光の向き（なぞると変わる・タップで強さ）">
+  <canvas></canvas>
+  <span class="tip"></span>
+</div>
+<div id="lightPop" hidden>
+  <label class="row"><span class="lbl">強さ</span>
+    <input type="range" id="lightIntQuick" min="0" max="100" step="0.5" value="38"><output id="outIntQuick">2.40</output></label>
+  <div class="scroller" id="lightPresetsQuick"></div>
+  <button id="lightPopMore" class="ghost small">くわしい設定</button>
+</div>
+
 <section id="sheet">
   <div id="grip"><span></span></div>
 
@@ -193,7 +204,13 @@
     <div class="grid small" id="cqCats"></div>
     <div class="sub">出題中の見え方</div>
     <div class="scroller" id="cqModel"></div>
+    <div class="sub">見る範囲</div>
     <div class="scroller" id="cqFrame"></div>
+    <div class="scroller" id="cqSide" hidden></div>
+    <label class="row toggle" id="cqHandShapeRow" hidden><span class="lbl">手の形も毎回変える</span>
+      <input type="checkbox" id="cqHandShape"></label>
+    <div class="sub">体型</div>
+    <div class="scroller" id="cqBody"></div>
     <div class="sub">画角<span class="dim">（向き・高さ・レンズを毎回変えます）</span></div>
     <div class="scroller" id="cqAngle"></div>
     <label class="row toggle"><span class="lbl">面の線を出す</span>
@@ -246,20 +263,26 @@
       <p class="hint" id="viewNote">骨格モデルが無くても、モデル自身のボーンから骨格を組み立てて表示できます。</p>
       </section>
       <section class="pane" data-name="ライトと影">
+      <div class="sub">ライトの組み合わせ<span class="dim">（向きは見ている方向が基準）</span></div>
+      <div class="scroller" id="lightPresets"></div>
+      <label class="row"><span class="lbl">強さ</span>
+        <input type="range" id="lightInt" min="0" max="100" step="0.5" value="38"><output id="outInt">2.40</output></label>
       <label class="row"><span class="lbl">方位</span>
         <input type="range" id="lightAz" min="-180" max="180" step="1" value="35"><output id="outAz">35°</output></label>
       <label class="row"><span class="lbl">高さ</span>
-        <input type="range" id="lightEl" min="-10" max="85" step="1" value="45"><output id="outEl">45°</output></label>
-      <label class="row"><span class="lbl">強さ</span>
-        <input type="range" id="lightInt" min="0" max="6" step="0.05" value="2.4"><output id="outInt">2.40</output></label>
+        <input type="range" id="lightEl" min="-60" max="88" step="1" value="45"><output id="outEl">45°</output></label>
       <label class="row"><span class="lbl">補助光</span>
-        <input type="range" id="fillInt" min="0" max="2" step="0.01" value="0.35"><output id="outFill">0.35</output></label>
+        <input type="range" id="fillInt" min="0" max="3" step="0.01" value="0.35"><output id="outFill">0.35</output></label>
+      <label class="row"><span class="lbl">環境光</span>
+        <input type="range" id="envInt" min="0" max="2.5" step="0.01" value="0.55"><output id="outEnv">0.55</output></label>
       <label class="row"><span class="lbl">影のぼけ</span>
         <input type="range" id="shadowSoft" min="0" max="12" step="0.5" value="3"><output id="outSoft">3.0</output></label>
       <label class="row"><span class="lbl">露出</span>
-        <input type="range" id="exposure" min="0.3" max="2.2" step="0.01" value="1"><output id="outExp">1.00</output></label>
-      <label class="row"><span class="lbl">環境光</span>
-        <input type="range" id="envInt" min="0" max="1.6" step="0.01" value="0.55"><output id="outEnv">0.55</output></label>
+        <input type="range" id="exposure" min="0.2" max="3" step="0.01" value="1"><output id="outExp">1.00</output></label>
+      <label class="row toggle"><span class="lbl">光の玉を画面に出す</span>
+        <input type="checkbox" id="lightBallOn" checked></label>
+      <p class="hint">画面右上の光の玉を指でなぞると、光の向きが変わります。内側の円は手前から、外側の輪は奥から（逆光）。
+        タップすると強さとライトの組み合わせを選べます。補助光と環境光を下げるほど、明暗がはっきりします。</p>
       </section>
       <section class="pane" data-name="カメラと床">
       <label class="row"><span class="lbl">レンズ</span>
