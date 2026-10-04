@@ -5,7 +5,7 @@ import { POSE_CATEGORIES, POSE_PRESETS, HAND_SHAPES, FACE_PRESETS, toSpec } from
 import { PoseHistory, relativeTime, HISTORY_LIMIT } from './history.js';
 import { CroquisSession, CROQUIS_SECONDS, CROQUIS_COUNTS } from './croquis.js';
 
-export const BUILD = '2026-10-04c';
+export const BUILD = '2026-10-04d';
 
 const SAMPLE_URL = 'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r169/examples/models/gltf/Xbot.glb';
 const SETTINGS_KEY = 'posit.settings.v1';
@@ -35,10 +35,11 @@ function loadSettings() {
       cqModel: s.cqModel || 'skin',
       cqFrame: s.cqFrame || 'full',
       cqWire: !!s.cqWire,
+      cqAngle: s.cqAngle || 'random',
       sheetH: typeof s.sheetH === 'number' ? s.sheetH : 0,
     };
   } catch (e) {
-    return { seconds: 30, count: 10, cqCats: [], cqModel: 'skin', cqFrame: 'full', cqWire: false, sheetH: 0 };
+    return { seconds: 30, count: 10, cqCats: [], cqModel: 'skin', cqFrame: 'full', cqWire: false, cqAngle: 'random', sheetH: 0 };
   }
 }
 function saveSettings() {
@@ -127,21 +128,29 @@ function linkPager(pagerId, buttons, onChange, dotsId) {
   // 作り直したときに前の見張りが残らないようにする
   if (pager.__pagerOff) pager.__pagerOff();
 
-  let dots = null, counter = null;
+  let dots = null, counter = null, marks = null, prevBtn = null, nextBtn = null;
   if (dotsId) {
     dots = $(dotsId);
     if (dots) {
       dots.innerHTML = '';
       dots.hidden = panes.length < 2;
+      // 左右の矢印でもページを送れる（スライドが苦手なときや、端まで行きたいとき）
+      prevBtn = document.createElement('button');
+      prevBtn.className = 'pg'; prevBtn.textContent = '‹'; prevBtn.setAttribute('aria-label', '前のページ');
+      nextBtn = document.createElement('button');
+      nextBtn.className = 'pg'; nextBtn.textContent = '›'; nextBtn.setAttribute('aria-label', '次のページ');
+      marks = document.createElement('span');
+      marks.className = 'marks';
       // 点が多すぎると読めないので、13ページ以上は「3 / 15」と数で出す
       if (panes.length > 12) {
         dots.classList.add('count');
         counter = document.createElement('b');
-        dots.appendChild(counter);
+        marks.appendChild(counter);
       } else {
         dots.classList.remove('count');
-        for (let i = 0; i < panes.length; i++) dots.appendChild(document.createElement('i'));
+        for (let i = 0; i < panes.length; i++) marks.appendChild(document.createElement('i'));
       }
+      dots.append(prevBtn, marks, nextBtn);
     }
   }
 
@@ -154,7 +163,9 @@ function linkPager(pagerId, buttons, onChange, dotsId) {
       }
     }
     if (counter) counter.textContent = `${i + 1} / ${panes.length}`;
-    else if (dots) [...dots.children].forEach((d, k) => d.classList.toggle('on', k === i));
+    else if (marks) [...marks.children].forEach((d, k) => d.classList.toggle('on', k === i));
+    if (prevBtn) prevBtn.disabled = i <= 0;
+    if (nextBtn) nextBtn.disabled = i >= panes.length - 1;
     if (i === cur) return;
     cur = i;
     if (onChange) onChange(i, panes[i]);
@@ -173,6 +184,13 @@ function linkPager(pagerId, buttons, onChange, dotsId) {
       mark(Math.max(0, Math.min(panes.length - 1, i)));
     }, 60);
   };
+  const goSmooth = i => {
+    const k = Math.max(0, Math.min(panes.length - 1, i));
+    pager.scrollTo({ left: pager.clientWidth * k, behavior: 'smooth' });
+    mark(k);
+  };
+  if (prevBtn) prevBtn.addEventListener('click', () => goSmooth(cur - 1));
+  if (nextBtn) nextBtn.addEventListener('click', () => goSmooth(cur + 1));
   pager.addEventListener('scroll', onScroll);
   pager.__pagerOff = () => pager.removeEventListener('scroll', onScroll);
   return { pager, panes, go: i => { pager.scrollLeft = pager.clientWidth * i; mark(i); } };
@@ -543,10 +561,42 @@ $('btnClearHistory').addEventListener('click', () => { history.clear(); buildHis
 
 // ---- クロッキー ------------------------------------------------------------
 
+// ---- クロッキーの画角 ----
+const CQ_ANGLES = [
+  { value: 'random', label: 'いろいろな画角' },
+  { value: 'front', label: '正面だけ' },
+];
+const rand = (a, b) => a + Math.random() * (b - a);
+
+/** 方位と高さを、絵を描く人のことばで */
+function angleLabel(az, el, mm) {
+  const a = ((az % 360) + 360) % 360;
+  const dirs = ['正面', '左斜め前', '左横', '左斜め後ろ', '後ろ', '右斜め後ろ', '右横', '右斜め前'];
+  const d = dirs[Math.round(a / 45) % 8];
+  const h = el < -5 ? 'あおり' : el < 15 ? '目の高さ' : el < 45 ? '見下ろし' : '俯瞰';
+  return `${d}・${h}・${mm}mm`;
+}
+
+/** 毎回ちがう向き・高さ・レンズで見せる（同じ向きばかりにならないよう前回と離す） */
+let lastAz = null;
+function croquisAngle() {
+  if (settings.cqAngle !== 'random') { $('cqAngleText').textContent = ''; return; }
+  let az = rand(0, 360);
+  if (lastAz !== null) for (let k = 0; k < 6 && Math.abs(((az - lastAz + 540) % 360) - 180) < 50; k++) az = rand(0, 360);
+  lastAz = az;
+  const r = Math.random();
+  const el = r < 0.18 ? rand(-25, -8) : r < 0.6 ? rand(-5, 12) : r < 0.9 ? rand(16, 40) : rand(46, 65);
+  const lenses = [24, 35, 35, 50, 50, 50, 70, 85];
+  const mm = lenses[Math.floor(Math.random() * lenses.length)];
+  viewer.viewFromAngle(az, el, mm);
+  $('cqAngleText').textContent = angleLabel(az, el, mm);
+}
+
 const croquis = new CroquisSession({
   history,
   onPose: (pose, index) => {
     viewer.applyPose(pose.spec);
+    croquisAngle();
     history.add({ poseId: pose.id, name: pose.name, spec: pose.spec });
     $('cqName').textContent = pose.name;
     $('cqIndex').textContent = croquis.count > 0 ? `${index} / ${croquis.count}` : `${index} 枚目`;
@@ -573,7 +623,9 @@ async function startCroquis() {
   $('croquis').hidden = false;
   viewer.select(null);
   // 出題中だけ見え方を切り替え、終わったら戻す
-  beforeCroquis = { view: viewer.viewMode, part: viewer.partView, side: viewer.partSide, wire: viewer.wireOn };
+  beforeCroquis = { view: viewer.viewMode, part: viewer.partView, side: viewer.partSide, wire: viewer.wireOn,
+    cam: viewer.camera.position.clone(), target: viewer.controls.target.clone() };
+  lastAz = null;
   if (settings.cqModel !== viewer.viewMode) viewer.applyViewMode(settings.cqModel);
   viewer.setPartView(settings.cqFrame, viewer.partSide);
   viewer.setWireframe(settings.cqWire);
@@ -598,6 +650,13 @@ function stopCroquis() {
     viewer.setPartView(beforeCroquis.part, beforeCroquis.side);
     viewer.setWireframe(beforeCroquis.wire);
     $('wireOn').checked = beforeCroquis.wire;
+    // 画角とレンズも出題前に戻す
+    viewer.setLens(+$('lens').value);
+    if (beforeCroquis.part === 'full' || beforeCroquis.part === 'upper' || beforeCroquis.part === 'face') {
+      viewer.camera.position.copy(beforeCroquis.cam);
+      viewer.controls.target.copy(beforeCroquis.target);
+      viewer.controls.update();
+    }
     buildFrameChips();
     buildViewChips();
     beforeCroquis = null;
@@ -651,6 +710,10 @@ function buildCroquisChips() {
     o => { settings.cqFrame = o.value; saveSettings(); buildCroquisChips(); });
 
   $('cqWire').checked = settings.cqWire;
+
+  buildChips('cqAngle', CQ_ANGLES,
+    o => settings.cqAngle === o.value,
+    o => { settings.cqAngle = o.value; saveSettings(); buildCroquisChips(); });
 
   buildChips('cqCats',
     POSE_CATEGORIES.map(c => ({ value: c.key, label: c.name })),

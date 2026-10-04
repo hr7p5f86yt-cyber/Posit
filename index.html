@@ -194,6 +194,8 @@
     <div class="sub">出題中の見え方</div>
     <div class="scroller" id="cqModel"></div>
     <div class="scroller" id="cqFrame"></div>
+    <div class="sub">画角<span class="dim">（向き・高さ・レンズを毎回変えます）</span></div>
+    <div class="scroller" id="cqAngle"></div>
     <label class="row toggle"><span class="lbl">面の線を出す</span>
       <input type="checkbox" id="cqWire"></label>
     <p class="hint">直近の履歴30件と重ならないように出題します。進行中は画面が消えません。
@@ -320,7 +322,7 @@
 <div id="croquis" hidden>
   <div id="cqBar"><i id="cqFill"></i></div>
   <div id="cqHead">
-    <span id="cqName"></span>
+    <span id="cqName"></span><span id="cqAngleText"></span>
     <span id="cqIndex"></span>
   </div>
   <div id="cqTime">30</div>

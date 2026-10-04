@@ -282,6 +282,7 @@ export class Viewer {
     const tick = () => {
       requestAnimationFrame(tick);
       try {
+        this._followPart();
         this.controls.update();
         this._updateClipPlane();
         const bone = this.selected ? this._boneForJoint(this.selected) : null;
@@ -1318,9 +1319,21 @@ export class Viewer {
     const g = o.geometry;
     if (!g || !g.attributes || !g.attributes.position) return;
     const ud = g.userData;
-    if (!ud.maskReady) { ud.fullIndex = g.index; ud.maskReady = true; ud.masks = {}; ud.maskKey = 'full'; }
+    if (!ud.maskReady) {
+      // インデックスのない形は、全部を指すインデックスを作っておく（あとで戻せるように）
+      if (!g.index) {
+        const n0 = g.attributes.position.count;
+        const all = new (n0 > 65535 ? Uint32Array : Uint16Array)(n0);
+        for (let i = 0; i < n0; i++) all[i] = i;
+        g.setIndex(new THREE.BufferAttribute(all, 1));
+      }
+      ud.fullIndex = g.index; ud.maskReady = true; ud.masks = {}; ud.maskKey = 'full';
+    }
+    // 面の線（ワイヤー表示）は three.js がインデックスの版数で作り直すかを決めるので、
+    // 差し替えるたびに版数を必ず増やす（増やさないと、手だけにしても線が全身ぶん残る）
+    const swap = idx => { Viewer._maskVer = (Viewer._maskVer || 1000) + 1; idx.version = Viewer._maskVer; g.setIndex(idx); };
     if (!keep) {
-      if (ud.maskKey !== 'full') { g.setIndex(ud.fullIndex); ud.maskKey = 'full'; }
+      if (ud.maskKey !== 'full') { swap(ud.fullIndex); ud.maskKey = 'full'; }
       return;
     }
     const n = g.attributes.position.count;
@@ -1336,7 +1349,7 @@ export class Viewer {
       for (let p = o.parent; p; p = p.parent) if (keep.has(p)) { inside = true; break; }
       key = inside ? 'full' : 'none';
       if (key === 'full') {
-        if (ud.maskKey !== 'full') { g.setIndex(ud.fullIndex); ud.maskKey = 'full'; }
+        if (ud.maskKey !== 'full') { swap(ud.fullIndex); ud.maskKey = 'full'; }
         return;
       }
     }
@@ -1366,7 +1379,7 @@ export class Viewer {
       idx = new THREE.BufferAttribute(n > 65535 ? new Uint32Array(out) : new Uint16Array(out), 1);
       ud.masks[key] = idx;
     }
-    g.setIndex(idx);
+    swap(idx);
     ud.maskKey = key;
   }
 
@@ -1457,8 +1470,98 @@ export class Viewer {
     return { origin: o, along, radial, palmar };
   }
 
+  /** 手だけ・足だけで追いかける骨（手・足のボーン）のいまの位置と向き */
+  _partFrame() {
+    if (!this._partOn) return null;
+    const p = this.primarySlot;
+    const b = p && p.boneMap[(this.partView === 'hand' ? 'hand' : 'foot') + this.partSide];
+    if (!b) return null;
+    return { pos: b.getWorldPosition(new THREE.Vector3()), quat: b.getWorldQuaternion(new THREE.Quaternion()) };
+  }
+
+  /**
+   * 手だけ・足だけのときは、カメラを手（足）に固定する。
+   * 全身のポーズを変えて手が動いても、手との位置関係（見ている向き・距離）はそのまま。
+   * 指で回したぶんは OrbitControls がそのまま足し込む。
+   */
+  _followPart() {
+    const f = this._partFrame();
+    const prev = this._prevPartFrame;
+    if (f && prev) {
+      const q = f.quat.clone().multiply(prev.quat.clone().invert());
+      const moved = f.pos.distanceToSquared(prev.pos) > 1e-12 || Math.abs(q.w) < 0.9999999;
+      if (moved) {
+        for (const v of [this.camera.position, this.controls.target]) v.sub(prev.pos).applyQuaternion(q).add(f.pos);
+        // 画面の上下も手に合わせて回す（手が画面の中で傾かない）
+        this.camera.up.applyQuaternion(q).normalize();
+        this._syncControlsUp();
+      }
+    }
+    if (!f && this.camera.up.y < 0.9999) this._resetUp();
+    this._prevPartFrame = f;
+    this.controls.minDistance = f ? 0.12 : 0.4;
+  }
+
+  /** OrbitControls が使う「上」をカメラの上に合わせ直す（r169 の内部の値を更新する） */
+  _syncControlsUp() {
+    const c = this.controls;
+    if (c && c._quat && c._quatInverse) {
+      c._quat.setFromUnitVectors(this.camera.up, new THREE.Vector3(0, 1, 0));
+      c._quatInverse.copy(c._quat).invert();
+    }
+  }
+
+  /** 画面の上を真上に戻す */
+  _resetUp() {
+    this.camera.up.set(0, 1, 0);
+    this._syncControlsUp();
+  }
+
+  /**
+   * いろいろな画角から見る（クロッキー用）。
+   * az … 体の正面から右回りの角度、el … 見上げ(-)・見下ろし(+)、mm … レンズの焦点距離
+   */
+  viewFromAngle(az, el, mm) {
+    if (mm) this.setLens(mm);
+    this._resetUp();
+    const a = az * DEG, e = el * DEG;
+    const dir = new THREE.Vector3(Math.sin(a) * Math.cos(e), Math.sin(e), Math.cos(a) * Math.cos(e));
+    const fov = this.camera.fov * DEG;
+    const aspect = Math.max(0.3, this.camera.aspect || 1);
+    let center, radius;
+    const f = this._partFrame();
+    if (f) {
+      // 手・足は骨の向きを基準に回す（手のどの面を見せるかを変える）
+      dir.applyQuaternion(f.quat);
+      center = this.controls.target.clone();
+      radius = this.partView === 'hand' ? 0.16 : 0.2;
+    } else {
+      const p = this.primarySlot;
+      if (!p) return;
+      p.pivot.updateWorldMatrix(true, true);
+      const box = new THREE.Box3();
+      for (const m of p.meshes) if (m.visible) box.expandByObject(m);
+      if (box.isEmpty()) box.setFromObject(p.root);
+      if (this.partView === 'upper' && p.boneMap.chest) {
+        center = p.boneMap.chest.getWorldPosition(new THREE.Vector3()); radius = 0.55;
+      } else if (this.partView === 'face' && p.boneMap.head) {
+        center = p.boneMap.head.getWorldPosition(new THREE.Vector3()); center.y += 0.08; radius = 0.2;
+      } else {
+        center = box.getCenter(new THREE.Vector3());
+        radius = box.getSize(new THREE.Vector3()).length() * 0.5;
+      }
+    }
+    const half = Math.min(fov, 2 * Math.atan(Math.tan(fov / 2) * aspect)) / 2;
+    const dist = radius / Math.sin(half) * 0.74;   // 外接球より少し寄せて、体が画面いっぱいに入るように
+    this.controls.target.copy(center);
+    this.camera.position.copy(center).addScaledVector(dir, dist);
+    this.controls.update();
+    this._prevPartFrame = this._partFrame();
+  }
+
   /** 見る範囲をカメラで切り替える */
   frameOn(part, side) {
+    this._resetUp();
     const p = this.primarySlot;
     const at = new THREE.Vector3(0, 0.95, 0);
     let dist = 3.4;
@@ -1514,9 +1617,11 @@ export class Viewer {
     this.controls.target.copy(at);
     this.camera.position.copy(at).addScaledVector(dir, dist);
     this.controls.update();
+    this._prevPartFrame = this._partFrame();
   }
 
   frameModel() {
+    this._resetUp();
     this.controls.target.set(0, 0.95, 0);
     this.camera.position.set(0, 1.15, 3.4);
     this.controls.update();
@@ -2160,6 +2265,7 @@ export class Viewer {
   setGridVisible(on) { this.grid.visible = on; }
   setUIHidden(on) { this.marker.visible = on ? false : !!(this.selected && this._boneForJoint(this.selected)); }
   setLens(mm) {
+    this.lensMM = mm;
     this.camera.fov = 2 * Math.atan(12 / mm) * (180 / Math.PI);
     this.camera.updateProjectionMatrix();
   }
