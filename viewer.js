@@ -856,7 +856,13 @@ export class Viewer {
   }
 
   setCanonicalRest(on) {
+    // 同じ値のときは何もしない（「すべての設定を初期値に戻す」で毎回呼ばれても、作り直さない）
+    if (on === this.canonicalRest) return;
     this.canonicalRest = on;
+    // 接地のずらし（座りポーズなどで下げている分）を外してから測る。外さないと、
+    // 下げた分まで「立ったときの足の高さ」に入ってしまい、次の接地で床に沈む
+    this.container.position.y = 0;
+    this.container.updateWorldMatrix(true, true);
     for (const s of SLOTS) {
       const slot = this.slots[s.key];
       if (!slot.skeleton) continue;
@@ -866,10 +872,10 @@ export class Viewer {
       }
       slot.pivot.updateWorldMatrix(true, true);
       guard('基準姿勢への補正', () => this._buildNeutral(slot));
-      slot.restLowestY = this._lowestBoneY(slot);
       guard('骨格の生成', () => this._buildBoneView(slot));
     }
-    this.applyAll();
+    // 立ったときの足の高さは、頭身・体型の倍率と一緒に測り直す
+    this._applyProportions();
     this._reapplyHandShapes();
   }
 
@@ -1969,6 +1975,8 @@ export class Viewer {
   _assembleMuscles(slot) {
     slot.muscleDirty = false;
     if (!slot.skeleton || !slot.neutralWorld) return;
+    // 顔・頭の筋肉は頭蓋骨の上に置くので、先に骨格を組み立てておく
+    if (slot.boneDirty || !slot.skullGroup) guard('骨格の生成', () => this._assembleBoneView(slot));
     for (const m of slot.muscleParts) if (m.parent) m.parent.remove(m);
     slot.muscleParts = [];
     const bones = slot.skeleton.bones;
@@ -1985,7 +1993,9 @@ export class Viewer {
     this.scene.updateMatrixWorld(true);
     try {
       const handFrame = { L: this._handFrame(slot, 'L'), R: this._handFrame(slot, 'R') };
-      slot.muscleParts = buildMuscles(slot, { handFrame });
+      const skull = [];
+      if (slot.skullGroup) slot.skullGroup.traverse(o => { if (o.isMesh) skull.push(o); });
+      slot.muscleParts = buildMuscles(slot, { handFrame, skull });
     } finally {
       bones.forEach((b, i) => { b.position.copy(saved[i][0]); b.quaternion.copy(saved[i][1]); b.scale.copy(saved[i][2]); b.userData.seg = savedSeg[i]; });
       slot.pivot.updateWorldMatrix(true, true);

@@ -175,6 +175,20 @@ export function buildMuscles(slot, extra = {}) {
     return null;                                      // 外へ抜けなかった（となりの体の部分に触れている）
   };
 
+  // ---- 頭の筋肉は頭蓋骨の上に置く ------------------------------------------
+  // 素体の頭（つるっとした卵形）の表面に置くと、骨格の頭蓋骨から 1〜2cm 浮いて見える。
+  // 顔・頭の筋肉は骨に直接のっているので、頭蓋骨の表面までの距離を測って、その上に置く
+  const skullMeshes = (extra.skull || []).filter(m => m.isMesh);
+  const ray = new THREE.Raycaster();
+  const skullCast = (C, d) => {
+    if (!skullMeshes.length) return null;
+    const far = 0.25 * s;
+    ray.set(C.clone().addScaledVector(d, far), d.clone().negate());
+    ray.far = far;
+    const hit = ray.intersectObjects(skullMeshes, false)[0];
+    return hit ? far - hit.distance : null;
+  };
+
   // ---- 位置の書き方 --------------------------------------------------------
   //   T(θ, y)   … 体幹。θ は前 0°・外 90°・後ろ 180°、y は高さ。el で上下へ傾ける
   //   U(区間, t, θ) … 手足。t は区間の付け根 0 〜 先 1、θ は前 0°・外 90°・後ろ 180°・内 -90°
@@ -352,7 +366,17 @@ export function buildMuscles(slot, extra = {}) {
           c = O.C.clone().lerp(I.C, v); d = slerpDir(O.d, I.d, v); maxR = lerp(O.maxR, I.maxR, v);
         }
         C.push(c); D.push(d);
-        const r = cast(c, d, maxR);
+        let r = cast(c, d, maxR);
+        // 頭の側の端（付け根か付く先が頭）ほど、頭蓋骨の上の高さへ寄せる
+        const hw = (O.reg === 'head' ? 1 - v : 0) + (I.reg === 'head' ? v : 0);
+        if (hw > 0 && skullMeshes.length) {
+          const rs = skullCast(c, d);
+          if (rs !== null) {
+            const onBone = rs + ((m.thick ?? 0.010) + (m.inset ?? 0.0012)) * s;
+            const t = (O.reg === 'head' && I.reg === 'head') ? 1 : smooth((hw - 0.45) / 0.45);
+            r = r === null ? onBone : lerp(r, onBone, t);
+          }
+        }
         stats.rays++;
         R.push(r);
         // 付け根が上の骨にあっても、筋肉の腹が下の骨の上にあるもの（前腕の筋・腓腹筋）は skinFrom で下の骨から拾う
