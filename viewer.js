@@ -2001,7 +2001,9 @@ export class Viewer {
       const handFrame = { L: this._handFrame(slot, 'L'), R: this._handFrame(slot, 'R') };
       const skull = [];
       if (slot.skullGroup) slot.skullGroup.traverse(o => { if (o.isMesh) skull.push(o); });
-      slot.muscleParts = buildMuscles(slot, { handFrame, skull });
+      // 腰のくびれの強さ（女性は強め、男性は弱め）
+      const waistSag = { male: 0.05, female: 0.14, neutral: 0.08 }[this.bodyType] ?? 0.08;
+      slot.muscleParts = buildMuscles(slot, { handFrame, skull, waistSag });
       if (this.musclePalette) setMusclePalette(slot.muscleParts, true);
     } finally {
       bones.forEach((b, i) => { b.position.copy(saved[i][0]); b.quaternion.copy(saved[i][1]); b.scale.copy(saved[i][2]); b.userData.seg = savedSeg[i]; });

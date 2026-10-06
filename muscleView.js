@@ -149,6 +149,37 @@ export function buildMuscles(slot, extra = {}) {
   const yC7 = J.neck ? J.neck.y + 0.012 * s : ySN + 0.05 * s;
   const ySacrum = yHJ + 0.02 * s, yCoccyx = yHJ - 0.05 * s;
 
+  // ---- 腰まわりの幅 ---------------------------------------------------------
+  // 素体（球体関節の人形）は、胸の殻とお腹の玉のあいだが関節のくびれになっていて、
+  // 人の胴よりずっと細い。筋肉をそのまま沿わせるとコルセットで絞ったように見えるので、
+  // 胸の下〜骨盤のあいだは、胸の幅と腰の幅をつないだ線から少しだけくびれる幅まで広げる
+  //   （成人のウエストは胸の幅の 8〜9 割。女性はくびれを強めに）
+  const waistSag = extra.waistSag ?? 0.07;
+  const wY0 = yHJ + 0.03 * s, wY1 = ySN - 0.11 * s;
+  const halfAt = y => (prof ? prof.half(clamp(y, prof.ymin, prof.ymax)) : 0.13 * s);
+  const wH0 = halfAt(wY0), wH1 = halfAt(wY1);
+  /** その高さで、胴の横幅の半分がこれより細くならない値（くびれの帯の外では 0） */
+  const waistHalf = y => {
+    if (!prof || y <= wY0 || y >= wY1) return 0;
+    const t = (y - wY0) / (wY1 - wY0);
+    // 帯の端では元の形になじむよう、つなぎの線との差をなだらかに 0 へ
+    const edge = smooth(t / 0.18) * smooth((1 - t) / 0.18);
+    const line = lerp(wH0, wH1, t) * (1 - waistSag * Math.sin(Math.PI * Math.min(1, t * 1.15)));
+    return lerp(halfAt(y), Math.max(halfAt(y), line), edge);
+  };
+  /** 胴の芯から向き d へ、くびれを埋めた胴の表面までの距離（埋める必要がなければ 0） */
+  const waistR = (y, d) => {
+    const a = waistHalf(y);
+    if (!a) return 0;
+    const yy = clamp(y, prof.ymin, prof.ymax);
+    const b = Math.max(0.04 * s, (prof.front(yy) - prof.back(yy)) / 2);
+    const sn = Math.hypot(d.x, 0) / Math.max(1e-6, Math.hypot(d.x, d.z));
+    if (sn < 0.25) return 0;                         // 前・後ろ（腹直筋・背中）はそのまま
+    const cs = Math.sqrt(1 - sn * sn);
+    return 1 / Math.sqrt((sn / a) ** 2 + (cs / b) ** 2);
+  };
+  slot.waistFill = { waistHalf, zc, cx };
+
   // ---- 枠 -------------------------------------------------------------------
   const fingers = slot.fingers || {};
   const seg = (sd) => {
@@ -464,6 +495,11 @@ export function buildMuscles(slot, extra = {}) {
             const t = (O.reg === 'head' && I.reg === 'head') ? 1 : smooth((hw - 0.45) / 0.45);
             r = r === null ? onBone : lerp(r, onBone, t);
           }
+        }
+        // 腰のくびれを埋める（胴の点だけ。芯が胴の中心にある線維）
+        if ((O.reg === 'trunk' || I.reg === 'trunk') && Math.abs(c.x - cx) < 0.02 * s) {
+          const rw = waistR(c.y, d);
+          if (rw && (r === null || r < rw)) r = rw;
         }
         stats.rays++;
         R.push(r);
@@ -948,7 +984,7 @@ export function buildMuscles(slot, extra = {}) {
   // 素体の表面を少し内側へ縮め、視線の奥へ 1.4cm 押しやったものを暗い筋肉の色で敷く。すき間から骨や向こう側が
   // 見えて穴に見えるのを防ぎ、筋肉の境目が「溝」として読めるようにする。頭は骨を見せるので除く。
   for (const m of skins) {
-    const deep = deepLayer(m, headSet, 0.002 * s, 0.014 * s);
+    const deep = deepLayer(m, headSet, 0.002 * s, 0.014 * s, { waistR, zc, cx, trunk: trunkBones, under: 0.010 * s });
     if (deep) { out.push(deep); stats.deep = (stats.deep || 0) + 1; }
   }
   slot.muscleDebug = { ...stats, ms: Math.round(performance.now() - T0) };
@@ -956,7 +992,7 @@ export function buildMuscles(slot, extra = {}) {
 }
 
 /** 素体のスキンを共有したまま、法線の内側へ inset（メートル）だけ沈めた面を作る */
-function deepLayer(src, skipBones, inset, pushBack) {
+function deepLayer(src, skipBones, inset, pushBack, fill = null) {
   const g0 = src.geometry;
   const si = g0.attributes.skinIndex, sw = g0.attributes.skinWeight;
   if (!si || !sw) return null;
@@ -978,6 +1014,46 @@ function deepLayer(src, skipBones, inset, pushBack) {
   if (!idx.length) return null;
   const g = new THREE.BufferGeometry();
   for (const [k, v] of Object.entries(g0.attributes)) g.setAttribute(k, v);
+  // 腰のくびれを埋める（胴の外を向いた頂点だけ、くびれを埋めた幅まで外へ出す）。この層だけの位置を持つ
+  if (fill) {
+    src.updateWorldMatrix(true, false);
+    src.skeleton.update();
+    const P0 = g0.attributes.position, N0 = g0.attributes.normal;
+    const pos = new Float32Array(P0.array.length);
+    pos.set(P0.array);
+    const bm = src.skeleton.boneMatrices;
+    const Mx = new THREE.Matrix4(), B = new THREE.Matrix4(), L = new THREE.Matrix4(), L3 = new THREE.Matrix3();
+    const P = new THREE.Vector3(), Nw = new THREE.Vector3(), dir = new THREE.Vector3(), dl = new THREE.Vector3();
+    const nm = new THREE.Matrix3().getNormalMatrix(src.matrixWorld);
+    let moved = 0;
+    for (let i = 0; i < n; i++) {
+      if (!fill.trunk.has(dom[i])) continue;
+      src.getVertexPosition(i, P); P.applyMatrix4(src.matrixWorld);
+      dir.set(P.x - fill.cx, 0, P.z - fill.zc(P.y));
+      const rho = dir.length();
+      if (rho < 1e-5) continue;
+      dir.divideScalar(rho);
+      // 筋肉の面より 1cm ほど内側まで（筋肉の下に隠れるように）
+      const rt0 = fill.waistR(P.y, dir);
+      const rt = rt0 ? rt0 - fill.under : 0;
+      if (!rt || rt <= rho) continue;
+      if (N0) { Nw.fromBufferAttribute(N0, i).applyMatrix3(nm).normalize(); if (Nw.dot(dir) < 0.3) continue; }
+      // ワールドでの移動を、スキン前の形での移動に直す
+      Mx.set(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+      for (let k = 0; k < 4; k++) {
+        const w = sw.getComponent(i, k);
+        if (!w) continue;
+        B.fromArray(bm, si.getComponent(i, k) * 16);
+        for (let e = 0; e < 16; e++) Mx.elements[e] += B.elements[e] * w;
+      }
+      L.copy(src.matrixWorld).multiply(src.bindMatrixInverse).multiply(Mx).multiply(src.bindMatrix);
+      L3.setFromMatrix4(L).invert();
+      dl.copy(dir).multiplyScalar(rt - rho).applyMatrix3(L3);
+      pos[i * 3] += dl.x; pos[i * 3 + 1] += dl.y; pos[i * 3 + 2] += dl.z;
+      moved++;
+    }
+    if (moved) g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  }
   for (const [k, v] of Object.entries(g0.morphAttributes)) g.morphAttributes[k] = v;
   g.morphTargetsRelative = g0.morphTargetsRelative;
   g.setIndex(idx);
