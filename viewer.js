@@ -10,6 +10,7 @@ import { buildSkeletonView } from './skeletonView.js';
 import { buildHeadPlanes, FIG_HEADS, HEADH_MIN, HEADH_MAX } from './headPlanes.js';
 import { buildBodyMorphs } from './bodyShape.js';
 import { buildBreastParts } from './breastParts.js';
+import { buildMuscles } from './muscleView.js';
 import { deformFactors, installSegmentScale, setSegment, clearSegments } from './proportions.js';
 // 不具合を調べるときの入り口（画面には出ない）
 if (typeof window !== 'undefined') window.__positTHREE = THREE;
@@ -100,6 +101,9 @@ class Slot {
     this.originalMaterials = new Map();
     this.restLowestY = 0;
     this.boneParts = [];
+    this.muscleParts = [];    // 組み立てた筋肉（名前付き）
+    this.muscleDirty = false;
+    this.muscleCache = {};
     this.fingers = { L: {}, R: {} };
     this.headRatio0 = 7.5;   // 読み込んだモデル本来の頭身
     this.headScale = 1;
@@ -126,6 +130,7 @@ export class Viewer {
     this.skinOpacity = 1.0;
     this.boneViewOn = false;
     this.showBuiltinSkeleton = false;
+    this.pickMode = 'joint';         // 'joint' … 関節を選ぶ、'anatomy' … 骨・筋肉の名前を調べる
     this.limitsEnabled = true;
     this.canonicalRest = true;
     this.wireOn = false;
@@ -272,11 +277,36 @@ export class Viewer {
     const w = Math.round((r && r.width) || this.canvas.clientWidth || window.innerWidth);
     const h = Math.round((r && r.height) || this.canvas.clientHeight || window.innerHeight);
     if (w < 1 || h < 1) return;
-    if (w === this._lastW && h === this._lastH) return;
+    if (w === this._lastW && h === this._lastH && !this._insetsDirty) return;
+    if (w !== this._lastW || h !== this._lastH) {
+      this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+      this.renderer.setSize(w, h, false);
+    }
     this._lastW = w; this._lastH = h;
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-    this.renderer.setSize(w, h, false);
-    this.camera.aspect = w / h;
+    this._insetsDirty = false;
+    this._applyInsets(w, h);
+  }
+
+  /**
+   * パネルや上のボタンに隠れない「空いている所」に人形が収まるように、
+   * 画面の一部を見る窓としてカメラを当てる（three.js の setViewOffset）。
+   * insets … 画面の上・右・下・左で隠れている幅（CSS ピクセル）
+   */
+  setInsets(insets) {
+    const o = Object.assign({ top: 0, right: 0, bottom: 0, left: 0 }, insets || {});
+    const old = this.insets || {};
+    if (old.top === o.top && old.right === o.right && old.bottom === o.bottom && old.left === o.left) return;
+    this.insets = o;
+    this._insetsDirty = true;
+    this._resize();
+  }
+
+  _applyInsets(w, h) {
+    const o = this.insets || { top: 0, right: 0, bottom: 0, left: 0 };
+    const vw = Math.max(80, w - o.left - o.right), vh = Math.max(80, h - o.top - o.bottom);
+    this.camera.aspect = vw / vh;
+    if (o.top || o.right || o.bottom || o.left) this.camera.setViewOffset(vw, vh, -o.left, -o.top, w, h);
+    else this.camera.clearViewOffset();
     this.camera.updateProjectionMatrix();
   }
 
@@ -493,6 +523,7 @@ export class Viewer {
   _disposeSlot(slot) {
     for (const p of slot.boneParts) if (p.parent) p.parent.remove(p);
     slot.boneParts = [];
+    this._dropMuscles(slot);
     if (slot.skullGroup && slot.skullGroup.parent) slot.skullGroup.parent.remove(slot.skullGroup);
     slot.skullGroup = null;
     if (slot.pivot) {
@@ -1110,13 +1141,39 @@ export class Viewer {
 
   setBodyType(type) {
     if (!Viewer.BODY_TYPES[type]) return;
+    const prev = this.bodyType;
     this.bodyType = type;
     this._applyProportions();
-    // 骨格は新しい体の内側に収め直す（表示中なら作り直す）
+    // 骨格・筋肉は体型ごとに組み立てて取っておき、切り替えたときは使い回す
+    // （組み立てには iPad で 1〜2 秒かかるので、2 回目からはすぐ切り替わる）
     for (const s of SLOTS) {
       const slot = this.slots[s.key];
-      if (slot.skeleton && (slot.boneParts.length || slot.boneDirty)) this._buildBoneView(slot);
+      if (!slot.skeleton || prev === type) continue;
+      slot.boneCache = slot.boneCache || {};
+      if (slot.boneParts.length) {
+        for (const p of slot.boneParts) p.visible = false;
+        slot.boneCache[prev] = { parts: slot.boneParts, skull: slot.skullGroup };
+      }
+      const hit = slot.boneCache[type];
+      if (hit) {
+        slot.boneParts = hit.parts; slot.skullGroup = hit.skull; slot.boneDirty = false;
+        delete slot.boneCache[type];
+      } else {
+        slot.boneParts = []; slot.skullGroup = null;
+        slot.boneDirty = slot.boneDirty || !!slot.boneCache[prev];
+      }
+      // 筋肉も同じように使い回す
+      slot.muscleCache = slot.muscleCache || {};
+      if (slot.muscleParts.length) {
+        for (const p of slot.muscleParts) p.visible = false;
+        slot.muscleCache[prev] = slot.muscleParts;
+      }
+      if (slot.muscleCache[type]) { slot.muscleParts = slot.muscleCache[type]; delete slot.muscleCache[type]; slot.muscleDirty = false; }
+      else { slot.muscleDirty = slot.muscleDirty || !!slot.muscleCache[prev]; slot.muscleParts = []; }
     }
+    this._applyProportions();
+    this._refreshBoneView();
+    this._refreshMuscleView();
   }
 
   /**
@@ -1328,6 +1385,14 @@ export class Viewer {
     return { head, low, neck };
   }
 
+  /** いま画面に見えている頭の高さ（あご先〜頭頂、メートル）。補助線の頭身の線に使う */
+  visibleHeadHeight(slot = this.primarySlot) {
+    if (!slot) return 0.23;
+    const planesOn = this.headPlanesOn && slot === this.slots.skin && slot.headPlanes && slot.headPlanes.parts.length;
+    const h = planesOn ? (slot.planesH0 || slot.headH0) : (slot.visHeadH0 || slot.headH0 || 0.23);
+    return h * (slot.headScale || 1);
+  }
+
   resetHeadRatio() { this.headRatio = null; this._applyProportions(); }
 
   // ---- 面の線（ワイヤー）-----------------------------------------------
@@ -1487,6 +1552,7 @@ export class Viewer {
       for (const m of slot.meshes) out.push(m);
       for (const w of slot.wireMeshes) out.push(w);
       for (const p of slot.boneParts) out.push(p);
+      for (const p of slot.muscleParts) out.push(p);
       for (const p of slot.headPlanes.parts) out.push(p);
       for (const l of slot.headPlanes.lines) out.push(l);
     }
@@ -1590,7 +1656,7 @@ export class Viewer {
     for (const s of SLOTS) {
       const slot = this.slots[s.key];
       const keep = keepBy.get(s.key);
-      const list = [...slot.meshes, ...slot.wireMeshes, ...slot.boneParts,
+      const list = [...slot.meshes, ...slot.wireMeshes, ...slot.boneParts, ...slot.muscleParts,
         ...slot.headPlanes.parts, ...slot.headPlanes.lines];
       for (const o of list) guard('見る範囲', () => this._maskObject(o, on ? keep : null));
     }
@@ -1837,7 +1903,15 @@ export class Viewer {
     slot.boneParts = [];
     if (slot.skullGroup && slot.skullGroup.parent) slot.skullGroup.parent.remove(slot.skullGroup);
     slot.skullGroup = null;
+    // 取っておいた他の体型の骨格も捨てる（モデルを読み込み直したときなど）
+    for (const c of Object.values(slot.boneCache || {})) {
+      for (const p of c.parts) if (p.parent) p.parent.remove(p);
+      if (c.skull && c.skull.parent) c.skull.parent.remove(c.skull);
+    }
+    slot.boneCache = {};
     slot.boneDirty = !!slot.skeleton;
+    this._dropMuscles(slot);
+    slot.muscleDirty = !!slot.skeleton;
     this._refreshBoneView();
   }
 
@@ -1881,9 +1955,171 @@ export class Viewer {
     this._applyClipping();
   }
 
+  // ---- 筋肉（名前付き） ------------------------------------------------
+
+  _dropMuscles(slot) {
+    const all = [...(slot.muscleParts || [])];
+    for (const list of Object.values(slot.muscleCache || {})) all.push(...list);
+    for (const m of all) { if (m.parent) m.parent.remove(m); if (!m.userData.sharedGeo) m.geometry.dispose(); m.material.dispose(); }
+    slot.muscleParts = [];
+    slot.muscleCache = {};
+  }
+
+  /** 筋肉を今すぐ組み立てる（基準姿勢・倍率 1 で作り、あとは骨と一緒に動く） */
+  _assembleMuscles(slot) {
+    slot.muscleDirty = false;
+    if (!slot.skeleton || !slot.neutralWorld) return;
+    for (const m of slot.muscleParts) if (m.parent) m.parent.remove(m);
+    slot.muscleParts = [];
+    const bones = slot.skeleton.bones;
+    const saved = bones.map(b => [b.position.clone(), b.quaternion.clone(), b.scale.clone()]);
+    for (const b of bones) {
+      const nb = slot.neutralWorld.get(b), np = slot.neutralParent.get(b);
+      if (nb && np) b.quaternion.copy(np.clone().invert().multiply(nb));
+      const rp = slot.restPos && slot.restPos.get(b);
+      if (rp) b.position.copy(rp);
+      b.scale.setScalar(1);
+    }
+    const savedSeg = bones.map(b => b.userData.seg || null);
+    clearSegments(bones);
+    this.scene.updateMatrixWorld(true);
+    try {
+      const handFrame = { L: this._handFrame(slot, 'L'), R: this._handFrame(slot, 'R') };
+      slot.muscleParts = buildMuscles(slot, { handFrame });
+    } finally {
+      bones.forEach((b, i) => { b.position.copy(saved[i][0]); b.quaternion.copy(saved[i][1]); b.scale.copy(saved[i][2]); b.userData.seg = savedSeg[i]; });
+      slot.pivot.updateWorldMatrix(true, true);
+    }
+    this._applyProportions();
+    this._applyClipping();
+  }
+
+  /** 組み込みの筋肉を出すか（筋肉モデルを読み込んでいないときの「筋肉」「重ねて」） */
+  get showBuiltinMuscle() {
+    const p = this.primarySlot;
+    return !!(p && p.skeleton && !this.slots.muscle.loaded && (this.viewMode === 'muscle' || this.viewMode === 'overlay'));
+  }
+
+  _refreshMuscleView() {
+    const p = this.primarySlot;
+    const on = this.showBuiltinMuscle;
+    if (on && p && (p.muscleDirty || !p.muscleParts.length) && !this._muscleBuilding) {
+      this._muscleBuilding = true;
+      this.onNotice('筋肉を組み立てています…');
+      setTimeout(() => {
+        guard('筋肉の生成', () => this._assembleMuscles(p));
+        this._muscleBuilding = false;
+        this.onNotice('');
+        this._refreshMuscleView();
+        if (this.onAnatomyChanged) this.onAnatomyChanged();
+      }, 40);
+    }
+    for (const s of SLOTS) {
+      const slot = this.slots[s.key];
+      const show = on && slot === p;
+      for (const m of slot.muscleParts) m.visible = show;
+    }
+  }
+
+  /** 表示の切り替えが使えるか（組み込みの骨格・筋肉で代わりができるときも含む） */
+  viewModeAvailable(key) {
+    const p = this.primarySlot;
+    const hasSkel = !!(p && p.skeleton);
+    if (key === 'muscle') return this.slots.muscle.loaded || hasSkel;
+    if (key === 'bone') return this.slots.bone.loaded || hasSkel;
+    return true;
+  }
+
+  // ---- 名前を調べる（解剖） ---------------------------------------------
+
+  /** いま組み立ててある骨と筋肉の名前の一覧 */
+  anatomyIndex() {
+    const p = this.primarySlot;
+    const out = new Map();
+    if (!p) return [];
+    for (const m of p.boneParts) for (const r of (m.userData.ranges || [])) if (r.name && !out.has(r.name.key)) out.set(r.name.key, r.name);
+    for (const m of p.muscleParts) { const n = m.userData.anat; if (n && !out.has(n.key)) out.set(n.key, n); }
+    return [...out.values()];
+  }
+
+  /** 画面の点にある骨・筋肉の名前 */
+  anatomyAt(clientX, clientY) {
+    const p = this.primarySlot;
+    if (!p) return null;
+    const targets = [...p.boneParts, ...p.muscleParts].filter(m => m.visible && m.isMesh);
+    if (!targets.length) return null;
+    const rect = this.canvas.getBoundingClientRect();
+    const ndc = new THREE.Vector2(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1);
+    const ray = new THREE.Raycaster();
+    ray.setFromCamera(ndc, this.camera);
+    let hits = [];
+    try { hits = ray.intersectObjects(targets, false); } catch (e) { hits = []; }
+    for (const h of hits) {
+      const o = h.object;
+      if (o.userData.deepMuscle) return null;          // 筋肉のあいだの深い層（名前なし）
+      if (o.userData.anat) return o.userData.anat;
+      const rs = o.userData.ranges;
+      if (rs && h.face) {
+        // 頂点の番号で引く（手だけ・足だけの表示では三角形の並びが差し替わっているため）
+        const vi = h.face.a;
+        const r = rs.find(q => vi >= q.vStart && vi < q.vStart + q.vCount);
+        if (r && r.name) return { ...r.name };
+      }
+    }
+    return null;
+  }
+
+  /** 名前の部品を光らせる（key が null なら消す） */
+  highlightAnatomy(key) {
+    for (const h of this._anatHi || []) { if (h.parent) h.parent.remove(h); if (h.userData.own) h.geometry.dispose(); }
+    for (const m of this._anatLit || []) m.material.emissive.setHex(0x000000);
+    this._anatHi = []; this._anatLit = [];
+    const p = this.primarySlot;
+    if (!key || !p) return;
+    if (!this._hiMat) {
+      this._hiMat = new THREE.MeshStandardMaterial({ color: 0xffc04d, emissive: 0x9a6400, roughness: 0.5,
+        polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2, side: THREE.DoubleSide });
+    }
+    for (const m of p.muscleParts) {
+      if (m.userData.anat && m.userData.anat.key === key) { m.material.emissive.setHex(0x8a5200); this._anatLit.push(m); }
+    }
+    for (const m of p.boneParts) {
+      const rs = (m.userData.ranges || []).filter(r => r.name && r.name.key === key);
+      if (!rs.length || !m.geometry.index) continue;
+      const src = (m.geometry.userData.fullIndex || m.geometry.index).array;
+      const idx = [];
+      for (const r of rs) for (let t = r.start * 3; t < (r.start + r.count) * 3; t++) idx.push(src[t]);
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', m.geometry.attributes.position);
+      g.setAttribute('normal', m.geometry.attributes.normal);
+      let h;
+      if (m.isSkinnedMesh) {
+        // 皮膚の重みで曲がる骨（肋骨・背骨）は、光らせる形も同じ重みで曲げる
+        g.setAttribute('skinIndex', m.geometry.attributes.skinIndex);
+        g.setAttribute('skinWeight', m.geometry.attributes.skinWeight);
+        g.setIndex(idx);
+        h = new THREE.SkinnedMesh(g, this._hiMat);
+        h.bind(m.skeleton, m.bindMatrix);
+        h.bindMode = m.bindMode;
+        h.frustumCulled = false;
+      } else {
+        g.setIndex(idx);
+        h = new THREE.Mesh(g, this._hiMat);
+      }
+      h.position.copy(m.position); h.quaternion.copy(m.quaternion); h.scale.copy(m.scale);
+      h.renderOrder = 3;
+      h.raycast = () => {};
+      h.userData.own = true;
+      h.visible = m.visible;
+      m.parent.add(h);
+      this._anatHi.push(h);
+    }
+  }
+
   _refreshBoneView() {
     const p = this.primarySlot;
     const on = this.boneViewOn || this.showBuiltinSkeleton;
+    if (this._anatHi) for (const h of this._anatHi) h.visible = on;
     if (on && p && p.boneDirty && !this._boneBuilding) {
       // 先に「組み立て中」を出してから、次の描画のあとで組み立てる
       this._boneBuilding = true;
@@ -1893,6 +2129,7 @@ export class Viewer {
         this._boneBuilding = false;
         this.onNotice('');
         this._refreshBoneView();
+        if (this.onAnatomyChanged) this.onAnatomyChanged();
       }, 40);
     }
     for (const s of SLOTS) {
@@ -1915,7 +2152,7 @@ export class Viewer {
     const p = this.primarySlot;
     const hasSkeleton = !!(p && p.skeleton);
 
-    if (modeKey === 'muscle' && !this.slots.muscle.loaded) {
+    if (modeKey === 'muscle' && !this.slots.muscle.loaded && !hasSkeleton) {
       this.onNotice('筋肉モデルが読み込まれていません。「モデル」から読み込んでください。');
       return false;
     }
@@ -1926,26 +2163,27 @@ export class Viewer {
 
     this.viewMode = modeKey;
     // 骨格モデルが無いときは、モデル内蔵のボーンから作る簡易骨格で代替する
+    // 筋肉モデルが無いときは、骨から組み立てた筋肉（その下に骨格）で代替する
+    const builtinMuscle = (modeKey === 'muscle' || modeKey === 'overlay') && !this.slots.muscle.loaded && hasSkeleton;
     this.showBuiltinSkeleton =
       (modeKey === 'bone' && !this.slots.bone.loaded && hasSkeleton) ||
-      (modeKey === 'overlay' && !this.slots.bone.loaded && !this.slots.muscle.loaded && hasSkeleton);
+      (modeKey === 'muscle' && builtinMuscle && !this.slots.bone.loaded) ||
+      (modeKey === 'overlay' && !this.slots.bone.loaded && hasSkeleton);
 
     const show = mode.show.filter(k => this.slots[k].loaded);
     if (modeKey === 'bone' && this.showBuiltinSkeleton) show.length = 0;   // 肌を消して骨組みだけ出す
+    if (modeKey === 'muscle' && builtinMuscle) show.length = 0;            // 肌を消して筋肉と骨だけ出す
 
     for (const s of SLOTS) {
       const slot = this.slots[s.key];
       for (const m of slot.meshes) m.visible = show.includes(s.key);
     }
     this._refreshBoneView();
+    this._refreshMuscleView();
     this._refreshWire();
     this._refreshHeadPlanes();
     this._applyClipping();
-    if (this.showBuiltinSkeleton && modeKey === 'bone') {
-      this.onNotice('骨格モデルが無いので、モデル内蔵のボーンから作った簡易骨格を表示しています。');
-    } else {
-      this.onNotice('');
-    }
+    if (!this._muscleBuilding && !this._boneBuilding) this.onNotice('');
     return true;
   }
 
@@ -2365,9 +2603,167 @@ export class Viewer {
       if (Math.abs(e.clientX - startX) > 6 || Math.abs(e.clientY - startY) > 6) moved = true;
     });
     el.addEventListener('pointerup', e => {
-      if (!moved) guard('タップ選択', () => this._pick(e.clientX, e.clientY));
+      if (!moved && !this._jdTapped) guard('タップ選択', () => this._pick(e.clientX, e.clientY));
+      this._jdTapped = false;
     });
+
+    // 関節を直接動かす: 選んでいる関節の部分を押したまま動かすと、その関節が指の方へ曲がる。
+    // カメラの回転（OrbitControls）より先に受け取って、関節を動かすときはカメラを回さない
+    this.onJointDragStart = () => {};
+    this.onJointDrag = () => {};
+    this.onJointDragEnd = () => {};
+    this.jointDragEnabled = true;
+    el.addEventListener('pointerdown', e => {
+      if (!this.jointDragEnabled || !this.selected || this._jd || !e.isPrimary || this.pickMode === 'anatomy') return;
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
+      // 選んでいる関節の部分（関節〜その先）を押したか。細い腕でも押しやすいよう、
+      // 画面の上で骨の線から 24px 以内なら受け付ける
+      const key = guard('関節の判定', () => this._jointAt(e.clientX, e.clientY));
+      if (key !== this.selected && !guard('関節の判定', () => this._nearSelected(e.clientX, e.clientY, 24))) return;
+      e.stopImmediatePropagation();
+      e.preventDefault();
+      try { el.setPointerCapture(e.pointerId); } catch (err) { /* 続行 */ }
+      this._jd = { id: e.pointerId, key: this.selected, x: e.clientX, y: e.clientY, moved: false };
+    }, { capture: true });
+    el.addEventListener('pointermove', e => {
+      const jd = this._jd;
+      if (!jd || e.pointerId !== jd.id) return;
+      if (!jd.moved) {
+        if (Math.hypot(e.clientX - jd.x, e.clientY - jd.y) < 5) return;
+        jd.moved = true;
+        this.onJointDragStart(jd.key);
+      }
+      guard('関節のドラッグ', () => this._dragJoint(jd.key, e.clientX, e.clientY));
+      this.onJointDrag(jd.key);
+    });
+    const end = e => {
+      const jd = this._jd;
+      if (!jd || (e && e.pointerId !== jd.id)) return;
+      this._jd = null;
+      try { el.releasePointerCapture(jd.id); } catch (err) { /* 続行 */ }
+      if (jd.moved) { this._jdTapped = true; this.onJointDragEnd(jd.key); }
+    };
+    el.addEventListener('pointerup', end, { capture: true });
+    el.addEventListener('pointercancel', end, { capture: true });
   }
+
+  /** 画面の点にある関節（なければ null） */
+  _jointAt(clientX, clientY) {
+    const targets = this._visibleTargets();
+    if (!targets.length) return null;
+    const rect = this.canvas.getBoundingClientRect();
+    const ndc = new THREE.Vector2(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1);
+    const ray = new THREE.Raycaster();
+    ray.setFromCamera(ndc, this.camera);
+    let hits = [];
+    try { hits = ray.intersectObjects(targets, false); } catch (err) { hits = []; }
+    return hits.length ? this._jointFromHit(hits[0]) : null;
+  }
+
+  /** 画面の点が、選んでいる関節の骨の線（関節〜先）の近くか */
+  _nearSelected(clientX, clientY, px) {
+    const slot = this.primarySlot;
+    const key = this.selected;
+    const b = slot && key && slot.boneMap[key];
+    if (!b) return false;
+    const tip = this._jointTip(slot, key);
+    if (!tip) return false;
+    const rect = this.canvas.getBoundingClientRect();
+    const toS = v => { const q = v.clone().project(this.camera); return [rect.left + (q.x + 1) / 2 * rect.width, rect.top + (1 - q.y) / 2 * rect.height]; };
+    const [ax, ay] = toS(b.getWorldPosition(new THREE.Vector3()));
+    const [bx, by] = toS(tip);
+    const dx = bx - ax, dy = by - ay, L2 = dx * dx + dy * dy;
+    const t = L2 > 1e-6 ? Math.max(0, Math.min(1, ((clientX - ax) * dx + (clientY - ay) * dy) / L2)) : 0;
+    return Math.hypot(clientX - (ax + dx * t), clientY - (ay + dy * t)) <= px;
+  }
+
+  /** 関節の先（どこへ向いているかを決める点） */
+  _jointTip(slot, key) {
+    const b = slot.boneMap[key];
+    if (!b) return null;
+    const next = { hips: 'spine', spine: 'chest', chest: 'neck', neck: 'head',
+      shoulderL: 'upperArmL', shoulderR: 'upperArmR', upperArmL: 'forearmL', upperArmR: 'forearmR',
+      forearmL: 'handL', forearmR: 'handR', thighL: 'shinL', thighR: 'shinR', shinL: 'footL', shinR: 'footR' }[key];
+    if (next && slot.boneMap[next]) return slot.boneMap[next].getWorldPosition(new THREE.Vector3());
+    if (/^hand/.test(key)) {
+      const fg = slot.fingers && slot.fingers[key.slice(-1)];
+      const m = fg && fg.middle && fg.middle[1];
+      if (m) return m.getWorldPosition(new THREE.Vector3());
+    }
+    if (key === 'head') {
+      const up = new THREE.Vector3(0, 1, 0).applyQuaternion(b.getWorldQuaternion(new THREE.Quaternion()));
+      return b.getWorldPosition(new THREE.Vector3()).addScaledVector(up, 0.15);
+    }
+    const c = b.children.find(x => x.isBone);
+    return c ? c.getWorldPosition(new THREE.Vector3()) : null;
+  }
+
+  /**
+   * 関節を画面の上で回す。関節から先（tip）の向きが、指の方へ向くように、
+   * 視線の軸のまわりで回す（画面の面の中で曲がる。奥行き方向はカメラを回して動かす）。
+   */
+  _dragJoint(key, clientX, clientY) {
+    const slot = this.primarySlot;
+    const b = slot && slot.boneMap[key];
+    if (!b) return;
+    const tip0 = this._jointTip(slot, key);
+    if (!tip0) return;
+    const J = b.getWorldPosition(new THREE.Vector3());
+    const rect = this.canvas.getBoundingClientRect();
+    const toScreen = v => { const p = v.clone().project(this.camera); return new THREE.Vector2((p.x + 1) / 2 * rect.width, (1 - p.y) / 2 * rect.height); };
+    const pj = toScreen(J);
+    const pm = new THREE.Vector2(clientX - rect.left, clientY - rect.top);
+    const want = pm.clone().sub(pj);
+    if (want.lengthSq() < 16) return;
+    want.normalize();
+    const np = slot.neutralParent.get(b);
+    if (!np) return;
+    // 角度 → 先の点（この関節だけを回したとき）。 世界での回転 = Pw·np⁻¹·D'·D⁻¹·np·Pw⁻¹
+    const Pw = b.parent ? b.parent.getWorldQuaternion(new THREE.Quaternion()) : new THREE.Quaternion();
+    const PwInv = Pw.clone().invert(), npInv = np.clone().invert();
+    const Dq = a => new THREE.Quaternion().setFromAxisAngle(AX, a.x * DEG)
+      .multiply(new THREE.Quaternion().setFromAxisAngle(AZ, a.z * DEG))
+      .multiply(new THREE.Quaternion().setFromAxisAngle(AY, a.y * DEG));
+    const cur = { ...(this.angles[key] || { x: 0, y: 0, z: 0 }) };
+    const D0inv = Dq(cur).invert();
+    const rel = tip0.clone().sub(J);
+    const errOf = a => {
+      const Rw = Pw.clone().multiply(npInv).multiply(Dq(a)).multiply(D0inv).multiply(np).multiply(PwInv);
+      const tp = J.clone().add(rel.clone().applyQuaternion(Rw));
+      const d = toScreen(tp).sub(pj);
+      if (d.lengthSq() < 1e-6) return 4;
+      d.normalize();
+      return 1 - d.dot(want);                         // 0 = 指の方を向いている
+    };
+    // 動かせる軸（可動域の幅が十分あるもの）だけで探す。ひねり（Y）は先の向きをほとんど変えないので使わない
+    const j = JOINT_BY_KEY[key];
+    const lim = j ? j.limits : [-180, 180, -180, 180, -180, 180];
+    const axes = [['x', 0, 1], ['z', 4, 5]].filter(([, lo, hi]) => !this.limitsEnabled || lim[hi] - lim[lo] > 8);
+    if (!axes.length) axes.push(['y', 2, 3]);
+    const clampA = (ax, v) => {
+      if (!this.limitsEnabled) return wrapDeg(v);
+      const sp = axes.find(q => q[0] === ax);
+      return Math.max(lim[sp[1]], Math.min(lim[sp[2]], v));
+    };
+    let best = { ...cur }, bestE = errOf(best);
+    for (const step of [16, 8, 4, 2, 1, 0.5]) {
+      for (let it = 0; it < 6; it++) {
+        let improved = false;
+        for (const [ax] of axes) {
+          for (const sg of [1, -1]) {
+            const t = { ...best };
+            t[ax] = clampA(ax, t[ax] + sg * step);
+            const e = errOf(t);
+            if (e < bestE - 1e-6) { best = t; bestE = e; improved = true; }
+          }
+        }
+        if (!improved) break;
+      }
+    }
+    this.angles[key] = best;
+    this.applyAll();
+  }
+
 
   _visibleTargets() {
     const out = [];
@@ -2375,11 +2771,23 @@ export class Viewer {
       const slot = this.slots[s.key];
       for (const m of slot.meshes) if (m.visible) out.push(m);
       for (const p of slot.boneParts) if (p.visible) out.push(p);
+      for (const p of slot.muscleParts) if (p.visible) out.push(p);
     }
     return out;
   }
 
   _pick(clientX, clientY) {
+    // 名前を調べるときは、骨・筋肉の名前を出して光らせる（関節は選ばない）
+    if (this.pickMode === 'anatomy') {
+      const p = this.primarySlot;
+      const anyAnat = p && ([...p.boneParts, ...p.muscleParts].some(m => m.visible));
+      if (anyAnat) {
+        const nm = this.anatomyAt(clientX, clientY);
+        this.highlightAnatomy(nm ? nm.key : null);
+        if (this.onAnatomy) this.onAnatomy(nm);
+        return;
+      }
+    }
     const targets = this._visibleTargets();
     if (!targets.length) return;
     const rect = this.canvas.getBoundingClientRect();
@@ -2518,6 +2926,27 @@ export class Viewer {
   setExposure(v) { this.renderer.toneMappingExposure = v; }
   setEnvIntensity(v) { if ('environmentIntensity' in this.scene) this.scene.environmentIntensity = v; }
   setGridVisible(on) { this.grid.visible = on; }
+
+  /**
+   * いまの画面を PNG にする（選択の印・光の矢印は外す）。overlay は重ねる 2D キャンバス（補助線など）
+   * @returns {Promise<Blob|null>}
+   */
+  snapshotPNG(overlay = null) {
+    const keepMarker = this.marker.visible;
+    const keepArrow = this.lightArrow ? this.lightArrow.visible : false;
+    this.marker.visible = false;
+    if (this.lightArrow) this.lightArrow.visible = false;
+    this.renderer.render(this.scene, this.camera);
+    const src = this.renderer.domElement;
+    const c = document.createElement('canvas');
+    c.width = src.width; c.height = src.height;
+    const g = c.getContext('2d');
+    g.drawImage(src, 0, 0);
+    if (overlay && overlay.width) g.drawImage(overlay, 0, 0, c.width, c.height);
+    this.marker.visible = keepMarker;
+    if (this.lightArrow) this.lightArrow.visible = keepArrow;
+    return new Promise(res => c.toBlob(b => res(b), 'image/png'));
+  }
   setUIHidden(on) { this.marker.visible = on ? false : !!(this.selected && this._boneForJoint(this.selected)); }
   setLens(mm) {
     this.lensMM = mm;

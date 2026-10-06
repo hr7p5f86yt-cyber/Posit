@@ -25,7 +25,7 @@ import * as THREE from 'three';
 export const BREAST = {
   proj: 0.052,     // 前への張り出し
   nip: 0.5,        // 乳頭の位置（正中から、胸の半幅に対する割合）
-  inner: 0.40,     // 土台の内側への広がり（胸の半幅に対する割合）
+  inner: 0.47,     // 土台の内側への広がり（胸の半幅に対する割合）。内側の縁は胸骨のふち（正中から 1cm 足らず）
   outer: 0.31,     // 土台の外側への広がり（胸の前の面の中に収める。横の面へ回すと、斜めに当たって浮く）
   up: 0.115,       // 土台の上への広がり（第2肋骨まで）
   down: 0.072,     // 土台の下への広がり（乳房下溝まで）
@@ -270,7 +270,10 @@ export function buildBreastParts(slot, opts = {}) {
         const gUp = soft(vv, 0.35);
         const gLo = Math.pow(Math.max(0, 1 - vv * vv), 0.7);
         const prof = hu * (gLo + (gUp - gLo) * myv);
-        const taper = smooth((1 - p.rho) / (0.22 + 0.25 * myv));   // 上の縁はなだらかに、下の縁（乳房下溝）は短く
+        // 上の縁はなだらかに、下の縁（乳房下溝）は短く。内側の縁も短く立ち上げる
+        // （内側は胸骨のふちから急にふくらむので、なだらかにすると左右のあいだが広く空いて見える）
+        const med = smooth(-p.u / 0.8);
+        const taper = smooth((1 - p.rho) / (0.22 + 0.25 * myv - 0.09 * med));
         const h = BREAST.proj * s * prof * taper;
         // 向き: 頂は乳房の軸、縁ほど胸のかごの面の向き
         const n = wallN(p.x, z0).lerp(axis, 0.8 * (1 - p.rho * p.rho)).normalize();
@@ -374,7 +377,31 @@ export function buildBreastParts(slot, opts = {}) {
     part.visible = false;
     parts.push(part);
     if (wireMat) {
+      // 面の線は、細かい網目の全部ではなく、体の網目と同じくらいの間隔（約 1.5cm）の線だけを描く。
+      // 線は細かい頂点をたどるので、乳房の丸みの上にのる（三角形 (a, b, b) は線 a-b として描かれる）
+      const lineIdx = [];
+      const seg = (p, q) => { if (p !== q) lineIdx.push(p, q, q); };
+      const RS = Math.max(1, Math.round(0.015 * s / ((rIn + rOut + rUp + rDn) / 4 / NR)));   // 輪の間隔
+      const AS = 4;                                                                         // 72 方向のうち 4 つおき
+      for (let r = RS; r <= NR; r += RS) for (let a = 0; a < NA; a++) seg(vid[r][a], vid[r][(a + 1) % NA]);
+      for (let a = 0; a < NA; a += AS) {
+        for (let r = 0; r < NR; r++) seg(r === 0 ? vid[0][0] : vid[r][a], vid[r + 1][a]);
+      }
+      // 斜めの線（体の網目と同じく三角形に見えるように、ひとつおきのます目に 1 本）
+      for (let a = 0; a < NA; a += AS * 2) {
+        for (let r0 = RS; r0 + RS <= NR; r0 += RS) {
+          for (let i = 0; i < RS; i++) {
+            const a0 = Math.round(a + (i / RS) * AS) % NA, a1 = Math.round(a + ((i + 1) / RS) * AS) % NA;
+            seg(vid[r0 + i][a0], vid[r0 + i + 1][a1]);
+          }
+        }
+      }
+      const wgeo = new THREE.BufferGeometry();
+      for (const [k, at] of Object.entries(geo.attributes)) wgeo.setAttribute(k, at);
+      wgeo.setIndex(lineIdx);
+      wgeo.boundingBox = geo.boundingBox; wgeo.boundingSphere = geo.boundingSphere;
       const w = make(wireMat);
+      w.geometry = wgeo;
       w.renderOrder = 5;
       w.userData.wire = true;
       w.visible = false;

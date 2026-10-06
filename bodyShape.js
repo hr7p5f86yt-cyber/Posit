@@ -41,6 +41,7 @@ export const SHAPE = {
   palmW:    { m: 0.09, f: -0.07 },   // 掌の幅
   palmT:    { m: 0.13, f: -0.08 },   // 掌の厚み
   finger:   { m: 0.15, f: -0.14 },   // 指の太さ（女性は先ほど細く）
+  knuckle:  { m: 0.0034, f: -0.0012 }, // 拳の山（中手骨頭）・指の関節の出っぱり（m。男性は骨ばって目立ち、女性はなだらか）
 };
 
 const V3 = (x = 0, y = 0, z = 0) => new THREE.Vector3(x, y, z);
@@ -139,7 +140,15 @@ export function buildBodyMorphs(slot, opts = {}) {
         fseg.set(b, { a, e, k, thumb: finger === 'thumb' });
       }
     }
-    hands[sd] = { bone: hb, set, hf, c, palmLen, fseg };
+    // 拳の山（人差し指〜小指の付け根＝中手骨頭）と、指の第2関節。手の甲の側へ少しずらした所
+    const kn = [];
+    for (const f of ['index', 'middle', 'ring', 'pinky']) {
+      const ch = fs[f];
+      if (!ch) continue;
+      if (ch[1]) kn.push({ p: W(ch[1]).addScaledVector(hf.palmar, -0.006 * s), r: 0.011 * s, w: 1 });
+      if (ch[2]) kn.push({ p: W(ch[2]).addScaledVector(hf.palmar, -0.004 * s), r: 0.0075 * s, w: 0.55 });
+    }
+    hands[sd] = { bone: hb, set, hf, c, palmLen, fseg, kn };
   }
 
   // 乳房は別の部品として作る（breastParts.js）。ここでは胸の殻そのものは変形しない
@@ -301,6 +310,20 @@ export function buildBodyMorphs(slot, opts = {}) {
           const k = domW * fade;
           dm.addScaledVector(hd.hf.radial, r * SHAPE.palmW.m * k).addScaledVector(hd.hf.palmar, p * SHAPE.palmT.m * k);
           df.addScaledVector(hd.hf.radial, r * SHAPE.palmW.f * k).addScaledVector(hd.hf.palmar, p * SHAPE.palmT.f * k);
+        }
+        // 拳の山・指の関節: 手の甲の側の皮膚だけを、山の中心からの距離でなだらかに持ち上げる（女性は下げる）
+        if (hd.kn) {
+          const back = -P.clone().sub(hd.c).dot(hd.hf.palmar);
+          let bump = 0;
+          for (const q of hd.kn) {
+            const d2 = P.distanceToSquared(q.p) / (q.r * q.r);
+            if (d2 < 4) bump += q.w * Math.exp(-d2 * 1.6);
+          }
+          if (bump > 0 && back > -0.004 * s) {
+            const kb = Math.min(1, bump) * smooth((back + 0.004 * s) / (0.008 * s)) * domW;
+            dm.addScaledVector(hd.hf.palmar, -SHAPE.knuckle.m * s * kb);
+            df.addScaledVector(hd.hf.palmar, -SHAPE.knuckle.f * s * kb);
+          }
         }
       }
       // ワールドの変位を、スキン前の形の変位に直す

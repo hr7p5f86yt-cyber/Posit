@@ -96,13 +96,16 @@
   <button id="btnCollapse" class="icon" title="パネルの開閉">
     <svg viewBox="0 0 24 24"><path d="M7 14l5-5 5 5"/></svg>
   </button>
-  <button id="btnHelp" class="icon sm quiet" title="困ったとき" aria-label="困ったとき">
+  <button id="btnHelp" class="icon quiet" title="困ったとき" aria-label="困ったとき">
     <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.7 9.4a2.4 2.4 0 113.9 2c-.85.65-1.5 1.15-1.5 2.2"/><circle cx="12" cy="17" r="1.05" fill="currentColor" stroke="none"/></svg>
   </button>
   <span id="selBadge"></span>
   <div class="spacer"></div>
-  <button id="btnUndo" class="icon" title="1つ戻す">
+  <button id="btnUndo" class="icon" title="1つ戻す" aria-label="1つ戻す">
     <svg viewBox="0 0 24 24"><path d="M9 7L4 12l5 5"/><path d="M4 12h10a5 5 0 015 5v1"/></svg>
+  </button>
+  <button id="btnRedo" class="icon" title="やり直す" aria-label="やり直す">
+    <svg viewBox="0 0 24 24"><path d="M15 7l5 5-5 5"/><path d="M20 12H10a5 5 0 00-5 5v1"/></svg>
   </button>
   <button id="btnMirror" class="icon" title="左右反転">
     <svg viewBox="0 0 24 24"><path d="M12 4v16"/><path d="M8 8L4 12l4 4"/><path d="M16 8l4 4-4 4"/></svg>
@@ -113,6 +116,21 @@
 </header>
 
 <div id="toast" hidden></div>
+
+<!-- 補助線（頭身の線・正中線・肩と腰の傾き） -->
+<canvas id="guides" hidden></canvas>
+
+<!-- 骨・筋肉の名前 -->
+<div id="anatCard" hidden>
+  <div class="anatTop">
+    <div class="anatNames"><strong id="anatJa"></strong><span id="anatLa"></span></div>
+    <button id="anatListBtn" class="ghost small">一覧</button>
+    <button id="anatClose" class="icon sm" aria-label="閉じる"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+  </div>
+  <p id="anatInfo"></p>
+  <dl id="anatMore"></dl>
+  <p class="hint tiny" id="anatHint">骨や筋肉をタップすると名前が出ます。左右は人形から見た左右です。</p>
+</div>
 
 <div id="lightBall" title="光の向き（なぞると変わる・タップで強さ）">
   <canvas></canvas>
@@ -135,12 +153,19 @@
       <button data-seg="hand">手</button>
       <button data-seg="face">顔</button>
       <button data-seg="history">履歴</button>
+      <button data-seg="saved">保存</button>
     </div>
 
     <div class="swap" id="poseSwap">
       <section class="pane on" id="presetWrap">
         <div class="catbar">
+          <button id="btnPoseSearch" class="icon sm" title="名前で探す" aria-label="名前で探す">
+            <svg viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6"/><path d="M15 15l5 5"/></svg>
+          </button>
           <div class="scroller snap" id="poseCats"></div>
+          <div class="searchRow" id="poseSearchRow" hidden>
+            <input type="search" id="poseSearch" placeholder="ポーズの名前で探す" autocomplete="off">
+          </div>
           <div class="tools">
             <button id="btnRandomPose" class="icon sm" title="ランダムなポーズ" aria-label="ランダムなポーズ">
               <svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="4.5"/><circle cx="9" cy="9" r="1.3" fill="currentColor" stroke="none"/><circle cx="15" cy="9" r="1.3" fill="currentColor" stroke="none"/><circle cx="9" cy="15" r="1.3" fill="currentColor" stroke="none"/><circle cx="15" cy="15" r="1.3" fill="currentColor" stroke="none"/></svg>
@@ -166,6 +191,14 @@
         <div id="historyList"></div>
         <button id="btnClearHistory" class="ghost wide">履歴を消す</button>
       </section>
+      <section class="pane" id="savedWrap">
+        <div class="twoBtn">
+          <button id="btnSavePose" class="primary">いまのポーズを保存</button>
+          <button id="btnExportImg" class="ghost">画面を画像に</button>
+        </div>
+        <div id="savedList"></div>
+        <p class="hint tiny">保存したポーズはこの端末の中に残ります（名前・関節の角度・手の形）。画像は補助線も入れて書き出します。</p>
+      </section>
     </div>
     <input type="file" id="photoFile" accept="image/*" hidden>
   </div>
@@ -189,7 +222,7 @@
     </div>
     <div class="seg scroll" id="jointSeg"></div>
     <div class="pager" id="jointList"></div>
-    <p class="hint tiny">まとまりは左右にスライドしても切り替えられます。人形を直接タップしても選べます。</p>
+    <p class="hint tiny">人形の関節をタップして選び、そのまま押して動かすと直接曲がります。左右は<b>人形から見た</b>左右です。</p>
     <label class="row toggle"><span class="lbl">可動域を制限</span>
       <input type="checkbox" id="limitsOn" checked></label>
   </div>
@@ -215,6 +248,10 @@
     <div class="scroller" id="cqAngle"></div>
     <label class="row toggle"><span class="lbl">面の線を出す</span>
       <input type="checkbox" id="cqWire"></label>
+    <label class="row toggle"><span class="lbl">ポーズごとに左右をランダムに反転</span>
+      <input type="checkbox" id="cqMirror"></label>
+    <label class="row toggle"><span class="lbl">終わる前に音と振動で知らせる<span class="dim">（残り3秒）</span></span>
+      <input type="checkbox" id="cqBeep"></label>
     <p class="hint">直近の履歴30件と重ならないように出題します。進行中は画面が消えません。
       終わると元の見え方に戻ります。</p>
     <div class="bar">
@@ -224,28 +261,17 @@
 
   <!-- 設定 -->
   <div class="page" data-page="setting" hidden>
-    <div class="seg scroll" id="setSeg">
-      <button class="on" data-pane="0">見る範囲</button>
-      <button data-pane="1">体つき</button>
-      <button data-pane="2">見え方</button>
-      <button data-pane="3">ライトと影</button>
-      <button data-pane="4">カメラと床</button>
-      <button data-pane="5">モデル</button>
+    <div class="seg" id="setSeg">
+      <button class="on" data-pane="0">見え方</button>
+      <button data-pane="1">体とモデル</button>
+      <button data-pane="2">ライト</button>
+      <button data-pane="3">カメラ</button>
     </div>
     <div class="pager" id="setPager">
-      <section class="pane" data-name="見る範囲">
+      <section class="pane" data-name="見え方">
+      <div class="sub first">見る範囲<span class="dim">（左右は人形から見た左右）</span></div>
       <div class="scroller" id="frameChips"></div>
       <div class="scroller" id="sideChips" hidden></div>
-      </section>
-      <section class="pane" data-name="体つき">
-      <div class="sub">体型</div>
-      <div class="scroller" id="bodyChips"></div>
-      <div class="sub">頭身<span class="dim">（低いほどデフォルメが効きます）</span></div>
-      <label class="row"><span class="lbl">頭身</span>
-        <input type="range" id="headRatio" min="2" max="9" step="0.1" value="7.5"><output id="outHead">7.5</output></label>
-      <button id="btnHeadReset" class="wide ghost">このモデル本来の頭身に戻す</button>
-      </section>
-      <section class="pane" data-name="見え方">
       <div class="sub">表示するモデル</div>
       <div class="scroller" id="viewChips"></div>
       <div class="sub">素体の質感</div>
@@ -258,40 +284,21 @@
         <input type="checkbox" id="headPlanes"></label>
       <label class="row toggle"><span class="lbl">骨格を重ねる</span>
         <input type="checkbox" id="boneView"></label>
+      <label class="row toggle"><span class="lbl">骨・筋肉の名前を調べる<span class="dim">（タップで名前）</span></span>
+        <input type="checkbox" id="anatOn"></label>
+      <button id="btnAnatList" class="wide ghost">骨・筋肉の名前の一覧</button>
       <label class="row toggle"><span class="lbl">基準姿勢に合わせる</span>
         <input type="checkbox" id="canonRest" checked></label>
-      <p class="hint" id="viewNote">骨格モデルが無くても、モデル自身のボーンから骨格を組み立てて表示できます。</p>
+      <p class="hint" id="viewNote">骨格・筋肉のモデルが無くても、モデル自身のボーンから骨格と主な筋肉（約80個・名前付き）を組み立てて表示できます。</p>
       </section>
-      <section class="pane" data-name="ライトと影">
-      <div class="sub">ライトの組み合わせ<span class="dim">（向きは見ている方向が基準）</span></div>
-      <div class="scroller" id="lightPresets"></div>
-      <label class="row"><span class="lbl">強さ</span>
-        <input type="range" id="lightInt" min="0" max="100" step="0.5" value="38"><output id="outInt">2.40</output></label>
-      <label class="row"><span class="lbl">方位</span>
-        <input type="range" id="lightAz" min="-180" max="180" step="1" value="35"><output id="outAz">35°</output></label>
-      <label class="row"><span class="lbl">高さ</span>
-        <input type="range" id="lightEl" min="-60" max="88" step="1" value="45"><output id="outEl">45°</output></label>
-      <label class="row"><span class="lbl">補助光</span>
-        <input type="range" id="fillInt" min="0" max="3" step="0.01" value="0.35"><output id="outFill">0.35</output></label>
-      <label class="row"><span class="lbl">環境光</span>
-        <input type="range" id="envInt" min="0" max="2.5" step="0.01" value="0.55"><output id="outEnv">0.55</output></label>
-      <label class="row"><span class="lbl">影のぼけ</span>
-        <input type="range" id="shadowSoft" min="0" max="12" step="0.5" value="3"><output id="outSoft">3.0</output></label>
-      <label class="row"><span class="lbl">露出</span>
-        <input type="range" id="exposure" min="0.2" max="3" step="0.01" value="1"><output id="outExp">1.00</output></label>
-      <label class="row toggle"><span class="lbl">光の玉を画面に出す</span>
-        <input type="checkbox" id="lightBallOn" checked></label>
-      <p class="hint">画面右上の光の玉を指でなぞると、光の向きが変わります。内側の円は手前から、外側の輪は奥から（逆光）。
-        タップすると強さとライトの組み合わせを選べます。補助光と環境光を下げるほど、明暗がはっきりします。</p>
-      </section>
-      <section class="pane" data-name="カメラと床">
-      <label class="row"><span class="lbl">レンズ</span>
-        <input type="range" id="lens" min="18" max="135" step="1" value="40"><output id="outLens">40mm</output></label>
-      <label class="row toggle"><span class="lbl">床グリッド</span>
-        <input type="checkbox" id="gridOn" checked></label>
-      <button id="btnFrame" class="wide ghost">全体を表示</button>
-      </section>
-      <section class="pane" data-name="モデル">
+      <section class="pane" data-name="体とモデル">
+      <div class="sub first">体型</div>
+      <div class="scroller" id="bodyChips"></div>
+      <div class="sub">頭身<span class="dim">（低いほどデフォルメが効きます）</span></div>
+      <label class="row"><span class="lbl">頭身</span>
+        <input type="range" id="headRatio" min="2" max="9" step="0.1" value="7.5"><output id="outHead">7.5</output></label>
+      <button id="btnHeadReset" class="wide ghost">このモデル本来の頭身に戻す</button>
+      <div class="sub">読み込んだモデル</div>
       <div id="slotRows"></div>
       <button id="btnSample" class="wide ghost">サンプル素体を読み込む</button>
       <input type="file" id="file" multiple
@@ -319,6 +326,44 @@
           <li><b>手・高精細</b> <a href="https://sketchfab.com/3d-models/hand-rig-a348cf6087eb4fd98a83b026593823ad" target="_blank" rel="noopener">Hand Rig</a><span>CC BY 4.0 / 563k / 指まで完全リグ</span></li>
         </ul>
       </details>
+      </section>
+      <section class="pane" data-name="ライト">
+      <div class="sub first">ライトの組み合わせ<span class="dim">（向きは見ている方向が基準）</span></div>
+      <div class="scroller" id="lightPresets"></div>
+      <label class="row"><span class="lbl">強さ</span>
+        <input type="range" id="lightInt" min="0" max="100" step="0.5" value="38"><output id="outInt">2.40</output></label>
+      <label class="row"><span class="lbl">方位</span>
+        <input type="range" id="lightAz" min="-180" max="180" step="1" value="35"><output id="outAz">35°</output></label>
+      <label class="row"><span class="lbl">高さ</span>
+        <input type="range" id="lightEl" min="-60" max="88" step="1" value="45"><output id="outEl">45°</output></label>
+      <label class="row"><span class="lbl">補助光</span>
+        <input type="range" id="fillInt" min="0" max="3" step="0.01" value="0.35"><output id="outFill">0.35</output></label>
+      <label class="row"><span class="lbl">環境光</span>
+        <input type="range" id="envInt" min="0" max="2.5" step="0.01" value="0.55"><output id="outEnv">0.55</output></label>
+      <label class="row"><span class="lbl">影のぼけ</span>
+        <input type="range" id="shadowSoft" min="0" max="12" step="0.5" value="3"><output id="outSoft">3.0</output></label>
+      <label class="row"><span class="lbl">露出</span>
+        <input type="range" id="exposure" min="0.2" max="3" step="0.01" value="1"><output id="outExp">1.00</output></label>
+      <label class="row toggle"><span class="lbl">光の玉を画面に出す</span>
+        <input type="checkbox" id="lightBallOn" checked></label>
+      <p class="hint">画面右上の光の玉を指でなぞると、光の向きが変わります。内側の円は手前から、外側の輪は奥から（逆光）。
+        タップすると強さとライトの組み合わせを選べます。補助光と環境光を下げるほど、明暗がはっきりします。</p>
+      </section>
+      <section class="pane" data-name="カメラ">
+      <div class="sub first">カメラの向き<span class="dim">（左右は人形から見た左右）</span></div>
+      <div class="grid small" id="camChips"></div>
+      <label class="row"><span class="lbl">レンズ</span>
+        <input type="range" id="lens" min="18" max="135" step="1" value="40"><output id="outLens">40mm</output></label>
+      <div class="sub">補助線</div>
+      <label class="row toggle"><span class="lbl">頭身の線<span class="dim">（床から頭ひとつぶんごと）</span></span>
+        <input type="checkbox" id="guideHeads"></label>
+      <label class="row toggle"><span class="lbl">正中線</span>
+        <input type="checkbox" id="guideCenter"></label>
+      <label class="row toggle"><span class="lbl">肩と腰の傾き</span>
+        <input type="checkbox" id="guideTilt"></label>
+      <label class="row toggle"><span class="lbl">床グリッド</span>
+        <input type="checkbox" id="gridOn" checked></label>
+      <button id="btnFrame" class="wide ghost">全体を表示</button>
       </section>
     </div>
     <div class="dots" id="setDots"></div>
@@ -378,6 +423,23 @@
     <button id="btnPurge" class="wide ghost">キャッシュを消して再読込</button>
     <p class="hint" id="diag">タップすると状態を表示します。</p>
     <button id="helpClose" class="primary wide">閉じる</button>
+  </div>
+</div>
+
+<div id="anatBox" hidden>
+  <div class="card wide-card">
+    <div class="anatBoxHead">
+      <strong>骨・筋肉の名前</strong>
+      <button id="anatBoxClose" class="icon sm" aria-label="閉じる"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    </div>
+    <div class="seg" id="anatKind">
+      <button class="on" data-kind="bone">骨</button>
+      <button data-kind="muscle">筋肉</button>
+    </div>
+    <input type="search" id="anatSearch" placeholder="名前で探す（例: 肩甲骨・大胸筋）" autocomplete="off">
+    <div class="scroller" id="anatRegions"></div>
+    <div id="anatList"></div>
+    <p class="hint tiny" id="anatBoxNote"></p>
   </div>
 </div>
 

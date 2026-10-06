@@ -483,3 +483,107 @@ body.resizing #grip span { background: #7d8899; }
 .dots { gap: 8px; }
 .dots .marks { display: flex; gap: 6px; align-items: center; }
 #cqAngleText { font-size: 13px; opacity: 0.85; margin-left: 8px; }
+
+/* ---------- v34: 上のボタン（指で押しやすい 44pt） ---------- */
+#topbar button.icon { width: 44px; height: 44px; border-radius: 13px; }
+#topbar button.icon svg { width: 22px; height: 22px; }
+#topbar { gap: 7px; }
+
+/* パネルの高さは 3 段（たたむ・半分・広く）。指を離すと近い段へ吸い付く */
+#sheet { transition: height 0.24s cubic-bezier(.32,.72,.35,1), transform 0.26s cubic-bezier(.32,.72,.35,1); }
+body.resizing #sheet { transition: none; }
+.sub.first { margin-top: 4px; }
+
+/* ---------- ポーズ：小さめの格子・名前で探す ---------- */
+.catbar > #btnPoseSearch { flex: none; }
+.catbar .searchRow { flex: 1; min-width: 0; }
+.catbar .searchRow[hidden] { display: none; }
+body.poseSearching #poseCats { display: none; }
+#poseSearch, #anatSearch {
+  width: 100%; font: inherit; font-size: 15px; color: var(--text);
+  background: #21262e; border: 1px solid var(--line); border-radius: 11px;
+  padding: 8px 12px; outline: none; -webkit-user-select: text; user-select: text;
+}
+#poseSearch:focus, #anatSearch:focus { border-color: var(--accent); }
+#poseList .grid { grid-template-columns: repeat(var(--pose-cols, 3), 1fr); gap: 6px; }
+#poseList .grid button { min-height: 42px; padding: 8px 4px; font-size: 13px; border-radius: 10px; }
+.pane-title { margin-bottom: 5px; }
+
+/* ---------- 保存したポーズ ---------- */
+.twoBtn { display: flex; gap: 8px; margin: 2px 0 8px; }
+.twoBtn button { flex: 1; padding: 11px 8px; font-size: 14px; }
+.saved { display: flex; align-items: center; gap: 8px; padding: 6px 0;
+  border-bottom: 1px solid var(--line-soft); }
+.saved .nm { flex: 1; min-width: 0; text-align: left; background: none; border: 0; padding: 8px 4px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; }
+.saved .tm { font-size: 11px; color: var(--muted); flex: none; }
+.saved .del { padding: 6px 10px; font-size: 12px; }
+
+/* ---------- 補助線 ---------- */
+#guides { position: fixed; inset: 0; width: 100%; height: 100%; z-index: 5; pointer-events: none; }
+#guides[hidden] { display: none; }
+
+/* ---------- 骨・筋肉の名前 ---------- */
+#anatCard {
+  position: fixed; top: calc(var(--safe-t) + 64px); left: 10px; z-index: 40;
+  width: min(420px, calc(100vw - 20px));
+  background: var(--sheet); border: 1px solid var(--line); border-radius: 14px;
+  padding: 10px 12px; box-shadow: 0 10px 28px rgba(0,0,0,0.45);
+  -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
+}
+#anatCard[hidden] { display: none; }
+.anatTop { display: flex; align-items: flex-start; gap: 8px; }
+.anatNames { flex: 1; min-width: 0; }
+.anatNames strong { display: block; font-size: 17px; line-height: 1.35; }
+.anatNames span { display: block; font-size: 12px; color: var(--muted); font-style: italic; }
+#anatInfo { margin: 6px 0 0; font-size: 13px; line-height: 1.55; }
+#anatInfo:empty { display: none; }
+#anatMore { margin: 6px 0 0; display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; font-size: 12px; }
+#anatMore:empty { display: none; }
+#anatMore dt { color: var(--muted); }
+#anatMore dd { margin: 0; }
+body.croquis #anatCard { display: none; }
+
+#anatBox { position: fixed; inset: 0; z-index: 660; display: flex; align-items: center; justify-content: center;
+  background: rgba(10,12,16,0.78); -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); }
+#anatBox[hidden] { display: none; }
+#anatBox .card { background: var(--sheet-solid); border: 1px solid var(--line); border-radius: 18px;
+  padding: 14px; margin: 14px; width: 460px; max-width: 94vw; height: 82vh; display: flex; flex-direction: column; }
+.anatBoxHead { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.anatBoxHead strong { font-size: 16px; }
+#anatBox .seg { margin: 0 0 8px; }
+#anatRegions { margin: 8px 0 4px; }
+#anatList { flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+.anatItem { display: block; width: 100%; text-align: left; background: none; border: 0; border-radius: 0;
+  border-bottom: 1px solid var(--line-soft); padding: 10px 4px; }
+.anatItem b { font-weight: 600; font-size: 15px; }
+.anatItem span { display: block; font-size: 11px; color: var(--muted); font-style: italic; }
+.anatItem.on { background: rgba(79,195,247,0.12); }
+
+/* ---------- カメラの向き ---------- */
+#camChips button { min-height: 42px; font-size: 13px; padding: 8px 4px; }
+
+@media (min-width: 720px) and (orientation: landscape) {
+  #anatCard { left: 10px; }
+}
+
+/* ポーズのページ送りは低く（格子に場所を回す） */
+#poseDots { padding: 3px 0 1px; }
+#poseDots .pg { height: 26px; width: 32px; }
+#poseSeg button { padding: 7px 4px; }
+#poseSeg { margin: 2px 0 8px; }
+.catbar { margin-bottom: 4px; }
+#anatCard { top: auto; }
+
+/* パネルの上の部品を詰めて、ポーズの格子に 1 行ぶん多く回す */
+#grip { padding: 0; height: 20px; display: flex; align-items: center; justify-content: center; }
+#grip span { display: block; }
+body.collapsed #grip { padding: 0; height: 18px; }
+.page { padding-bottom: 6px; }
+.catbar .icon.sm { width: 36px; height: 36px; }
+.catbar > .scroller .chip { padding: 8px 14px; }
+#poseList .grid button { min-height: 38px; padding: 6px 4px; }
+@media (max-width: 430px) { #selBadge { display: none; } }
+@media (min-width: 720px) and (orientation: landscape) {
+  #grip { display: none; }
+}

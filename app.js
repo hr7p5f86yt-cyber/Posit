@@ -5,9 +5,10 @@ import { POSE_CATEGORIES, POSE_PRESETS, HAND_SHAPES, FACE_PRESETS, toSpec } from
 import { PoseHistory, relativeTime, HISTORY_LIMIT } from './history.js';
 import { CroquisSession, CROQUIS_SECONDS, CROQUIS_COUNTS } from './croquis.js';
 import { LightBall } from './lightBall.js';
+import { REGIONS } from './anatomy.js';
 import * as THREE from 'three';
 
-export const BUILD = '2026-10-06c';
+export const BUILD = '2026-10-06d';
 
 const SAMPLE_URL = 'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r169/examples/models/gltf/Xbot.glb';
 const SETTINGS_KEY = 'posit.settings.v1';
@@ -42,7 +43,12 @@ function loadSettings() {
       cqBody: s.cqBody || 'keep',
       cqHandShape: s.cqHandShape !== false,
       lightBall: s.lightBall !== false,
-      sheetH: typeof s.sheetH === 'number' ? s.sheetH : 0,
+      sheetStage: [0, 1, 2].includes(s.sheetStage) ? s.sheetStage : 1,
+      cqBeep: s.cqBeep !== false,
+      cqMirror: !!s.cqMirror,
+      guideHeads: !!s.guideHeads,
+      guideCenter: !!s.guideCenter,
+      guideTilt: !!s.guideTilt,
     };
   } catch (e) {
     return defaultSettings();
@@ -51,7 +57,8 @@ function loadSettings() {
 
 function defaultSettings() {
   return { seconds: 30, count: 10, cqCats: [], cqModel: 'skin', cqFrame: 'full', cqWire: false, cqAngle: 'random',
-    cqSide: 'random', cqBody: 'keep', cqHandShape: true, lightBall: true, sheetH: 0 };
+    cqSide: 'random', cqBody: 'keep', cqHandShape: true, lightBall: true, sheetStage: 1,
+    cqBeep: true, cqMirror: false, guideHeads: false, guideCenter: false, guideTilt: false };
 }
 function saveSettings() {
   try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch (e) { /* 続行 */ }
@@ -60,19 +67,35 @@ function saveSettings() {
 // ---- 元に戻す -------------------------------------------------------------
 
 const undoStack = [];
+const redoStack = [];
+function syncUndoButtons() {
+  $('btnUndo').disabled = !undoStack.length;
+  $('btnRedo').disabled = !redoStack.length;
+}
+/** 変える前に呼ぶ（いまの角度を「戻す」に積み、「やり直す」は空にする） */
 function snapshot() {
   undoStack.push(viewer.allAngles());
-  if (undoStack.length > 30) undoStack.shift();
-  $('btnUndo').disabled = false;
+  if (undoStack.length > 50) undoStack.shift();
+  redoStack.length = 0;
+  syncUndoButtons();
 }
 $('btnUndo').addEventListener('click', () => {
   const prev = undoStack.pop();
   if (!prev) return;
+  redoStack.push(viewer.allAngles());
   viewer.setAngles(prev);
   syncSliders();
-  $('btnUndo').disabled = !undoStack.length;
+  syncUndoButtons();
 });
-$('btnUndo').disabled = true;
+$('btnRedo').addEventListener('click', () => {
+  const next = redoStack.pop();
+  if (!next) return;
+  undoStack.push(viewer.allAngles());
+  viewer.setAngles(next);
+  syncSliders();
+  syncUndoButtons();
+});
+syncUndoButtons();
 
 // ---- タブ -----------------------------------------------------------------
 
@@ -83,53 +106,108 @@ function showTab(name) {
   for (const p of document.querySelectorAll('.page')) {
     p.hidden = p.dataset.page !== name;
   }
-  document.body.classList.remove('collapsed');
+  if (sheetStage === 0) setSheetStage(1);
   if (window.__positRelayout) window.__positRelayout();
 }
 for (const b of document.querySelectorAll('#tabbar button')) {
   b.addEventListener('click', () => showTab(b.dataset.tab));
 }
 
-const toggleSheet = () => document.body.classList.toggle('collapsed');
+// ---- パネルの高さ（3 段）と、人形を見せる場所 ------------------------------
+//   0 … たたむ（タブだけ）、1 … 半分、2 … 広く。つまみを上下に動かして離すと、近い段へ吸い付く。
+//   パネルや上のボタンに隠れない所に人形が収まるよう、カメラの見る窓を合わせる（viewer.setInsets）
+
+const wideLayout = () => window.matchMedia('(min-width: 720px) and (orientation: landscape)').matches;
+const stageHeight = k => {
+  const H = window.innerHeight;
+  if (k === 2) return Math.round(H * 0.8);
+  return Math.round(Math.min(H * 0.55, Math.max(345, Math.min(450, H * 0.46))));
+};
+let sheetStage = settings.sheetStage;
+
+function updateInsets() {
+  if (typeof placeAnatCard === 'function' && !$('anatCard').hidden) placeAnatCard();
+  if (document.body.classList.contains('croquis')) { viewer.setInsets(null); return; }
+  const sheet = $('sheet').getBoundingClientRect();
+  const top = Math.round(($('topbar').getBoundingClientRect().bottom || 0) - 4);
+  if (wideLayout()) {
+    // 横長の画面：パネルは右。たたんだときは下のタブだけなので、右は空ける
+    if (sheetStage === 0) viewer.setInsets({ top, right: 0, bottom: Math.round(window.innerHeight - sheet.top), left: 0 });
+    else viewer.setInsets({ top, right: Math.round(window.innerWidth - sheet.left), bottom: 0, left: 0 });
+  }
+  else viewer.setInsets({ top, right: 0, bottom: Math.max(0, Math.round(window.innerHeight - sheet.top)), left: 0 });
+}
+let insetTimer = null;
+const queueInsets = (ms = 0) => {
+  if (insetTimer) clearTimeout(insetTimer);
+  insetTimer = setTimeout(updateInsets, ms);
+};
+
+function setSheetStage(k, save = true) {
+  sheetStage = Math.max(0, Math.min(2, k));
+  document.body.classList.toggle('collapsed', sheetStage === 0);
+  if (sheetStage > 0) document.documentElement.style.setProperty('--sheet-h', stageHeight(sheetStage) + 'px');
+  if (save) { settings.sheetStage = sheetStage; saveSettings(); }
+  // 高さが変わり終わってから測る（動いている途中も追う）
+  queueInsets(0); setTimeout(updateInsets, 140); setTimeout(updateInsets, 300);
+  if (window.__positRelayout) window.__positRelayout();
+}
+const toggleSheet = () => setSheetStage(sheetStage === 0 ? 1 : 0);
 
 // つまみ: 上下にドラッグすると高さが変わる。動かさずに離したら、たたむ／開く。
 (() => {
   const grip = $('grip');
   const sheet = $('sheet');
-  const clampH = v => Math.max(180, Math.min(window.innerHeight * 0.82, v));
-  const setH = v => {
-    const h = clampH(v);
-    document.documentElement.style.setProperty('--sheet-h', h + 'px');
-    settings.sheetH = Math.round(h);
-  };
-  if (settings.sheetH) setH(settings.sheetH);
-
-  let startY = 0, startH = 0, moved = false, id = null;
+  let startY = 0, startH = 0, moved = false, id = null, lastY = 0, lastT = 0, vel = 0;
   grip.addEventListener('pointerdown', e => {
-    if (document.body.classList.contains('collapsed')) return;
-    id = e.pointerId; startY = e.clientY; startH = sheet.getBoundingClientRect().height;
+    id = e.pointerId; startY = e.clientY; lastY = e.clientY; lastT = performance.now(); vel = 0;
+    startH = sheet.getBoundingClientRect().height;
     moved = false;
-    document.body.classList.add('resizing');
     grip.setPointerCapture(id);
   });
   grip.addEventListener('pointermove', e => {
     if (id === null || e.pointerId !== id) return;
     const dy = e.clientY - startY;
-    if (Math.abs(dy) > 4) moved = true;
-    if (moved) { setH(startH - dy); e.preventDefault(); }
+    if (!moved && Math.abs(dy) > 4) {
+      moved = true;
+      document.body.classList.add('resizing');
+      if (document.body.classList.contains('collapsed')) {
+        document.body.classList.remove('collapsed');
+        startH = 120;
+      }
+    }
+    if (moved) {
+      const now = performance.now();
+      vel = (e.clientY - lastY) / Math.max(1, now - lastT);    // px/ms（下向きが +）
+      lastY = e.clientY; lastT = now;
+      const h = Math.max(110, Math.min(window.innerHeight * 0.86, startH - dy));
+      document.documentElement.style.setProperty('--sheet-h', h + 'px');
+      updateInsets();
+      e.preventDefault();
+    }
   });
   const end = e => {
     if (id === null || (e && e.pointerId !== id)) return;
     try { grip.releasePointerCapture(id); } catch (err) { /* 続行 */ }
     id = null;
     document.body.classList.remove('resizing');
-    if (moved) { saveSettings(); if (window.__positRelayout) window.__positRelayout(); }
-    else toggleSheet();
+    if (!moved) { toggleSheet(); return; }
+    // 離した高さに近い段へ。速く払ったときはその向きへ 1 段
+    const h = sheet.getBoundingClientRect().height;
+    const cand = [90, stageHeight(1), stageHeight(2)];
+    let k = 0, best = Infinity;
+    cand.forEach((c, i) => { if (Math.abs(c - h) < best) { best = Math.abs(c - h); k = i; } });
+    if (Math.abs(vel) > 0.6) {
+      const cur = cand.reduce((a, c, i) => (c < h ? i : a), 0);
+      k = vel > 0 ? Math.max(0, cur) : Math.min(2, cur + 1);
+    }
+    setSheetStage(k);
   };
   grip.addEventListener('pointerup', end);
   grip.addEventListener('pointercancel', end);
-  grip.addEventListener('click', e => { if (moved) e.preventDefault(); });
 })();
+window.addEventListener('resize', () => { if (sheetStage > 0) document.documentElement.style.setProperty('--sheet-h', stageHeight(sheetStage) + 'px'); queueInsets(60); });
+window.addEventListener('orientationchange', () => queueInsets(300));
 
 // 横スライドと見出しボタン・点の表示を連動させる
 function linkPager(pagerId, buttons, onChange, dotsId) {
@@ -181,30 +259,43 @@ function linkPager(pagerId, buttons, onChange, dotsId) {
     cur = i;
     if (onChange) onChange(i, panes[i]);
   };
-  if (buttons) {
-    buttons.forEach((b, i) => b.addEventListener('click', () => {
-      pager.scrollTo({ left: pager.clientWidth * i, behavior: 'smooth' });
-      mark(i);
-    }));
-  }
+  // ボタンや矢印で送るときは、なめらかに動いている途中のページを印にしない
+  // （途中のページの見出しが一瞬光って、二つ光っているように見えるのを防ぐ）
+  let lockTo = -1, lockUntil = 0;
+  const goSmooth = i => {
+    const k = Math.max(0, Math.min(panes.length - 1, i));
+    lockTo = k; lockUntil = performance.now() + 3000;
+    pager.scrollTo({ left: pager.clientWidth * k, behavior: 'smooth' });
+    mark(k);
+  };
+  if (buttons) buttons.forEach((b, i) => b.addEventListener('click', () => goSmooth(i)));
   let timer = null;
   const onScroll = () => {
     if (timer) clearTimeout(timer);
     timer = setTimeout(() => {
-      const i = Math.round(pager.scrollLeft / Math.max(1, pager.clientWidth));
-      mark(Math.max(0, Math.min(panes.length - 1, i)));
+      const i = Math.max(0, Math.min(panes.length - 1, Math.round(pager.scrollLeft / Math.max(1, pager.clientWidth))));
+      if (lockTo >= 0) {
+        // 目当てのページに着く（または指で触る・3 秒たつ）までは、途中のページを印にしない
+        const atTarget = Math.abs(pager.scrollLeft - pager.clientWidth * lockTo) < 3;
+        if (atTarget || performance.now() > lockUntil) lockTo = -1;
+        else return;
+      }
+      mark(i);
     }, 60);
   };
-  const goSmooth = i => {
-    const k = Math.max(0, Math.min(panes.length - 1, i));
-    pager.scrollTo({ left: pager.clientWidth * k, behavior: 'smooth' });
-    mark(k);
-  };
+  // 指で触ったら、ボタンで送っている途中でも指の動きを優先する
+  const release = () => { lockTo = -1; };
+  pager.addEventListener('touchstart', release, { passive: true });
+  pager.addEventListener('pointerdown', release);
   if (prevBtn) prevBtn.addEventListener('click', () => goSmooth(cur - 1));
   if (nextBtn) nextBtn.addEventListener('click', () => goSmooth(cur + 1));
   pager.addEventListener('scroll', onScroll);
-  pager.__pagerOff = () => pager.removeEventListener('scroll', onScroll);
-  return { pager, panes, go: i => { pager.scrollLeft = pager.clientWidth * i; mark(i); } };
+  pager.__pagerOff = () => {
+    pager.removeEventListener('scroll', onScroll);
+    pager.removeEventListener('touchstart', release);
+    pager.removeEventListener('pointerdown', release);
+  };
+  return { pager, panes, go: i => { lockTo = -1; pager.scrollLeft = pager.clientWidth * i; mark(i); }, goSmooth };
 }
 
 const setPager = linkPager('setPager',
@@ -254,6 +345,19 @@ viewer.onSelect = key => {
     el.classList.toggle('on', el.dataset.key === key);
   }
   if (key) { showTab('joint'); focusJointGroup(key); }
+};
+
+// 人形の上で関節を押したまま動かす
+let jdFrame = 0;
+viewer.onJointDragStart = () => { snapshot(); };
+viewer.onJointDrag = () => {
+  if (jdFrame) return;
+  jdFrame = requestAnimationFrame(() => { jdFrame = 0; syncSliders(); });
+};
+let jdTold = false;
+viewer.onJointDragEnd = () => {
+  syncSliders();
+  if (!jdTold) { jdTold = true; showToast('関節を直接動かしました。上の「戻す」で戻せます'); }
 };
 
 // ---- スライダ --------------------------------------------------------------
@@ -314,8 +418,17 @@ function buildPoseCats() {
   for (const c of POSE_CATEGORIES) mk(c.name, c.key);
 }
 
-const currentPoses = () =>
-  poseCategory ? POSE_PRESETS.filter(p => p.category === poseCategory) : POSE_PRESETS;
+// 名前で探す（ひらがな・カタカナは区別しない）
+let poseQuery = '';
+const kana = t => String(t || '').normalize('NFKC').toLowerCase()
+  .replace(/[\u30a1-\u30f6]/g, c => String.fromCharCode(c.charCodeAt(0) - 0x60));
+const matchQuery = p => !poseQuery || kana(p.name).includes(kana(poseQuery))
+  || (p.tags && kana(p.tags.join(' ')).includes(kana(poseQuery)));
+
+const currentPoses = () => {
+  if (poseQuery) return POSE_PRESETS.filter(matchQuery);
+  return poseCategory ? POSE_PRESETS.filter(p => p.category === poseCategory) : POSE_PRESETS;
+};
 
 // 1ページに並べるポーズの数。シートの高さに合わせて決めるので、
 // 1ページぶんが縦にはみ出さず、左右のスライドだけで全部を見られる。
@@ -323,15 +436,27 @@ let posePerPage = 6;
 let posePages = [];
 let posePager = null;
 
+// 1 行の列数（狭い画面は 3 列、広い画面は 4 列）
+function poseCols() {
+  const el = $('poseList');
+  const w = el ? el.clientWidth : 360;
+  return w >= 520 ? 4 : 3;
+}
 function posesPerPage() {
   const el = $('poseList');
   const h = el ? el.clientHeight : 0;
-  if (!h) return 6;
-  const rows = Math.floor((h - 24) / 56);      // 見出し 24px、1行 56px
-  return Math.max(2, Math.min(5, rows)) * 2;   // 2列なので倍にする
+  const cols = poseCols();
+  document.documentElement.style.setProperty('--pose-cols', cols);
+  if (!h) return cols * 3;
+  const rows = Math.floor((h - 24 + 6) / 44);  // 見出し 24px、1行 38px＋すき間 6px
+  return Math.max(1, Math.min(6, rows)) * cols;
 }
 
 function poseGroups() {
+  if (poseQuery) {
+    const hit = POSE_PRESETS.filter(matchQuery);
+    return [{ key: '', name: hit.length ? `「${poseQuery}」の結果 ${hit.length} 件` : `「${poseQuery}」は見つかりません`, poses: hit }];
+  }
   const of = key => POSE_PRESETS.filter(p => p.category === key);
   if (poseCategory) {
     const c = POSE_CATEGORIES.find(x => x.key === poseCategory);
@@ -387,6 +512,7 @@ function buildPoseList(keepCat) {
 
 /** シートの高さが変わったら、1ページぶんの数を測り直す */
 function relayoutPoses() {
+  queueInsets(0);
   if (posesPerPage() === posePerPage) return;
   const i = posePager ? Math.round(posePager.pager.scrollLeft
     / Math.max(1, posePager.pager.clientWidth)) : 0;
@@ -395,11 +521,21 @@ function relayoutPoses() {
 let poseLayoutTimer = null;
 const queueRelayout = () => {
   if (poseLayoutTimer) clearTimeout(poseLayoutTimer);
-  poseLayoutTimer = setTimeout(relayoutPoses, 180);
+  poseLayoutTimer = setTimeout(relayoutPoses, 330);     // パネルの高さが変わり終わってから測る
 };
 window.addEventListener('resize', queueRelayout);
 window.addEventListener('orientationchange', queueRelayout);
 window.__positRelayout = queueRelayout;
+// ポーズ一覧の大きさが変わったら（パネルの段・回転・タブの切り替え）、1 ページの数を測り直す
+if (window.ResizeObserver) {
+  let lastH = 0, lastW = 0;
+  new ResizeObserver(() => {
+    const el = $('poseList');
+    if (!el.clientHeight || (el.clientHeight === lastH && el.clientWidth === lastW)) return;
+    lastH = el.clientHeight; lastW = el.clientWidth;
+    queueRelayout();
+  }).observe($('poseList'));
+}
 
 function applyPose(pose) {
   snapshot();
@@ -418,7 +554,18 @@ $('btnRandomPose').addEventListener('click', () => {
   applyPose(list[Math.floor(Math.random() * list.length)]);
 });
 
-const SEG_WRAPS = { preset: 'presetWrap', hand: 'handWrap', face: 'faceWrap', history: 'historyWrap' };
+function setPoseSearch(on) {
+  $('poseSearchRow').hidden = !on;
+  document.body.classList.toggle('poseSearching', on);
+  $('btnPoseSearch').classList.toggle('on', on);
+  if (on) { setTimeout(() => $('poseSearch').focus(), 30); }
+  else { $('poseSearch').value = ''; if (poseQuery) { poseQuery = ''; buildPoseList(); } }
+}
+$('btnPoseSearch').addEventListener('click', () => setPoseSearch($('poseSearchRow').hidden));
+$('poseSearch').addEventListener('input', e => { poseQuery = e.target.value.trim(); buildPoseList(); });
+$('poseSearch').addEventListener('keydown', e => { if (e.key === 'Enter') e.target.blur(); if (e.key === 'Escape') setPoseSearch(false); });
+
+const SEG_WRAPS = { preset: 'presetWrap', hand: 'handWrap', face: 'faceWrap', history: 'historyWrap', saved: 'savedWrap' };
 
 function showSeg(seg) {
   for (const k of Object.keys(SEG_WRAPS)) {
@@ -430,6 +577,7 @@ function showSeg(seg) {
   }
   if (seg === 'hand') buildHandList();
   if (seg === 'face') buildFaceList();
+  if (seg === 'saved') buildSaved();
 }
 for (const b of document.querySelectorAll('#poseSeg button')) {
   b.addEventListener('click', () => showSeg(b.dataset.seg));
@@ -441,7 +589,7 @@ let handTarget = 'both';
 
 function buildHandList() {
   buildChips('handSide',
-    [{ v: 'both', label: '両手' }, { v: 'L', label: '左手' }, { v: 'R', label: '右手' }],
+    [{ v: 'both', label: '両手' }, { v: 'L', label: '人形の左手' }, { v: 'R', label: '人形の右手' }],
     o => o.v === handTarget,
     o => { handTarget = o.v; buildHandList(); });
 
@@ -458,7 +606,7 @@ function buildHandList() {
   }
   const n = viewer.fingerBoneCount();
   $('handNote').textContent = n
-    ? `指の骨 ${n} 本を見つけました。形は左手基準で、右手には左右反転して当てます。`
+    ? `指の骨 ${n} 本を見つけました。左右は人形から見た左右です（人形の左手＝画面で正面から見て右側の手）。`
     : 'このモデルには指の骨がありません。指のあるモデルを読み込むと使えます。';
   for (const b of wrap.children) b.disabled = !n;
 }
@@ -538,6 +686,88 @@ $('photoApply').addEventListener('click', () => {
   showToast(`${n} か所の関節を写真に合わせました`);
 });
 
+// ---- 保存したポーズ・画像の書き出し ------------------------------------------
+
+const SAVED_KEY = 'posit.saved.v1';
+function loadSaved() {
+  try { const a = JSON.parse(localStorage.getItem(SAVED_KEY) || '[]'); return Array.isArray(a) ? a : []; }
+  catch (e) { return []; }
+}
+let savedPoses = loadSaved();
+const storeSaved = () => { try { localStorage.setItem(SAVED_KEY, JSON.stringify(savedPoses)); } catch (e) { showToast('保存できませんでした（端末の空きを確認してください）'); } };
+
+function buildSaved() {
+  const wrap = $('savedList');
+  wrap.innerHTML = '';
+  if (!savedPoses.length) {
+    const p = document.createElement('p');
+    p.className = 'hint';
+    p.textContent = 'まだありません。「いまのポーズを保存」で名前を付けて残せます。';
+    wrap.appendChild(p);
+    return;
+  }
+  savedPoses.forEach((it, i) => {
+    const row = document.createElement('div');
+    row.className = 'saved';
+    const nm = document.createElement('button');
+    nm.className = 'nm'; nm.textContent = it.name;
+    nm.addEventListener('click', () => {
+      snapshot();
+      viewer.applyPose(it.spec);
+      if (it.hands) for (const sd of ['L', 'R']) if (it.hands[sd] != null) viewer.applyHandShape(sd, it.hands[sd]);
+      history.add({ name: it.name, spec: it.spec });
+      syncSliders();
+      showToast(it.name);
+    });
+    const tm = document.createElement('span');
+    tm.className = 'tm'; tm.textContent = relativeTime(it.at);
+    const del = document.createElement('button');
+    del.className = 'ghost del'; del.textContent = '削除';
+    del.addEventListener('click', () => {
+      if (!window.confirm(`「${it.name}」を削除しますか？`)) return;
+      savedPoses.splice(i, 1); storeSaved(); buildSaved();
+    });
+    row.append(nm, tm, del);
+    wrap.appendChild(row);
+  });
+}
+
+$('btnSavePose').addEventListener('click', () => {
+  const def = `ポーズ ${savedPoses.length + 1}`;
+  const name = window.prompt('保存する名前', def);
+  if (name === null) return;
+  savedPoses.unshift({ name: name.trim() || def, spec: toSpec(viewer.allAngles()), hands: { ...viewer.handShape }, at: Date.now() });
+  storeSaved();
+  buildSaved();
+  showToast('保存しました');
+});
+
+/** いまの画面を PNG にして、共有シート（写真に保存など）かダウンロードで渡す */
+async function exportImage() {
+  drawGuides();
+  const g = $('guides');
+  const blob = await viewer.snapshotPNG(g.hidden ? null : g);
+  if (!blob) { showToast('画像を作れませんでした'); return; }
+  const d = new Date();
+  const name = `posit-${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}-${String(d.getHours()).padStart(2, '0')}${String(d.getMinutes()).padStart(2, '0')}${String(d.getSeconds()).padStart(2, '0')}.png`;
+  const file = new File([blob], name, { type: 'image/png' });
+  try {
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      await navigator.share({ files: [file], title: 'Posit' });
+      return;
+    }
+  } catch (e) {
+    if (e && e.name === 'AbortError') return;
+  }
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
+  showToast('画像を書き出しました');
+}
+$('btnExportImg').addEventListener('click', () => exportImage());
+
 // ---- 履歴 -----------------------------------------------------------------
 
 function buildHistory() {
@@ -591,8 +821,8 @@ function angleLabel(az, el, mm) {
 // ---- クロッキーの範囲・左右・体型 ----
 const CQ_SIDES = [
   { value: 'random', label: '左右ランダム' },
-  { value: 'L', label: '左だけ' },
-  { value: 'R', label: '右だけ' },
+  { value: 'L', label: '人形の左だけ' },
+  { value: 'R', label: '人形の右だけ' },
 ];
 const CQ_BODIES = [
   { value: 'keep', label: 'いまのまま' },
@@ -650,21 +880,60 @@ function croquisAngle() {
   $('cqAngleText').textContent = [...meta, part ? `${mm}mm` : angleLabel(az, el, mm)].join('・');
 }
 
+// 終わる前の合図（残り 3・2・1 秒で短い音。振動が使える端末は震わせる）
+let audioCtx = null;
+function unlockAudio() {
+  try {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return;
+    if (!audioCtx) audioCtx = new AC();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    // iOS は、ボタンを押したときに一度鳴らしておかないと、あとで音が出ない
+    const o = audioCtx.createOscillator(), gn = audioCtx.createGain();
+    gn.gain.value = 0.0001; o.connect(gn).connect(audioCtx.destination); o.start(); o.stop(audioCtx.currentTime + 0.02);
+  } catch (e) { /* 音が出なくても続行 */ }
+}
+function beep(last) {
+  try {
+    if (navigator.vibrate) navigator.vibrate(last ? [90, 60, 90] : 40);
+    if (!audioCtx) return;
+    const t = audioCtx.currentTime;
+    const o = audioCtx.createOscillator(), gn = audioCtx.createGain();
+    o.type = 'sine';
+    o.frequency.value = last ? 1320 : 880;
+    gn.gain.setValueAtTime(0.0001, t);
+    gn.gain.exponentialRampToValueAtTime(0.22, t + 0.01);
+    gn.gain.exponentialRampToValueAtTime(0.0001, t + (last ? 0.35 : 0.14));
+    o.connect(gn).connect(audioCtx.destination);
+    o.start(t); o.stop(t + 0.4);
+  } catch (e) { /* 続行 */ }
+}
+let lastBeepSec = null;
+
 const croquis = new CroquisSession({
   history,
   onPose: (pose, index) => {
     croquisSetup();
     viewer.applyPose(pose.spec);
+    lastBeepSec = null;
+    // ポーズごとに左右をランダムに反転（同じポーズでも違う向きで描ける）
+    let mirrored = false;
+    if (settings.cqMirror && Math.random() < 0.5) { viewer.mirrorPose(); mirrored = true; }
+    cqMeta.mirror = mirrored;
     const hs = croquisHandShape();
     croquisAngle();
-    history.add({ poseId: pose.id, name: pose.name, spec: pose.spec });
-    $('cqName').textContent = hs ? hs.name : pose.name;
+    history.add({ poseId: pose.id, name: pose.name + (cqMeta.mirror ? '（反転）' : ''), spec: cqMeta.mirror ? toSpec(viewer.allAngles()) : pose.spec });
+    $('cqName').textContent = (hs ? hs.name : pose.name) + (cqMeta.mirror ? '（反転）' : '');
     $('cqIndex').textContent = croquis.count > 0 ? `${index} / ${croquis.count}` : `${index} 枚目`;
   },
   onTick: (remain, total) => {
     const sec = Math.max(0, Math.ceil(remain / 1000));
     $('cqTime').textContent = String(sec);
     $('cqTime').classList.toggle('warn', sec <= 5);
+    if (settings.cqBeep && !croquis.paused && sec <= 3 && sec >= 1 && sec !== lastBeepSec) {
+      lastBeepSec = sec;
+      beep(sec === 1);
+    }
     $('cqFill').style.transform = `scaleX(${Math.max(0, Math.min(1, remain / total))})`;
   },
   onFinish: (done) => {
@@ -679,7 +948,9 @@ let wakeLock = null;
 let beforeCroquis = null;
 
 async function startCroquis() {
+  if (settings.cqBeep) unlockAudio();
   document.body.classList.add('croquis');
+  updateInsets();
   $('croquis').hidden = false;
   viewer.select(null);
   // 出題中だけ見え方を切り替え、終わったら戻す
@@ -710,6 +981,7 @@ async function startCroquis() {
 
 function stopCroquis() {
   document.body.classList.remove('croquis');
+  updateInsets();
   $('croquis').hidden = true;
   if (beforeCroquis) {
     viewer.applyViewMode(beforeCroquis.view);
@@ -747,6 +1019,8 @@ $('cqPause').addEventListener('click', () => {
 $('cqDoneClose').addEventListener('click', () => { $('cqDone').hidden = true; });
 $('cqWire').addEventListener('change', e => { settings.cqWire = e.target.checked; saveSettings(); });
 $('cqHandShape').addEventListener('change', e => { settings.cqHandShape = e.target.checked; saveSettings(); });
+$('cqMirror').addEventListener('change', e => { settings.cqMirror = e.target.checked; saveSettings(); });
+$('cqBeep').addEventListener('change', e => { settings.cqBeep = e.target.checked; saveSettings(); if (e.target.checked) unlockAudio(); });
 
 function buildChips(wrapId, options, isOn, onPick, cls) {
   const wrap = $(wrapId);
@@ -796,6 +1070,8 @@ function buildCroquisChips() {
     o => { settings.cqBody = o.value; saveSettings(); buildCroquisChips(); });
 
   $('cqWire').checked = settings.cqWire;
+  $('cqMirror').checked = settings.cqMirror;
+  $('cqBeep').checked = settings.cqBeep;
 
   buildChips('cqAngle', CQ_ANGLES,
     o => settings.cqAngle === o.value,
@@ -872,9 +1148,9 @@ function buildViewChips() {
     m => m.key === viewer.viewMode,
     m => { if (viewer.applyViewMode(m.key)) buildViewChips(); });
   for (const [i, m] of VIEW_MODES.entries()) {
-    if (m.show.every(k => !viewer.slots[k].loaded)) {
-      $('viewChips').children[i].classList.add('missing');
-    }
+    // 骨格・筋肉のモデルが無くても、モデルのボーンから組み立てて出せるものは使える
+    const ok = viewer.viewModeAvailable ? viewer.viewModeAvailable(m.key) : !m.show.every(k => !viewer.slots[k].loaded);
+    if (!ok) $('viewChips').children[i].classList.add('missing');
   }
 }
 
@@ -944,6 +1220,263 @@ async function loadSample() {
     }
   }
 }
+
+// ---- 骨・筋肉の名前を調べる ------------------------------------------------
+//   タップした所の骨・筋肉の名前（日本語・ラテン語）と説明を出し、その部品を光らせる。
+//   一覧から選んでも光る。左右は人形から見た左右。
+
+const anatomyMod = { REGIONS };
+let anatBefore = null;          // 名前を調べる前の見え方（やめたら戻す）
+let anatKind = 'bone';
+let anatRegion = '';
+
+/** 名前のカードは、人形の頭にかぶらないよう、パネルのすぐ上に出す */
+function placeAnatCard() {
+  const card = $('anatCard');
+  const o = viewer.insets || { bottom: 0, right: 0 };
+  card.style.top = 'auto';
+  card.style.bottom = (o.bottom + 8) + 'px';
+  card.style.left = '10px';
+  card.style.right = 'auto';
+  if (o.right) card.style.width = `min(420px, calc(100vw - ${o.right + 20}px))`;
+  else card.style.width = '';
+}
+function showAnatCard(nm) {
+  const card = $('anatCard');
+  placeAnatCard();
+  if (!nm) {
+    $('anatJa').textContent = '名前を調べる';
+    $('anatLa').textContent = '';
+    $('anatInfo').textContent = '';
+    $('anatMore').innerHTML = '';
+    $('anatHint').hidden = false;
+    card.hidden = !viewer.pickMode || viewer.pickMode !== 'anatomy';
+    return;
+  }
+  $('anatJa').textContent = nm.ja + (nm.part ? '' : '');
+  $('anatLa').textContent = nm.la || '';
+  $('anatInfo').textContent = nm.info || '';
+  const dl = $('anatMore');
+  dl.innerHTML = '';
+  for (const [k, lab] of [['origin', '起始'], ['insertion', '停止'], ['action', 'はたらき']]) {
+    if (!nm[k]) continue;
+    const dt = document.createElement('dt'); dt.textContent = lab;
+    const dd = document.createElement('dd'); dd.textContent = nm[k];
+    dl.append(dt, dd);
+  }
+  $('anatHint').hidden = true;
+  card.hidden = false;
+}
+
+function setAnatomyMode(on) {
+  $('anatOn').checked = on;
+  if (on) {
+    viewer.select(null);
+    viewer.pickMode = 'anatomy';
+    // 骨も筋肉も見えていないときは、骨格を重ねて素体を透かす
+    const muscleView = viewer.viewMode === 'muscle' || viewer.viewMode === 'overlay' || viewer.viewMode === 'bone';
+    if (!muscleView && !viewer.boneViewOn) {
+      anatBefore = { opacity: +$('skinOpacity').value };
+      setCheck('boneView', true);
+      setRange('skinOpacity', Math.min(+$('skinOpacity').value, 0.3));
+    }
+    showAnatCard(null);
+    showToast('骨や筋肉をタップすると名前が出ます');
+  } else {
+    viewer.pickMode = 'joint';
+    viewer.highlightAnatomy(null);
+    $('anatCard').hidden = true;
+    if (anatBefore) {
+      setCheck('boneView', false);
+      setRange('skinOpacity', anatBefore.opacity);
+      anatBefore = null;
+    }
+  }
+}
+viewer.onAnatomy = nm => {
+  showAnatCard(nm);
+  if (!$('anatBox').hidden) buildAnatList();
+};
+viewer.onAnatomyChanged = () => { if (!$('anatBox').hidden) buildAnatList(); };
+$('anatOn').addEventListener('change', e => setAnatomyMode(e.target.checked));
+$('anatClose').addEventListener('click', () => setAnatomyMode(false));
+
+let anatSelected = null;
+function buildAnatList() {
+  const all = viewer.anatomyIndex();
+  const regs = anatomyMod ? anatomyMod.REGIONS : [];
+  const q = kana($('anatSearch').value.trim());
+  const kindList = all.filter(n => n.kind === anatKind);
+  buildChips('anatRegions', [{ key: '', label: 'すべて' }, ...regs.filter(r => kindList.some(n => n.region === r.key)).map(r => ({ key: r.key, label: r.name }))],
+    r => r.key === anatRegion, r => { anatRegion = r.key; buildAnatList(); });
+  const list = kindList.filter(n => (!anatRegion || n.region === anatRegion)
+    && (!q || kana(n.ja).includes(q) || kana(n.la).includes(q)));
+  const order = new Map(regs.map((r, i) => [r.key, i]));
+  list.sort((a, b) => (order.get(a.region) ?? 9) - (order.get(b.region) ?? 9));
+  const wrap = $('anatList');
+  wrap.innerHTML = '';
+  for (const n of list) {
+    const b = document.createElement('button');
+    b.className = 'anatItem' + (anatSelected === n.key ? ' on' : '');
+    const t = document.createElement('b'); t.textContent = n.ja;
+    const l = document.createElement('span'); l.textContent = n.la;
+    b.append(t, l);
+    b.addEventListener('click', () => {
+      anatSelected = n.key;
+      if (viewer.pickMode !== 'anatomy') setAnatomyMode(true);
+      viewer.highlightAnatomy(n.key);
+      showAnatCard(n);
+      $('anatBox').hidden = true;
+    });
+    wrap.appendChild(b);
+  }
+  const none = !all.length;
+  $('anatBoxNote').textContent = none
+    ? '骨格・筋肉がまだ組み立てられていません。「骨格を重ねる」か、表示するモデルで「筋肉」を選ぶと一覧が出ます。'
+    : (anatKind === 'muscle' && !kindList.length
+      ? '筋肉は、表示するモデルで「筋肉」か「重ねて」を選ぶと組み立てられて一覧に出ます。'
+      : `${list.length} 件（左右は人形から見た左右）`);
+}
+function openAnatList() {
+  // 骨格がまだなら組み立てる（一覧に出すため）
+  if (!viewer.anatomyIndex().length) {
+    if (viewer.pickMode !== 'anatomy') setAnatomyMode(true);
+  }
+  $('anatBox').hidden = false;
+  buildAnatList();
+}
+$('btnAnatList').addEventListener('click', openAnatList);
+$('anatListBtn').addEventListener('click', openAnatList);
+$('anatBoxClose').addEventListener('click', () => { $('anatBox').hidden = true; });
+$('anatBox').addEventListener('click', e => { if (e.target === $('anatBox')) $('anatBox').hidden = true; });
+$('anatSearch').addEventListener('input', () => buildAnatList());
+for (const b of document.querySelectorAll('#anatKind button')) {
+  b.addEventListener('click', () => {
+    anatKind = b.dataset.kind; anatRegion = '';
+    for (const x of document.querySelectorAll('#anatKind button')) x.classList.toggle('on', x === b);
+    buildAnatList();
+  });
+}
+
+// ---- 補助線 -------------------------------------------------------------------
+//   頭身の線 … 床から頭ひとつぶんごとの水平線（右に数字）
+//   正中線   … 腰〜胸〜首〜頭をつなぐ体の中心の線（ポーズに付いてくる）
+//   肩と腰の傾き … 左右の肩・左右の股関節を結んだ線を左右へ延ばす
+
+function drawGuides() {
+  const cv = $('guides');
+  const any = settings.guideHeads || settings.guideCenter || settings.guideTilt;
+  cv.hidden = !any || document.body.classList.contains('croquis') && !any;
+  if (!any) return;
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const W = window.innerWidth, H = window.innerHeight;
+  if (cv.width !== Math.round(W * dpr) || cv.height !== Math.round(H * dpr)) { cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr); }
+  const g = cv.getContext('2d');
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.clearRect(0, 0, W, H);
+  const p = viewer.primarySlot;
+  if (!p || !p.skeleton) return;
+  const cam = viewer.camera;
+  const rect = viewer.canvas.getBoundingClientRect();
+  const V = (x, y, z) => new THREE.Vector3(x, y, z);
+  const scr = v => { const q = v.clone().project(cam); return { x: rect.left + (q.x + 1) / 2 * rect.width, y: rect.top + (1 - q.y) / 2 * rect.height, ok: q.z < 1 }; };
+  const pos = k => (p.boneMap[k] ? p.boneMap[k].getWorldPosition(new THREE.Vector3()) : null);
+  const line = (a, b, color, w = 1.5, dash = null) => {
+    if (!a.ok || !b.ok) return;
+    g.strokeStyle = color; g.lineWidth = w; g.setLineDash(dash || []);
+    g.beginPath(); g.moveTo(a.x, a.y); g.lineTo(b.x, b.y); g.stroke();
+  };
+  // 線を画面の端まで延ばす
+  const extend = (a, b, k = 3) => {
+    const dx = b.x - a.x, dy = b.y - a.y;
+    return [{ x: a.x - dx * k, y: a.y - dy * k, ok: true }, { x: b.x + dx * k, y: b.y + dy * k, ok: true }];
+  };
+  const hips = pos('hips');
+  if (settings.guideHeads && hips) {
+    const hh = viewer.visibleHeadHeight();
+    const ratio = viewer.headRatio || viewer.baseHeadRatio || 7.5;
+    // カメラの右向き（水平）に沿って、体の幅より少し長い線を引く
+    const right = new THREE.Vector3().setFromMatrixColumn(cam.matrixWorld, 0); right.y = 0;
+    if (right.lengthSq() < 1e-6) right.set(1, 0, 0);
+    right.normalize();
+    // 頭頂（まっすぐ立ったときの高さ）から下へ、頭ひとつぶんごと。床の線も引く
+    const crown = ratio * hh;
+    const n = Math.floor(ratio + 1e-4);
+    g.font = '600 12px -apple-system, sans-serif';
+    const hline = (y, strong) => {
+      const a = scr(V(hips.x, y, hips.z).addScaledVector(right, -0.42));
+      const b = scr(V(hips.x, y, hips.z).addScaledVector(right, 0.42));
+      line(a, b, strong ? 'rgba(255,196,77,0.9)' : 'rgba(255,196,77,0.55)', strong ? 1.6 : 1.1, strong ? null : [6, 5]);
+    };
+    for (let k = 0; k <= n; k++) hline(crown - k * hh, k === 0);
+    if (crown - n * hh > hh * 0.08) hline(0, true);
+    for (let k = 0; k < Math.ceil(ratio - 1e-4); k++) {
+      const yc = crown - (k + 0.5) * hh;
+      // 番号は線の左端に出す（右上の光の玉にかぶらないように）
+      const mid = scr(V(hips.x, Math.max(yc, (crown - k * hh) / 2), hips.z).addScaledVector(right, -0.42));
+      if (!mid.ok) continue;
+      g.fillStyle = 'rgba(255,196,77,0.85)';
+      g.textAlign = 'right';
+      g.fillText(String(k + 1), mid.x - 6, mid.y + 4);
+      g.textAlign = 'left';
+    }
+  }
+  if (settings.guideCenter) {
+    const keys = ['hips', 'spine', 'chest', 'neck', 'head'].filter(k => p.boneMap[k]);
+    const pts = keys.map(k => scr(pos(k)));
+    // 頭の上へ少し延ばす
+    if (p.boneMap.head) {
+      const hb = p.boneMap.head;
+      const up = new THREE.Vector3(0, 1, 0).applyQuaternion(hb.getWorldQuaternion(new THREE.Quaternion()));
+      pts.push(scr(pos('head').addScaledVector(up, viewer.visibleHeadHeight() * 0.7)));
+    }
+    // 腰の下（恥骨のあたり）まで延ばす
+    if (p.boneMap.thighL && p.boneMap.thighR) {
+      const m = pos('thighL').lerp(pos('thighR'), 0.5);
+      pts.unshift(scr(m));
+    }
+    g.strokeStyle = 'rgba(120,220,255,0.9)'; g.lineWidth = 1.8; g.setLineDash([]);
+    g.beginPath();
+    pts.forEach((q, i) => (i ? g.lineTo(q.x, q.y) : g.moveTo(q.x, q.y)));
+    g.stroke();
+  }
+  if (settings.guideTilt) {
+    for (const [a, b, c] of [['upperArmL', 'upperArmR', 'rgba(255,120,160,0.9)'], ['thighL', 'thighR', 'rgba(160,255,140,0.9)']]) {
+      const A = pos(a), B = pos(b);
+      if (!A || !B) continue;
+      const sa = scr(A), sb = scr(B);
+      const [e1, e2] = extend(sa, sb, 0.6);
+      line(e1, e2, c, 1.6);
+      for (const q of [sa, sb]) { g.fillStyle = c; g.beginPath(); g.arc(q.x, q.y, 3, 0, Math.PI * 2); g.fill(); }
+    }
+  }
+}
+(function guideLoop() {
+  requestAnimationFrame(guideLoop);
+  if (settings.guideHeads || settings.guideCenter || settings.guideTilt) drawGuides();
+  else if (!$('guides').hidden) $('guides').hidden = true;
+})();
+for (const id of ['guideHeads', 'guideCenter', 'guideTilt']) {
+  $(id).checked = settings[id];
+  $(id).addEventListener('change', e => { settings[id] = e.target.checked; saveSettings(); drawGuides(); });
+}
+
+// ---- カメラの向き（左右は人形から見た左右） --------------------------------------
+const CAMS = [
+  { label: '正面', az: 0, el: 4 },
+  { label: '斜め前（左）', az: 40, el: 10 },
+  { label: '斜め前（右）', az: -40, el: 10 },
+  { label: '左横', az: 90, el: 3 },
+  { label: '右横', az: -90, el: 3 },
+  { label: '後ろ', az: 180, el: 6 },
+  { label: '上から', az: 0, el: 68 },
+  { label: '下から（あおり）', az: 15, el: -22 },
+  { label: '真上', az: 0, el: 88 },
+];
+buildChips('camChips', CAMS, () => false, c => {
+  viewer.viewFromAngle(c.az, c.el);
+  showToast('カメラ: ' + c.label + (/[左右]/.test(c.label) ? '（人形から見て）' : ''));
+}, '');
 
 // ---- 各種コントロール ------------------------------------------------------
 
@@ -1027,7 +1560,7 @@ const lightBall = new LightBall($('lightBall'), viewer, {
 $('lightPopMore').addEventListener('click', () => {
   $('lightPop').hidden = true;
   showTab('setting');
-  if (setPager) setPager.go(3);
+  if (setPager) setPager.go(2);
 });
 // 小窓の外を触ったら閉じる
 document.addEventListener('pointerdown', e => {
@@ -1061,7 +1594,7 @@ const FRAMES = [
   { key: 'hand',  label: '手だけ' },
   { key: 'foot',  label: '足だけ' },
 ];
-const SIDES = [{ key: 'L', label: '左' }, { key: 'R', label: '右' }];
+const SIDES = [{ key: 'L', label: '人形の左' }, { key: 'R', label: '人形の右' }];
 
 function buildFrameChips() {
   buildChips('frameChips', FRAMES, f => f.key === viewer.partView,
@@ -1142,7 +1675,9 @@ function resetAllSettings() {
   // クロッキーとパネルの設定
   Object.assign(settings, defaultSettings());
   saveSettings();
-  document.documentElement.style.removeProperty('--sheet-h');
+  setSheetStage(1);
+  setAnatomyMode(false);
+  for (const id of ['guideHeads', 'guideCenter', 'guideTilt']) $(id).checked = false;
   // 体つき
   viewer.setBodyType('neutral');
   viewer.resetHeadRatio();
@@ -1226,7 +1761,10 @@ buildFrameChips();
 buildBodyChips();
 buildLightPresets();
 buildHistory();
+buildSaved();
 syncSliders();
+setSheetStage(settings.sheetStage, false);
+updateInsets();
 loadSample();
 
 $('buildTag').textContent = 'バージョン ' + BUILD;
