@@ -8,7 +8,7 @@ import { LightBall } from './lightBall.js';
 import { REGIONS } from './anatomy.js';
 import * as THREE from 'three';
 
-export const BUILD = '2026-10-06e';
+export const BUILD = '2026-10-07a';
 
 const SAMPLE_URL = 'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r169/examples/models/gltf/Xbot.glb';
 const SETTINGS_KEY = 'posit.settings.v1';
@@ -49,6 +49,7 @@ function loadSettings() {
       guideHeads: !!s.guideHeads,
       guideCenter: !!s.guideCenter,
       guideTilt: !!s.guideTilt,
+      musclePal: !!s.musclePal,
     };
   } catch (e) {
     return defaultSettings();
@@ -58,7 +59,7 @@ function loadSettings() {
 function defaultSettings() {
   return { seconds: 30, count: 10, cqCats: [], cqModel: 'skin', cqFrame: 'full', cqWire: false, cqAngle: 'random',
     cqSide: 'random', cqBody: 'keep', cqHandShape: true, lightBall: true, sheetStage: 1,
-    cqBeep: true, cqMirror: false, guideHeads: false, guideCenter: false, guideTilt: false };
+    cqBeep: true, cqMirror: false, guideHeads: false, guideCenter: false, guideTilt: false, musclePal: false };
 }
 function saveSettings() {
   try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch (e) { /* 続行 */ }
@@ -1299,6 +1300,19 @@ viewer.onAnatomy = nm => {
 };
 viewer.onAnatomyChanged = () => { if (!$('anatBox').hidden) buildAnatList(); };
 $('anatOn').addEventListener('change', e => setAnatomyMode(e.target.checked));
+
+// 筋肉の色分け（筋肉ごとに違う色。腱は白のまま）
+$('musclePal').checked = settings.musclePal;
+viewer.setMusclePalette(settings.musclePal);
+$('musclePal').addEventListener('change', e => {
+  settings.musclePal = e.target.checked; saveSettings();
+  viewer.setMusclePalette(settings.musclePal);
+  const mv = viewer.viewMode === 'muscle' || viewer.viewMode === 'overlay';
+  if (e.target.checked && !mv) {
+    // 筋肉を出していなければ、筋肉の表示に切り替える
+    if (viewer.applyViewMode('muscle')) buildViewChips();
+  }
+});
 $('anatClose').addEventListener('click', () => setAnatomyMode(false));
 
 let anatSelected = null;
@@ -1689,6 +1703,7 @@ function resetAllSettings() {
   setCheck('wireOn', false);
   setCheck('headPlanes', false);
   setCheck('boneView', false);
+  setCheck('musclePal', false);
   setCheck('canonRest', true);
   setCheck('limitsOn', true);
   // 見る範囲とカメラ（ライトの向きはカメラが基準なので先に戻す）

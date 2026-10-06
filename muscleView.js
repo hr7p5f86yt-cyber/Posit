@@ -27,12 +27,70 @@ function slerpDir(a, b, t) {
   return a.clone().multiplyScalar(Math.sin((1 - t) * th) / s).addScaledVector(b, Math.sin(t * th) / s).normalize();
 }
 
-/** 色: 筋肉・腱 */
-function muscleMaterial(tendon) {
+// ---- 色 ----------------------------------------------------------------------
+//   ふだん … 美術解剖の図のように、筋肉は赤橙、腱・腱膜は白っぽいクリーム色
+//   色分け … 筋肉ごとに違う色（左右は同じ色）。腱の部分は白のまま
+export const MUSCLE_RED = new THREE.Color(0xc5583c);
+export const TENDON_WHITE = new THREE.Color(0xeee4d2);
+export const FASCIA_WHITE = 0xe3d7c3;
+
+let fiberTex = null;
+/** 筋線維の細い筋（縦の線）。u（筋肉の幅の向き）に沿って繰り返す */
+function fiberTexture() {
+  if (fiberTex || typeof document === 'undefined') return fiberTex;
+  const W = 64, H = 8;
+  const cv = document.createElement('canvas');
+  cv.width = W; cv.height = H;
+  const g = cv.getContext('2d');
+  const img = g.createImageData(W, H);
+  for (let x = 0; x < W; x++) {
+    // 明るい束と暗い溝が並ぶ。少しずつ太さを変えて機械的に見えないように
+    const t = x / W;
+    const v = 0.80 + 0.20 * Math.pow(Math.abs(Math.sin(Math.PI * (t * 4 + 0.15 * Math.sin(t * 13)))), 0.6);
+    for (let y = 0; y < H; y++) {
+      const i = (y * W + x) * 4;
+      img.data[i] = img.data[i + 1] = img.data[i + 2] = Math.round(255 * v);
+      img.data[i + 3] = 255;
+    }
+  }
+  g.putImageData(img, 0, 0);
+  fiberTex = new THREE.CanvasTexture(cv);
+  fiberTex.wrapS = THREE.RepeatWrapping;
+  fiberTex.wrapT = THREE.RepeatWrapping;
+  fiberTex.colorSpace = THREE.SRGBColorSpace;
+  fiberTex.anisotropy = 4;
+  return fiberTex;
+}
+
+function muscleMaterial() {
   return new THREE.MeshStandardMaterial({
-    color: tendon ? 0xe2d6c4 : 0xb4584c, roughness: tendon ? 0.5 : 0.62, metalness: 0,
-    emissive: 0x000000, side: THREE.DoubleSide,
+    color: 0xffffff, vertexColors: true, map: fiberTexture(),
+    roughness: 0.55, metalness: 0, emissive: 0x000000, side: THREE.DoubleSide,
   });
+}
+
+/** 色分けの色（筋肉の id ごと。隣どうしが似た色にならないよう、色相を黄金角で回す） */
+const PALETTE_ORDER = ['pecMajor', 'deltoidA', 'deltoidM', 'deltoidP', 'biceps', 'brachialis', 'triceps', 'brachiorad',
+  'flexorsFA', 'extensorsFA', 'thenar', 'hypothenar', 'serratus', 'rectusAbd', 'extOblique', 'trapezius', 'latissimus',
+  'erector', 'infraspinatus', 'teresMajor', 'scm', 'temporalis', 'masseter', 'frontalis', 'orbOculi', 'zygomaticus', 'orbOris',
+  'gluteusMax', 'gluteusMed', 'tfl', 'sartorius', 'rectusFem', 'vastusLat', 'vastusMed', 'adductors', 'bicepsFem', 'semitend',
+  'gastroc', 'soleus', 'achilles', 'tibialisAnt', 'peroneus'];
+export function paletteColor(id) {
+  const i = Math.max(0, PALETTE_ORDER.indexOf(id));
+  const h = (i * 137.508) % 360 / 360;
+  return new THREE.Color().setHSL(h, 0.78, 0.47);
+}
+
+/** 色分けの入り切り（頂点の色を差し替える） */
+export function setMusclePalette(meshes, on) {
+  for (const m of meshes) {
+    const g = m.geometry;
+    const c = g && g.attributes.color;
+    const src = g && g.userData[on ? 'colPal' : 'colNat'];
+    if (!c || !src) continue;
+    c.array.set(src);
+    c.needsUpdate = true;
+  }
 }
 
 /**
@@ -152,7 +210,34 @@ export function buildMuscles(slot, extra = {}) {
   // ---- 素体の表面までの距離（芯から外へ） ----------------------------------
   const depth = body.depth;
   const tmpP = V3();
+  // 外から内へ測る: 測る線の先（芯から maxR）から芯へ向かって進み、最初に素体に入った所を表面とする。
+  // 内から外へ測ると、胴の中にある関節の玉などの「中の部品」の表面で止まってしまい、
+  // 筋肉が胸の殻よりずっと奥（肋骨のすぐ外）に置かれてしまうため。
+  // 先がすでに素体の中（腕が胴に触れているなど）のときだけ、内から外へ測る
   const cast = (C, d, maxR) => {
+    tmpP.copy(C).addScaledVector(d, maxR);
+    let dd = depth(tmpP);
+    if (dd <= 0) return castOut(C, d, maxR);
+    let t = maxR;
+    for (let k = 0; k < 120 && t > 0; k++) {
+      const prev = t;
+      t -= Math.max(0.002 * s, dd * 0.8);
+      if (t <= 0) return null;
+      tmpP.copy(C).addScaledVector(d, t);
+      dd = depth(tmpP);
+      if (dd <= 0) {
+        let a = t, b = prev;
+        for (let q = 0; q < 6; q++) {
+          const m = (a + b) / 2;
+          tmpP.copy(C).addScaledVector(d, m);
+          if (depth(tmpP) > 0) b = m; else a = m;
+        }
+        return (a + b) / 2;
+      }
+    }
+    return null;
+  };
+  const castOut = (C, d, maxR) => {
     let t = 0.0015 * s, prev = 0;
     tmpP.copy(C).addScaledVector(d, t);
     let dd = depth(tmpP);
@@ -203,7 +288,10 @@ export function buildMuscles(slot, extra = {}) {
         const yy = clamp(y, prof.ymin, prof.ymax);
         const ha = Math.max(0.04 * s, prof.half(yy)), hb = Math.max(0.04 * s, (prof.front(yy) - prof.back(yy)) / 2);
         const re = 1 / Math.sqrt((Math.sin(a) / ha) ** 2 + (Math.cos(a) / hb) ** 2);
-        maxR = Math.min(maxR, re * 1.12 + 0.012 * s);
+        // 横向き（腕が触れている側）だけ、胴の断面の少し外までに止める。
+        // 前・後ろは止めない（胸の殻の付き方によっては、測った断面より前へ大きく張り出しているため）
+        const side = Math.abs(Math.sin(a));
+        if (side > 0.55) maxR = Math.min(maxR, re * 1.25 + 0.015 * s + (1 - side) * 0.2 * s);
       }
       return { C: V3(cx, y, zc(y)), d: V3(sx * Math.sin(a), el, Math.cos(a)).normalize(), reg: 'trunk', maxR };
     },
@@ -433,7 +521,7 @@ export function buildMuscles(slot, extra = {}) {
     // 粗い格子で測った値を、細かい格子に写す（面をなめらかにする）
     const F = 2, fu = nu * F, fvN = nv * F;
     const fidx = (a, b) => a * (fvN + 1) + b;
-    const top = [], bot = [], fD = [], regA = [], regB = [], cw = [];
+    const top = [], bot = [], fD = [], regA = [], regB = [], cw = [], tendA = [], uvA = [];
     for (let A = 0; A <= fu; A++) {
       const u = A / fu;
       const a0 = Math.min(Math.floor(A / F), nu - 1), ta = A / F - a0;
@@ -460,6 +548,11 @@ export function buildMuscles(slot, extra = {}) {
         const rT = Math.max(0.002 * s, r - dep), rB = Math.max(0.001 * s, rT - th);
         top.push(c.clone().addScaledVector(d, rT));
         bot.push(c.clone().addScaledVector(d, rB));
+        // 腹直筋の腱画（横の白い筋）も腱の色にする
+        let bandW = 0;
+        if (m.bands) for (const q of m.bands) bandW = Math.max(bandW, Math.exp(-(((v - q) / 0.018) ** 2)));
+        tendA.push(m.tendon ? 1 : Math.max(tend, bandW * 0.85));
+        uvA.push(u, v);
         fD.push(d);
         const kn = idx(Math.round(A / F), Math.round(Bf / F));
         regA.push(REGA[kn]); regB.push(REGB[kn]);
@@ -544,14 +637,34 @@ export function buildMuscles(slot, extra = {}) {
         lpos[kk * 3] = vv.x; lpos[kk * 3 + 1] = vv.y; lpos[kk * 3 + 2] = vv.z;
       }
     }
+    // 筋線維の筋の数: 幅 3.5mm ごとに 1 本（真ん中の高さで、幅の両端を測る）
+    const midB = Math.round(fvN / 2);
+    const width = top[fidx(0, midB)].distanceTo(top[fidx(fu, midB)]) + (ring ? 0.05 * s : 0);
+    const reps = Math.max(2, Math.round(width / (0.014 * s)));
+    const uv = new Float32Array(NV * 2), colN = new Float32Array(NV * 3), colP = new Float32Array(NV * 3);
+    const pal = paletteColor(m.id), tmpC = new THREE.Color();
+    for (let k = 0; k < nT; k++) {
+      for (const kk of [k, k + nT]) {
+        uv[kk * 2] = uvA[k * 2] * reps; uv[kk * 2 + 1] = uvA[k * 2 + 1] * 3;
+        // 腱の部分は白へ（腱膜の白っぽさ）
+        const t = tendA[k];
+        tmpC.copy(MUSCLE_RED).lerp(TENDON_WHITE, t);
+        colN[kk * 3] = tmpC.r; colN[kk * 3 + 1] = tmpC.g; colN[kk * 3 + 2] = tmpC.b;
+        tmpC.copy(pal).lerp(TENDON_WHITE, t);
+        colP[kk * 3] = tmpC.r; colP[kk * 3 + 1] = tmpC.g; colP[kk * 3 + 2] = tmpC.b;
+      }
+    }
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.BufferAttribute(lpos, 3));
+    geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+    geo.setAttribute('color', new THREE.BufferAttribute(colN.slice(), 3));
+    geo.userData.colNat = colN; geo.userData.colPal = colP;
     geo.setAttribute('skinIndex', new THREE.BufferAttribute(sIdx, 4));
     geo.setAttribute('skinWeight', new THREE.BufferAttribute(sWgt, 4));
     geo.setIndex(index);
     geo.computeVertexNormals();
     geo.computeBoundingSphere();
-    const mesh = new THREE.SkinnedMesh(geo, muscleMaterial(m.tendon));
+    const mesh = new THREE.SkinnedMesh(geo, muscleMaterial());
     mesh.bind(ref.skeleton, ref.bindMatrix);
     mesh.position.copy(ref.position); mesh.quaternion.copy(ref.quaternion); mesh.scale.copy(ref.scale);
     mesh.frustumCulled = false;
@@ -573,20 +686,22 @@ export function buildMuscles(slot, extra = {}) {
     const S = (id, def) => build({ id, side: sd, ...def });
 
     // 胸・腹 ----------------------------------------------------------------
+    // 大胸筋: 鎖骨の内側半分（鎖骨部）・胸骨（胸肋部）・腹直筋鞘の上（腹部）から、上腕骨へ扇形に集まる
     S('pecMajor', {
-      o: [T(46, ySN + 0.010 * s), T(26, ySN + 0.006 * s), T(6, ySN - 0.012 * s), T(5, ySN - 0.080 * s), T(7, yXiph - 0.004 * s), T(20, yXiph - 0.022 * s)],
-      i: [U('ua', 0.20, 18), U('ua', 0.17, 10), U('ua', 0.14, 4), U('ua', 0.12, -2), U('ua', 0.10, -10), U('ua', 0.08, -18)],
-      nu: 12, nv: 12, thick: 0.014, bulge: 0.004, belly: 0.35, tendons: [0, 0.88],
+      o: [T(50, ySN + 0.016 * s), T(30, ySN + 0.012 * s), T(8, ySN - 0.004 * s), T(5, ySN - 0.060 * s), T(5, yXiph + 0.004 * s), T(16, yXiph - 0.026 * s), T(30, yXiph - 0.034 * s)],
+      i: [U('ua', 0.22, 22), U('ua', 0.19, 14), U('ua', 0.16, 6), U('ua', 0.14, 0), U('ua', 0.12, -8), U('ua', 0.10, -16), U('ua', 0.08, -24)],
+      nu: 14, nv: 12, thick: 0.014, bulge: 0.004, belly: 0.35, tendons: [0, 0.88],
     });
     S('serratus', {
       o: [T(58, ySN - 0.085 * s), T(64, ySN - 0.115 * s), T(70, yXiph - 0.005 * s), T(74, yXiph - 0.035 * s)],
       i: [T(100, ySN - 0.075 * s), T(104, ySN - 0.100 * s), T(108, ySN - 0.125 * s), T(112, ySN - 0.150 * s)],
       nu: 8, nv: 8, thick: 0.006, bulge: 0.002, ubands: [0.25, 0.5, 0.75], groove: 0.003,
     });
+    // 腹直筋: 恥骨から第5〜7肋軟骨へ。上ほど幅広い（片側 6〜7cm）。正中は白線で 1cm ほど空く
     S('rectusAbd', {
-      o: [T(3, yPubis + 0.012 * s), T(11, yPubis + 0.014 * s)],
-      i: [T(4, yXiph + 0.004 * s), T(19, yXiph - 0.012 * s)],
-      via: [T(3, yNavel), T(15, yNavel)],
+      o: [T(2.5, yPubis + 0.012 * s), T(14, yPubis + 0.016 * s)],
+      i: [T(3, yXiph + 0.006 * s), T(17, yXiph - 0.004 * s), T(30, yXiph - 0.030 * s)],
+      via: [T(2.5, yNavel), T(14, yNavel), T(26, yNavel + 0.01 * s)],
       nu: 6, nv: 18, thick: 0.010, bulge: 0.003, belly: 0.6, bands: [0.5, 0.71, 0.88], flat: true,
     });
     S('extOblique', {
@@ -638,9 +753,9 @@ export function buildMuscles(slot, extra = {}) {
       nu: 6, nv: 10, thick: 0.011, bulge: 0.004, belly: 0.35, tendons: [0, 0.9],
     });
     S('biceps', {
-      o: [U('ua', 0.16, -28), U('ua', 0.16, 22)],
-      i: [U('fa', 0.10, -8), U('fa', 0.10, 8)],
-      via: [U('ua', 0.6, -38), U('ua', 0.6, 32)],
+      o: [U('ua', 0.16, -40), U('ua', 0.16, 30)],
+      i: [U('fa', 0.10, -10), U('fa', 0.10, 10)],
+      via: [U('ua', 0.6, -55), U('ua', 0.6, 48)],
       nu: 6, nv: 14, thick: 0.016, bulge: 0.006, belly: 0.62, tendons: [0.12, 0.85],
     });
     S('brachialis', {
@@ -871,7 +986,8 @@ function deepLayer(src, skipBones, inset, pushBack) {
   // シェーダーの中の位置（スキンをかけた後・モデル行列の前）の 1 は、ワールドでメッシュの倍率ぶん
   src.updateWorldMatrix(true, false);
   const ws = new THREE.Vector3().setFromMatrixScale(src.matrixWorld).x || 1;
-  const mat = new THREE.MeshStandardMaterial({ color: 0x7e352e, roughness: 0.7, metalness: 0 });
+  // 筋肉と筋肉のあいだは、腱膜・筋膜の白っぽい色（白線・胸腰筋膜・腸脛靭帯などに見える）
+  const mat = new THREE.MeshStandardMaterial({ color: FASCIA_WHITE, roughness: 0.6, metalness: 0 });
   const u = { value: inset / ws };
   const push = { value: pushBack };
   mat.userData.inset = u;

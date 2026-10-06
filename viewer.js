@@ -10,7 +10,7 @@ import { buildSkeletonView } from './skeletonView.js';
 import { buildHeadPlanes, FIG_HEADS, HEADH_MIN, HEADH_MAX } from './headPlanes.js';
 import { buildBodyMorphs } from './bodyShape.js';
 import { buildBreastParts } from './breastParts.js';
-import { buildMuscles } from './muscleView.js';
+import { buildMuscles, setMusclePalette } from './muscleView.js';
 import { deformFactors, installSegmentScale, setSegment, clearSegments } from './proportions.js';
 // 不具合を調べるときの入り口（画面には出ない）
 if (typeof window !== 'undefined') window.__positTHREE = THREE;
@@ -345,11 +345,17 @@ export class Viewer {
       const slot = this.slots[s.key];
       const b = slot && slot.breast;
       if (!b) continue;
-      const on = this.bodyType === 'female' && b.shell.visible && !!b.shell.parent
-        && this.partView !== 'hand' && this.partView !== 'foot';
+      const notPart = this.partView !== 'hand' && this.partView !== 'foot';
+      // 組み込みの筋肉を出しているときは、乳房を脂肪（乳腺）の色で出す（筋肉の図と同じ）
+      const fat = this.bodyType === 'female' && notPart && slot === this.primarySlot && slot.muscleParts.some(m => m.visible);
+      const on = fat || (this.bodyType === 'female' && b.shell.visible && !!b.shell.parent && notPart);
+      if (fat && !this._fatMat) {
+        this._fatMat = new THREE.MeshStandardMaterial({ color: 0xe9d48c, roughness: 0.6, metalness: 0 });
+      }
+      const want = fat && !b.shell.visible ? this._fatMat : b.shell.material;
       for (const p of b.parts) {
         p.visible = on;
-        if (p.material !== b.shell.material) p.material = b.shell.material;
+        if (p.material !== want) p.material = want;
         p.castShadow = b.shell.castShadow;
         p.receiveShadow = b.shell.receiveShadow;
       }
@@ -1996,12 +2002,23 @@ export class Viewer {
       const skull = [];
       if (slot.skullGroup) slot.skullGroup.traverse(o => { if (o.isMesh) skull.push(o); });
       slot.muscleParts = buildMuscles(slot, { handFrame, skull });
+      if (this.musclePalette) setMusclePalette(slot.muscleParts, true);
     } finally {
       bones.forEach((b, i) => { b.position.copy(saved[i][0]); b.quaternion.copy(saved[i][1]); b.scale.copy(saved[i][2]); b.userData.seg = savedSeg[i]; });
       slot.pivot.updateWorldMatrix(true, true);
     }
     this._applyProportions();
     this._applyClipping();
+  }
+
+  /** 筋肉を種類ごとに色分けするか */
+  setMusclePalette(on) {
+    this.musclePalette = !!on;
+    for (const s of SLOTS) {
+      const slot = this.slots[s.key];
+      setMusclePalette(slot.muscleParts, this.musclePalette);
+      for (const list of Object.values(slot.muscleCache || {})) setMusclePalette(list, this.musclePalette);
+    }
   }
 
   /** 組み込みの筋肉を出すか（筋肉モデルを読み込んでいないときの「筋肉」「重ねて」） */
