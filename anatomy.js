@@ -167,6 +167,7 @@ export const MUSCLES = {
   gluteusMax:   { ja: '大殿筋', la: 'M. gluteus maximus', region: 'pelvis', origin: '腸骨の後ろ・仙骨・尾骨', insertion: '大腿骨の殿筋粗面・腸脛靭帯', action: '脚を後ろへ伸ばす。お尻の丸み' },
   gluteusMed:   { ja: '中殿筋', la: 'M. gluteus medius', region: 'pelvis', origin: '腸骨の外面', insertion: '大腿骨の大転子', action: '脚を横へ開く。片足立ちで骨盤を支える' },
   tfl:          { ja: '大腿筋膜張筋', la: 'M. tensor fasciae latae', region: 'leg', origin: '上前腸骨棘', insertion: '腸脛靭帯', action: '脚を前・横へ上げる' },
+  itBand:       { ja: '腸脛靭帯', la: 'Tractus iliotibialis', region: 'leg', origin: '大腿筋膜張筋・大殿筋の腱', insertion: '脛骨の外側顆（ガーディー結節）', action: '膝の外側を支える。腿の外側の白い帯' },
   sartorius:    { ja: '縫工筋', la: 'M. sartorius', region: 'leg', origin: '上前腸骨棘', insertion: '脛骨の内側（鵞足）', action: 'あぐらをかく動き。太ももを斜めに横切る細長い筋' },
   rectusFem:    { ja: '大腿直筋', la: 'M. rectus femoris', region: 'leg', origin: '下前腸骨棘', insertion: '膝蓋骨・脛骨粗面', action: '膝を伸ばす・脚を前へ上げる' },
   vastusLat:    { ja: '外側広筋', la: 'M. vastus lateralis', region: 'leg', origin: '大腿骨の大転子・粗線', insertion: '膝蓋骨', action: '膝を伸ばす。太ももの外側の張り' },

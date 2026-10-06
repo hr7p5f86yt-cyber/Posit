@@ -73,7 +73,7 @@ function muscleMaterial() {
 const PALETTE_ORDER = ['pecMajor', 'deltoidA', 'deltoidM', 'deltoidP', 'biceps', 'brachialis', 'triceps', 'brachiorad',
   'flexorsFA', 'extensorsFA', 'thenar', 'hypothenar', 'serratus', 'rectusAbd', 'extOblique', 'trapezius', 'latissimus',
   'erector', 'infraspinatus', 'teresMajor', 'scm', 'temporalis', 'masseter', 'frontalis', 'orbOculi', 'zygomaticus', 'orbOris',
-  'gluteusMax', 'gluteusMed', 'tfl', 'sartorius', 'rectusFem', 'vastusLat', 'vastusMed', 'adductors', 'bicepsFem', 'semitend',
+  'gluteusMax', 'gluteusMed', 'tfl', 'itBand', 'sartorius', 'rectusFem', 'vastusLat', 'vastusMed', 'adductors', 'bicepsFem', 'semitend',
   'gastroc', 'soleus', 'achilles', 'tibialisAnt', 'peroneus'];
 export function paletteColor(id) {
   const i = Math.max(0, PALETTE_ORDER.indexOf(id));
@@ -334,7 +334,8 @@ export function buildMuscles(slot, extra = {}) {
       const a = th * DEG;
       const len = A.distanceTo(B);
       // 手足の太さより遠くは測らない（腕を下ろすと前腕の内側が腰に触れていて、測る線が腰の向こうまで抜けるため）
-      const LIMB_R = { ua: 0.075, fa: 0.055, hd: 0.035, th: 0.115, sh: 0.075, ft: 0.06 };
+      // （外から内へ測るので、先が別の体の部分の中なら内から外へ測り直す。女性の腰の張り出しも届くよう腿は長め）
+      const LIMB_R = { ua: 0.09, fa: 0.055, hd: 0.035, th: 0.17, sh: 0.09, ft: 0.06 };
       return { C: A.clone().lerp(B, t), d: fr.f.clone().multiplyScalar(Math.cos(a)).addScaledVector(fr.l, Math.sin(a)).normalize(),
         reg: kind + sd, maxR: Math.min(Math.max(0.05 * s, len * 0.6), (LIMB_R[kind] || 0.1) * s) };
     },
@@ -885,15 +886,24 @@ export function buildMuscles(slot, extra = {}) {
       via: [T(135, yHJ + 0.03 * s), T(150, yHJ - 0.005 * s), T(160, yHJ - 0.04 * s), T(165, yHJ - 0.07 * s)],
       nu: 10, nv: 12, thick: 0.022, bulge: 0.007, belly: 0.45, tendons: [0, 0.9],
     });
+    // 中殿筋: 腸骨稜の前 2/3 から大転子へ扇形に集まる。腰の横の丸みを作る（上は殿筋膜の白に覆われる）
     S('gluteusMed', {
-      o: [T(92, yCrest - 0.008 * s), T(118, yCrest), T(140, yCrest - 0.004 * s)],
-      i: [U('th', -0.04, 85), U('th', -0.04, 100), U('th', -0.03, 115)],
-      nu: 8, nv: 8, thick: 0.012, bulge: 0.004, belly: 0.45, inset: 0.002,
+      o: [T(72, yCrest - 0.012 * s), T(88, yCrest - 0.004 * s), T(112, yCrest + 0.002 * s), T(140, yCrest - 0.006 * s)],
+      i: [U('th', -0.05, 70), U('th', -0.05, 90), U('th', -0.05, 108), U('th', -0.04, 126)],
+      nu: 10, nv: 9, thick: 0.014, bulge: 0.005, belly: 0.45, inset: 0.0015, tendons: [0, 0.9],
     });
+    // 大腿筋膜張筋: 上前腸骨棘から、腿の外側を斜め後ろ下へ。下は腸脛靭帯（白）に続く
     S('tfl', {
-      o: [T(58, yASIS), T(70, yASIS + 0.004 * s)],
-      i: [U('th', 0.28, 78), U('th', 0.28, 92)],
-      nu: 4, nv: 10, thick: 0.010, bulge: 0.003, belly: 0.4, tendons: [0, 0.75],
+      o: [T(54, yASIS + 0.004 * s), T(74, yASIS + 0.010 * s)],
+      i: [U('th', 0.30, 72), U('th', 0.32, 100)],
+      nu: 5, nv: 10, thick: 0.012, bulge: 0.004, belly: 0.4, tendons: [0, 0.8],
+    });
+    // 腸脛靭帯: 大腿筋膜張筋と大殿筋の腱が合わさった白い帯。腿の外側を下りて脛骨の外側（ガーディー結節）へ
+    S('itBand', {
+      o: [U('th', 0.22, 92), U('th', 0.24, 112)],
+      i: [U('sh', 0.03, 62), U('sh', 0.03, 78)],
+      via: [U('th', 0.6, 94), U('th', 0.6, 110)],
+      nu: 3, nv: 14, thick: 0.003, bulge: 0.0012, tendon: true, inset: 0.0006,
     });
     S('sartorius', {
       o: [T(58, yASIS - 0.004 * s), T(62, yASIS - 0.008 * s)],
