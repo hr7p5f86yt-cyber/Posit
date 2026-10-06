@@ -883,9 +883,15 @@ export class Viewer {
     let n = 0;
     const lo = new THREE.Vector3(1e9, 1e9, 1e9);
     const hi = new THREE.Vector3(-1e9, -1e9, -1e9);
+    // 頭のボーンの座標で見た「上」と「前」（体の正面は +z）
+    const hq = head.getWorldQuaternion(new THREE.Quaternion()).invert();
+    const upL = new THREE.Vector3(0, 1, 0).applyQuaternion(hq);
+    const fwL = new THREE.Vector3(0, 0, 1).applyQuaternion(hq);
+    const pts = [];
     const take = () => {
       head.worldToLocal(v).multiplyScalar(hs);      // 頭のボーン基準・メートル
       lo.min(v); hi.max(v); n++;
+      pts.push(v.dot(upL), v.dot(fwL));
     };
 
     // 1) スキンの重みで頭に属する頂点。
@@ -951,6 +957,17 @@ export class Viewer {
       neckRel = head.worldToLocal(nv).multiplyScalar(hs).y;
     }
     const chin = Math.max(lo.y, Math.min(neckRel, hi.y - 1e-3));
+    // 見た目のあご先: 顔の前側の頂点のいちばん下。
+    // 頭の部品は首の受け口（あごの裏）が下へ伸びているので、箱の底はあご先より低い
+    // （サンプル素体で 1.5cm）。頭身はこの見た目のあご先から測らないと、頭が大きく数えられ、
+    // 頭身が設定より高く見える
+    let fMin = Infinity, fMax = -Infinity, topV = -Infinity;
+    for (let k = 0; k < pts.length; k += 2) { fMin = Math.min(fMin, pts[k + 1]); fMax = Math.max(fMax, pts[k + 1]); topV = Math.max(topV, pts[k]); }
+    let chinVis = Infinity;
+    const fCut = fMin + (fMax - fMin) * 0.6;
+    for (let k = 0; k < pts.length; k += 2) if (pts[k + 1] > fCut) chinVis = Math.min(chinVis, pts[k]);
+    if (!isFinite(chinVis) || chinVis < chin) chinVis = chin;
+    if (chinVis > topV - (topV - chin) * 0.5) chinVis = chin;    // 前側が取れないときは箱の底
 
     // 頭のボーンより上に頂点がなければ、拾えているのは頭ではない
     if (!(hi.y > 0) || !(hi.y - chin > 1e-3)) return null;
@@ -958,6 +975,7 @@ export class Viewer {
     return {
       top: hi.y, bottom: lo.y, chin, height: hi.y - lo.y,
       headH: hi.y - chin,
+      visH: topV - chinVis, chinVis,
       half: Math.max(Math.abs(lo.x), Math.abs(hi.x)),
       zc: (lo.z + hi.z) / 2, depth: hi.z - lo.z, count: n,
       source: nSkin && parts.length ? 'スキン＋パーツ' : (nSkin ? 'スキン' : 'パーツ'),
@@ -998,6 +1016,7 @@ export class Viewer {
       const anatH = Math.max(cb * HEADH_MIN,
         Math.min(cb * HEADH_MAX, total / FIG_HEADS));
       slot.headH0 = anatH;
+      slot.visHeadH0 = anatH;
       slot.bodyH0 = total - anatH;
       slot.headRatio0 = total / anatH;
 
@@ -1015,8 +1034,11 @@ export class Viewer {
       if (ok) {
         slot.headH0 = hb2.headH;
         slot.bodyH0 = total - slot.headH0;
-        slot.headRatio0 = total / hb2.headH;
         slot.crownH0 = Math.max(1e-4, hb2.top);
+        // 頭身は、見た目のあご先〜頭頂で数える（頭の箱の底は首の受け口まで含むので使わない）。
+        // headH0（箱の高さ）は、面で捉えた頭部の大きさを決めるのに使うのでそのまま残す
+        slot.visHeadH0 = hb2.visH > hb2.headH * 0.6 ? Math.min(hb2.visH, hb2.headH) : hb2.headH;
+        slot.headRatio0 = total / slot.visHeadH0;
       } else {
         slot.headBox = null;                      // 使わない（殻は骨から決める）
       }
@@ -1116,7 +1138,11 @@ export class Viewer {
     for (const s of SLOTS) {
       const slot = this.slots[s.key];
       if (!slot.skeleton || !slot.restPos) continue;
-      const r0 = Math.max(2, Math.min(12, slot.headRatio0 || 7.5));
+      // 面で捉えた頭部を出しているときは、その殻（あご先〜頭頂）が見た目の頭になる
+      const planesOn = this.headPlanesOn && slot === this.slots.skin
+        && slot.headPlanes && slot.headPlanes.parts.length;
+      const visH = planesOn ? (slot.planesH0 || slot.headH0 || slot.visHeadH0) : (slot.visHeadH0 || slot.headH0);
+      const r0 = Math.max(2, Math.min(12, visH ? (slot.totalH0 || 1.7) / visH : (slot.headRatio0 || 7.5)));
       // スライダーに触っていないときは、読み込んだモデルをそのまま出す
       const untouched = this.headRatio === null;
       const r = untouched ? r0 : Math.max(2, Math.min(12, this.headRatio));
@@ -1154,7 +1180,7 @@ export class Viewer {
         // 首の長さをそのまま縮めると、あごが胸の中に沈む（2 頭身で胸の上が頭に埋まる）。
         // 「あご先〜首の付け根」が表の長さになるように、首の骨の長さを決める
         const neckLen0 = Math.max(1e-4, slot.headBoneY0 - slot.modelFrac.neckY0);
-        const chinOff0 = (slot.headH0 || B) - B;             // 頭のボーンからあご先まで（下向き）
+        const chinOff0 = (visH || B) - B;                    // 頭のボーンから見た目のあご先まで（下向き）
         const chinNeck0 = Math.max(0.004 * T, neckLen0 - chinOff0);
         // 4 頭身より下では、頭を胴にのせる（首がほとんど見えない）。マネキンの首の玉の分だけ詰める
         const sit = Math.max(0, Math.min(1, (4 - r) / 2)) * 0.022 * T;
@@ -1387,6 +1413,13 @@ export class Viewer {
       totalH: slot.totalH0,                      // 背丈（頭の高さ＝背丈÷7.5）
       headH: slot.headH0, neckRel,
     });
+    // 殻の実際の高さ（あご先〜頭頂）。頭身はこの高さで数える
+    {
+      group.updateWorldMatrix(true, true);
+      const bx = new THREE.Box3();
+      group.traverse(o => { if (o.isMesh) bx.expandByObject(o); });
+      slot.planesH0 = bx.isEmpty() ? 0 : bx.max.y - bx.min.y;
+    }
     head.scale.copy(keepHead);
     if (hips && keepHips) hips.scale.copy(keepHips);
     head.updateWorldMatrix(true, false);

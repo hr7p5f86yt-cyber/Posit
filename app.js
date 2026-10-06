@@ -7,7 +7,7 @@ import { CroquisSession, CROQUIS_SECONDS, CROQUIS_COUNTS } from './croquis.js';
 import { LightBall } from './lightBall.js';
 import * as THREE from 'three';
 
-export const BUILD = '2026-10-06b';
+export const BUILD = '2026-10-06c';
 
 const SAMPLE_URL = 'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r169/examples/models/gltf/Xbot.glb';
 const SETTINGS_KEY = 'posit.settings.v1';
