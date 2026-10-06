@@ -295,6 +295,7 @@ export function measureBody(slot) {
   const touched = new Int32Array(nComp);
   let nTouched = 0;
   const near = new Map();          // explain() 用
+  let lastNear = -1;               // 直前に測った点のいちばん近い頂点（どの骨の皮膚かを知るため）
   let keepNear = false;
   const depth = (p) => {
     const px = p.x, py = p.y, pz = p.z;
@@ -324,10 +325,13 @@ export function measureBody(slot) {
       if (minD < Infinity && Math.sqrt(minD) + 0.02 < r * cell) break;
     }
     let best = Infinity;
+    lastNear = -1;
+    let nd = Infinity;
     for (let t = 0; t < nTouched; t++) {
       const i = bestI[touched[t]], i3 = i * 3;
       const sd = (px - pos[i3]) * nor[i3] + (py - pos[i3 + 1]) * nor[i3 + 1] + (pz - pos[i3 + 2]) * nor[i3 + 2];
       if (sd < best) best = sd;
+      if (bestD[touched[t]] < nd) { nd = bestD[touched[t]]; lastNear = i; }
     }
     if (keepNear) {
       near.clear();
@@ -347,7 +351,7 @@ export function measureBody(slot) {
     }
     return out.sort((a, b) => a[1] - b[1]);
   };
-  return { pos, nor, dom, count, depth, explain, cid };
+  return { pos, nor, dom, count, depth, explain, cid, nearest: () => lastNear };
 }
 
 /**

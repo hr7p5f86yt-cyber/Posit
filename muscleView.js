@@ -155,7 +155,8 @@ export function buildMuscles(slot, extra = {}) {
   // 胸の下〜骨盤のあいだは、胸の幅と腰の幅をつないだ線から少しだけくびれる幅まで広げる
   //   （成人のウエストは胸の幅の 8〜9 割。女性はくびれを強めに）
   const waistSag = extra.waistSag ?? 0.07;
-  const wY0 = yHJ + 0.03 * s, wY1 = ySN - 0.11 * s;
+  // 帯は腸骨稜の少し上から（その下は骨盤の部品の形をそのまま使う。広げると腰の横に羽のように出る）
+  const wY0 = yCrest + 0.01 * s, wY1 = ySN - 0.11 * s;
   const halfAt = y => (prof ? prof.half(clamp(y, prof.ymin, prof.ymax)) : 0.13 * s);
   const wH0 = halfAt(wY0), wH1 = halfAt(wY1);
   /** その高さで、胴の横幅の半分がこれより細くならない値（くびれの帯の外では 0） */
@@ -238,6 +239,35 @@ export function buildMuscles(slot, extra = {}) {
   }
   if (!REG.neck.size) REG.neck = REG.trunk;
 
+  // ---- 皮下脂肪の厚み（筋肉は皮膚のこの分だけ内側にある） ---------------------
+  //   成人の目安（cm）。女性は腰・お尻・腿の外側・二の腕の後ろが厚い。
+  //   素体の外形は皮膚なので、筋肉はこの分だけ細く・小さく見えるのが解剖学どおり
+  const FAT = {
+    male:    { chest: 0.4, belly: 1.0, hip: 1.0, th: 0.6, sh: 0.35, ua: 0.4, fa: 0.25, neck: 0.3 },
+    female:  { chest: 0.6, belly: 1.6, hip: 3.0, th: 1.8, sh: 0.7, ua: 0.9, fa: 0.4, neck: 0.4 },
+    neutral: { chest: 0.5, belly: 1.2, hip: 1.5, th: 1.0, sh: 0.5, ua: 0.6, fa: 0.3, neck: 0.35 },
+  }[extra.bodyType || 'neutral'] || null;
+  const yNavel0 = J.thighL ? lerp(J.thighL.y - 0.025 * s, (J.upperArmL ? J.upperArmL.y : J.hips.y + 0.4 * s) - 0.15 * s, 0.52) : J.hips.y;
+  /** その点の皮下脂肪（m）。reg … 体の部分、y … 高さ、t … 手足の付け根 0〜先 1 */
+  const fatAt = (reg, y, t = 0.5) => {
+    if (!FAT) return 0;
+    const k = reg.replace(/[LR]$/, '');
+    let cm = 0;
+    if (k === 'trunk') {
+      const hipY = J.thighL ? J.thighL.y : J.hips.y;
+      cm = y < hipY + 0.06 * s ? FAT.hip : y < yNavel0 ? lerp(FAT.hip, FAT.belly, smooth((y - hipY - 0.06 * s) / (0.08 * s)))
+        : lerp(FAT.belly, FAT.chest, smooth((y - yNavel0) / (0.12 * s)));
+    } else if (k === 'th') cm = lerp(FAT.hip, FAT.th * 0.7, smooth(t));      // 付け根ほど厚く、膝の上は薄い
+    else if (k === 'sh') cm = lerp(FAT.sh, FAT.sh * 0.5, smooth(t));
+    else if (k === 'ua') cm = FAT.ua;
+    else if (k === 'fa') cm = lerp(FAT.fa, FAT.fa * 0.4, smooth(t));
+    else if (k === 'neck') cm = FAT.neck;
+    return cm * 0.01 * s;
+  };
+  // 骨 → 体の部分（深い層の頂点に使う）
+  const regOfBone = new Map();
+  for (const [k, set] of Object.entries(REG)) for (const b of set) if (!regOfBone.has(b) || k !== 'trunk') regOfBone.set(b, k);
+
   // ---- 素体の表面までの距離（芯から外へ） ----------------------------------
   const depth = body.depth;
   const tmpP = V3();
@@ -245,17 +275,36 @@ export function buildMuscles(slot, extra = {}) {
   // 内から外へ測ると、胴の中にある関節の玉などの「中の部品」の表面で止まってしまい、
   // 筋肉が胸の殻よりずっと奥（肋骨のすぐ外）に置かれてしまうため。
   // 先がすでに素体の中（腕が胴に触れているなど）のときだけ、内から外へ測る
-  const cast = (C, d, maxR) => {
+  //   入った所が、その筋肉の体の部分（とその隣の骨）の皮膚でなければ、別の部分（腿の横に下ろした手など）
+  //   なので、そのまま奥へ進む。そうしないと腿の筋肉が手の表面まで太って見える
+  const allowCache = {};
+  const allowOf = reg => {
+    if (allowCache[reg]) return allowCache[reg];
+    const set = new Set();
+    for (const b of (REG[reg] || REG.trunk)) {
+      set.add(b);
+      if (b.parent && b.parent.isBone) set.add(b.parent);
+      for (const c of b.children) if (c.isBone) set.add(c);
+    }
+    if (reg === 'trunk') { for (const k of ['thighL', 'thighR', 'neck', 'head']) if (map[k]) set.add(map[k]); }
+    return (allowCache[reg] = set);
+  };
+  const cast = (C, d, maxR, reg) => {
     tmpP.copy(C).addScaledVector(d, maxR);
     let dd = depth(tmpP);
     if (dd <= 0) return castOut(C, d, maxR);
+    const allow = reg && body.nearest ? allowOf(reg) : null;
     let t = maxR;
-    for (let k = 0; k < 120 && t > 0; k++) {
+    for (let k = 0; k < 160 && t > 0; k++) {
       const prev = t;
       t -= Math.max(0.002 * s, dd * 0.8);
       if (t <= 0) return null;
       tmpP.copy(C).addScaledVector(d, t);
       dd = depth(tmpP);
+      if (dd <= 0 && allow) {
+        const ni = body.nearest();
+        if (ni >= 0 && body.dom[ni] && !allow.has(body.dom[ni])) { dd = 0.002 * s; continue; }
+      }
       if (dd <= 0) {
         let a = t, b = prev;
         for (let q = 0; q < 6; q++) {
@@ -336,8 +385,10 @@ export function buildMuscles(slot, extra = {}) {
       // 手足の太さより遠くは測らない（腕を下ろすと前腕の内側が腰に触れていて、測る線が腰の向こうまで抜けるため）
       // （外から内へ測るので、先が別の体の部分の中なら内から外へ測り直す。女性の腰の張り出しも届くよう腿は長め）
       const LIMB_R = { ua: 0.09, fa: 0.055, hd: 0.035, th: 0.17, sh: 0.09, ft: 0.06 };
-      return { C: A.clone().lerp(B, t), d: fr.f.clone().multiplyScalar(Math.cos(a)).addScaledVector(fr.l, Math.sin(a)).normalize(),
-        reg: kind + sd, maxR: Math.min(Math.max(0.05 * s, len * 0.6), (LIMB_R[kind] || 0.1) * s) };
+      return { t, C: A.clone().lerp(B, t), d: fr.f.clone().multiplyScalar(Math.cos(a)).addScaledVector(fr.l, Math.sin(a)).normalize(),
+        // 腿の内側は、股をはさんで反対の腿があるので短く（越えると反対の腿の皮膚で止まる）
+        reg: kind + sd, maxR: Math.min(Math.max(0.05 * s, len * 0.6), (LIMB_R[kind] || 0.1) * s,
+          kind === 'th' && Math.sin(a) < -0.3 ? 0.085 * s : Infinity) };
     },
     N: (t, th) => {
       const fr = frameOf(neckA, neckB, sx, 'neck');
@@ -353,7 +404,7 @@ export function buildMuscles(slot, extra = {}) {
     const f = clamp(u, 0, 1) * (pts.length - 1);
     const i = Math.min(pts.length - 2, Math.floor(f)), t = f - i;
     const a = pts[i], b = pts[i + 1];
-    return { C: a.C.clone().lerp(b.C, t), d: slerpDir(a.d, b.d, t), reg: t < 0.5 ? a.reg : b.reg, maxR: lerp(a.maxR, b.maxR, t) };
+    return { C: a.C.clone().lerp(b.C, t), d: slerpDir(a.d, b.d, t), reg: t < 0.5 ? a.reg : b.reg, maxR: lerp(a.maxR, b.maxR, t), t: lerp(a.t ?? 0.5, b.t ?? 0.5, t) };
   };
 
   // ---- スキンの重みを写すための、素体の頂点の一覧 --------------------------
@@ -469,7 +520,7 @@ export function buildMuscles(slot, extra = {}) {
     if (!o.length || !ii.length) return;
     const ring = !!m.ring;                         // 輪の筋（眼輪筋・口輪筋）
     // 線維ごとの芯と向き
-    const C = [], D = [], R = [], REGA = [], REGB = [], REGM = [];
+    const C = [], D = [], R = [], REGA = [], REGB = [], REGM = [], REGO = [];
     for (let a = 0; a <= nu; a++) {
       const u = a / nu;
       const O = along(o, u), I = along(ii, u), M = via ? along(via, u) : null;
@@ -486,7 +537,13 @@ export function buildMuscles(slot, extra = {}) {
           c = O.C.clone().lerp(I.C, v); d = slerpDir(O.d, I.d, v); maxR = lerp(O.maxR, I.maxR, v);
         }
         C.push(c); D.push(d);
-        let r = cast(c, d, maxR);
+        let r = cast(c, d, maxR, v < 0.5 ? O.reg : I.reg);
+        // 皮下脂肪の分だけ内側へ
+        if (r !== null && !m.noFat) {
+          const tt = M ? (v < 0.5 ? lerp(O.t ?? 0.5, M.t ?? 0.5, v * 2) : lerp(M.t ?? 0.5, I.t ?? 0.5, v * 2 - 1)) : lerp(O.t ?? 0.5, I.t ?? 0.5, v);
+          const f = lerp(fatAt(O.reg, c.y, O.t ?? tt), fatAt(I.reg, c.y, I.t ?? tt), smooth(v));
+          r = Math.max(0.004 * s, r - f);
+        }
         // 頭の側の端（付け根か付く先が頭）ほど、頭蓋骨の上の高さへ寄せる
         const hw = (O.reg === 'head' ? 1 - v : 0) + (I.reg === 'head' ? v : 0);
         if (hw > 0 && skullMeshes.length) {
@@ -499,13 +556,14 @@ export function buildMuscles(slot, extra = {}) {
         }
         // 腰のくびれを埋める（胴の点だけ。芯が胴の中心にある線維）
         if ((O.reg === 'trunk' || I.reg === 'trunk') && Math.abs(c.x - cx) < 0.02 * s) {
-          const rw = waistR(c.y, d);
-          if (rw && (r === null || r < rw)) r = rw;
+          const rw = waistR(c.y, d) - fatAt('trunk', c.y);
+          if (rw > 0 && (r === null || r < rw)) r = rw;
         }
         stats.rays++;
         R.push(r);
         // 付け根が上の骨にあっても、筋肉の腹が下の骨の上にあるもの（前腕の筋・腓腹筋）は skinFrom で下の骨から拾う
         REGA.push(m.skinFrom ? m.skinFrom + O.reg.slice(-1) : O.reg); REGB.push(I.reg); REGM.push(M ? M.reg : null);
+        REGO.push(O.reg);
       }
     }
     const idx = (a, b) => a * (nv + 1) + b;
@@ -576,7 +634,9 @@ export function buildMuscles(slot, extra = {}) {
         const ee = e * ev;
         const bl = ring ? 1 : bellyAt(v);
         let dep = inset + groove * Math.pow(1 - ee, 1.5) - bulge * ee * bl;
-        if (m.bands) for (const q of m.bands) dep += 0.0035 * s * Math.exp(-(((v - q) / 0.025) ** 2)) * e;
+        // 筋肉の腹は皮膚より 1.5mm までしか外へ出さない（ふくらみを足すと、腿などが素体より太って見える）
+        dep = Math.max(dep, -(m.over ?? 0.0015) * s);
+        if (m.bands) for (const q of m.bands) dep += 0.002 * s * Math.exp(-(((v - q) / 0.02) ** 2)) * e;
         if (m.ubands) for (const q of m.ubands) dep += 0.004 * s * Math.exp(-(((u - q) / 0.035) ** 2)) * bl;
         // 腱のところ（両端）はやや沈め、薄くする
         const tend = m.tendons ? Math.max(smooth((m.tendons[0] - v) / 0.08), smooth((v - m.tendons[1]) / 0.08)) : 0;
@@ -635,7 +695,10 @@ export function buildMuscles(slot, extra = {}) {
       //   線維のどこにあるかで、付け根・途中・付く先のどの体の部分の皮膚から拾うかを決める
       const v = (k % (nv + 1)) / nv;
       let rA = REGA[k], rB = REGB[k], t;
-      if (REGM[k]) {
+      if (m.skinFrom && REGO[k] !== REGA[k] && v < 0.3) {
+        // 付け根（肘・膝の上の骨）のごく近くだけ、付け根の骨の皮膚も混ぜる（深く曲げても肘から飛び出さない）
+        rA = REGO[k]; rB = REGA[k]; t = smooth((v - 0.03) / 0.2);
+      } else if (REGM[k]) {
         if (v < 0.5) { rB = REGM[k]; t = smooth((v - 0.15) / 0.2); }
         else { rA = REGM[k]; t = smooth((v - 0.65) / 0.2); }
       } else t = smooth((v - 0.3) / 0.4);
@@ -736,15 +799,16 @@ export function buildMuscles(slot, extra = {}) {
     });
     // 腹直筋: 恥骨から第5〜7肋軟骨へ。上ほど幅広い（片側 6〜7cm）。正中は白線で 1cm ほど空く
     S('rectusAbd', {
-      o: [T(2.5, yPubis + 0.012 * s), T(14, yPubis + 0.016 * s)],
-      i: [T(3, yXiph + 0.006 * s), T(17, yXiph - 0.004 * s), T(30, yXiph - 0.030 * s)],
-      via: [T(2.5, yNavel), T(14, yNavel), T(26, yNavel + 0.01 * s)],
+      o: [T(2.5, yPubis + 0.012 * s), T(13, yPubis + 0.016 * s)],
+      i: [T(3, yXiph + 0.006 * s), T(22, yXiph - 0.008 * s)],
+      via: [T(2.5, yNavel), T(17, yNavel)],
       nu: 6, nv: 18, thick: 0.010, bulge: 0.003, belly: 0.6, bands: [0.5, 0.71, 0.88], flat: true,
     });
+    // 外腹斜筋: 第5〜12肋骨の外側から前下へ。前（腹直筋の手前）と下は白い腱膜になって白線・鼠径靭帯へ
     S('extOblique', {
-      o: [T(42, ySN - 0.105 * s), T(62, yXiph + 0.01 * s), T(80, yXiph - 0.06 * s), T(92, yCrest + 0.05 * s)],
-      i: [T(21, yXiph - 0.030 * s), T(21, yNavel + 0.01 * s), T(28, yPubis + 0.055 * s), T(78, yCrest + 0.004 * s)],
-      nu: 9, nv: 10, thick: 0.009, bulge: 0.003, belly: 0.55, flat: true,
+      o: [T(60, ySN - 0.125 * s), T(62, yXiph + 0.01 * s), T(80, yXiph - 0.06 * s), T(92, yCrest + 0.05 * s)],
+      i: [T(23, yXiph - 0.030 * s), T(23, yNavel + 0.01 * s), T(30, yPubis + 0.055 * s), T(78, yCrest + 0.004 * s)],
+      nu: 9, nv: 10, thick: 0.009, bulge: 0.003, belly: 0.55, flat: true, tendons: [0, 0.8],
     });
     // 背中 ------------------------------------------------------------------
     S('trapezius', {
@@ -756,9 +820,11 @@ export function buildMuscles(slot, extra = {}) {
       o: [T(179, ySN - 0.14 * s), T(179, ySN - 0.22 * s), T(179, yCrest + 0.04 * s), T(160, yCrest + 0.004 * s), T(130, yCrest)],
       i: [U('ua', 0.15, -95), U('ua', 0.14, -105), U('ua', 0.13, -115), U('ua', 0.12, -125), U('ua', 0.11, -135)],
       via: [T(150, ySN - 0.10 * s), T(146, ySN - 0.15 * s), T(128, yXiph - 0.01 * s), T(110, yXiph - 0.04 * s), T(98, yXiph - 0.06 * s)],
-      nu: 12, nv: 14, thick: 0.009, bulge: 0.003, belly: 0.45, flat: true,
+      nu: 12, nv: 14, thick: 0.009, bulge: 0.003, belly: 0.45, flat: true, tendons: [0.22, 1.01],
     });
+    // 脊柱起立筋は、腰では胸腰筋膜（白いひし形）に覆われているので、腱膜の色で出す
     S('erector', {
+      tendon: true,
       o: [T(176, ySacrum), T(166, ySacrum + 0.01 * s)],
       i: [T(176, ySN - 0.06 * s), T(162, ySN - 0.06 * s)],
       nu: 4, nv: 14, thick: 0.012, bulge: 0.002, inset: 0.0045, belly: 0.3,
@@ -890,20 +956,20 @@ export function buildMuscles(slot, extra = {}) {
     S('gluteusMed', {
       o: [T(72, yCrest - 0.012 * s), T(88, yCrest - 0.004 * s), T(112, yCrest + 0.002 * s), T(140, yCrest - 0.006 * s)],
       i: [U('th', -0.05, 70), U('th', -0.05, 90), U('th', -0.05, 108), U('th', -0.04, 126)],
-      nu: 10, nv: 9, thick: 0.014, bulge: 0.005, belly: 0.45, inset: 0.0015, tendons: [0, 0.9],
+      nu: 10, nv: 9, thick: 0.014, bulge: 0.005, belly: 0.45, inset: 0.0015, tendons: [0.22, 0.9],
     });
     // 大腿筋膜張筋: 上前腸骨棘から、腿の外側を斜め後ろ下へ。下は腸脛靭帯（白）に続く
     S('tfl', {
       o: [T(54, yASIS + 0.004 * s), T(74, yASIS + 0.010 * s)],
-      i: [U('th', 0.30, 72), U('th', 0.32, 100)],
-      nu: 5, nv: 10, thick: 0.012, bulge: 0.004, belly: 0.4, tendons: [0, 0.8],
+      i: [U('th', 0.24, 76), U('th', 0.26, 100)],
+      nu: 5, nv: 10, thick: 0.012, bulge: 0.004, belly: 0.4, tendons: [0, 0.8], over: 0.0024,
     });
     // 腸脛靭帯: 大腿筋膜張筋と大殿筋の腱が合わさった白い帯。腿の外側を下りて脛骨の外側（ガーディー結節）へ
     S('itBand', {
       o: [U('th', 0.22, 92), U('th', 0.24, 112)],
       i: [U('sh', 0.03, 62), U('sh', 0.03, 78)],
       via: [U('th', 0.6, 94), U('th', 0.6, 110)],
-      nu: 3, nv: 14, thick: 0.003, bulge: 0.0012, tendon: true, inset: 0.0006,
+      nu: 3, nv: 14, thick: 0.003, bulge: 0.0012, tendon: true, inset: -0.0038, over: 0.004,
     });
     S('sartorius', {
       o: [T(58, yASIS - 0.004 * s), T(62, yASIS - 0.008 * s)],
@@ -929,8 +995,9 @@ export function buildMuscles(slot, extra = {}) {
       via: [U('th', 0.75, -28), U('th', 0.72, -78)],
       nu: 5, nv: 12, thick: 0.018, bulge: 0.006, belly: 0.72, tendons: [0, 0.9],
     });
+    // 内転筋群: 恥骨・坐骨の下から腿の内側へ（股の真ん中で左右が交わらないよう、付け根は腿の内側の上）
     S('adductors', {
-      o: [U('th', 0.0, -50), U('th', 0.0, -100), U('th', 0.04, -140)],
+      o: [U('th', 0.07, -60), U('th', 0.07, -95), U('th', 0.09, -130)],
       i: [U('th', 0.65, -70), U('th', 0.68, -95), U('th', 0.70, -125)],
       nu: 8, nv: 12, thick: 0.016, bulge: 0.004, belly: 0.35, ubands: [0.5],
     });
@@ -994,7 +1061,8 @@ export function buildMuscles(slot, extra = {}) {
   // 素体の表面を少し内側へ縮め、視線の奥へ 1.4cm 押しやったものを暗い筋肉の色で敷く。すき間から骨や向こう側が
   // 見えて穴に見えるのを防ぎ、筋肉の境目が「溝」として読めるようにする。頭は骨を見せるので除く。
   for (const m of skins) {
-    const deep = deepLayer(m, headSet, 0.002 * s, 0.014 * s, { waistR, zc, cx, trunk: trunkBones, under: 0.010 * s });
+    const deep = deepLayer(m, headSet, 0.002 * s, 0.014 * s, { waistR, zc, cx, trunk: trunkBones, under: 0.010 * s,
+      fat: (bone, y) => { const k = regOfBone.get(bone); return k ? fatAt(k, y, 0.5) : 0; } });
     if (deep) { out.push(deep); stats.deep = (stats.deep || 0) + 1; }
   }
   slot.muscleDebug = { ...stats, ms: Math.round(performance.now() - T0) };
@@ -1025,6 +1093,7 @@ function deepLayer(src, skipBones, inset, pushBack, fill = null) {
   const g = new THREE.BufferGeometry();
   for (const [k, v] of Object.entries(g0.attributes)) g.setAttribute(k, v);
   // 腰のくびれを埋める（胴の外を向いた頂点だけ、くびれを埋めた幅まで外へ出す）。この層だけの位置を持つ
+  let fatM = null;
   if (fill) {
     src.updateWorldMatrix(true, false);
     src.skeleton.update();
@@ -1036,7 +1105,12 @@ function deepLayer(src, skipBones, inset, pushBack, fill = null) {
     const P = new THREE.Vector3(), Nw = new THREE.Vector3(), dir = new THREE.Vector3(), dl = new THREE.Vector3();
     const nm = new THREE.Matrix3().getNormalMatrix(src.matrixWorld);
     let moved = 0;
+    fatM = new Float32Array(n);
     for (let i = 0; i < n; i++) {
+      if (fill.fat) {
+        src.getVertexPosition(i, P); P.applyMatrix4(src.matrixWorld);
+        fatM[i] = fill.fat(dom[i], P.y);
+      }
       if (!fill.trunk.has(dom[i])) continue;
       src.getVertexPosition(i, P); P.applyMatrix4(src.matrixWorld);
       dir.set(P.x - fill.cx, 0, P.z - fill.zc(P.y));
@@ -1045,7 +1119,7 @@ function deepLayer(src, skipBones, inset, pushBack, fill = null) {
       dir.divideScalar(rho);
       // 筋肉の面より 1cm ほど内側まで（筋肉の下に隠れるように）
       const rt0 = fill.waistR(P.y, dir);
-      const rt = rt0 ? rt0 - fill.under : 0;
+      const rt = rt0 ? rt0 - fill.under - fatM[i] : 0;
       if (!rt || rt <= rho) continue;
       if (N0) { Nw.fromBufferAttribute(N0, i).applyMatrix3(nm).normalize(); if (Nw.dot(dir) < 0.3) continue; }
       // ワールドでの移動を、スキン前の形での移動に直す
@@ -1075,6 +1149,10 @@ function deepLayer(src, skipBones, inset, pushBack, fill = null) {
   // 筋肉と筋肉のあいだは、腱膜・筋膜の白っぽい色（白線・胸腰筋膜・腸脛靭帯などに見える）
   const mat = new THREE.MeshStandardMaterial({ color: FASCIA_WHITE, roughness: 0.6, metalness: 0 });
   const u = { value: inset / ws };
+  // 皮下脂肪の分も内側へ（頂点ごと）
+  const fatL = new Float32Array(n);
+  if (fatM) for (let i = 0; i < n; i++) fatL[i] = fatM[i] / ws;
+  g.setAttribute('fatInset', new THREE.BufferAttribute(fatL, 1));
   const push = { value: pushBack };
   mat.userData.inset = u;
   mat.userData.push = push;
@@ -1084,8 +1162,8 @@ function deepLayer(src, skipBones, inset, pushBack, fill = null) {
     sh.uniforms.deepInset = u;
     sh.uniforms.deepPush = push;
     sh.vertexShader = sh.vertexShader
-      .replace('void main() {', 'uniform float deepInset;\nuniform float deepPush;\nvoid main() {')
-      .replace('#include <skinning_vertex>', '#include <skinning_vertex>\n  transformed -= normalize(objectNormal) * deepInset;')
+      .replace('void main() {', 'uniform float deepInset;\nuniform float deepPush;\nattribute float fatInset;\nvoid main() {')
+      .replace('#include <skinning_vertex>', '#include <skinning_vertex>\n  transformed -= normalize(objectNormal) * (deepInset + fatInset);')
       .replace('#include <project_vertex>', '#include <project_vertex>\n  mvPosition.xyz += normalize(mvPosition.xyz) * deepPush;\n  gl_Position = projectionMatrix * mvPosition;');
   };
   mat.customProgramCacheKey = () => 'posit-deep-muscle';

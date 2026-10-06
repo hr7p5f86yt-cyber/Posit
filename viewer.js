@@ -2003,7 +2003,7 @@ export class Viewer {
       if (slot.skullGroup) slot.skullGroup.traverse(o => { if (o.isMesh) skull.push(o); });
       // 腰のくびれの強さ（女性は強め、男性は弱め）
       const waistSag = { male: 0.05, female: 0.14, neutral: 0.08 }[this.bodyType] ?? 0.08;
-      slot.muscleParts = buildMuscles(slot, { handFrame, skull, waistSag });
+      slot.muscleParts = buildMuscles(slot, { handFrame, skull, waistSag, bodyType: this.bodyType });
       if (this.musclePalette) setMusclePalette(slot.muscleParts, true);
     } finally {
       bones.forEach((b, i) => { b.position.copy(saved[i][0]); b.quaternion.copy(saved[i][1]); b.scale.copy(saved[i][2]); b.userData.seg = savedSeg[i]; });
@@ -2161,10 +2161,19 @@ export class Viewer {
         if (this.onAnatomyChanged) this.onAnatomyChanged();
       }, 40);
     }
+    // 組み込みの筋肉を出しているときは、胴の骨（背骨・肋骨・骨盤・肩甲骨）は筋肉と脂肪の下に隠れるので出さない。
+    // 筋肉の層を皮下脂肪の分だけ内側に置くので、出したままだと腰骨などが白く透けて見える
+    const musc = this.viewMode === 'muscle' && this.showBuiltinMuscle;
+    const trunk = new Set();
+    if (musc && p) for (const k of ['hips', 'spine', 'chest', 'shoulderL', 'shoulderR']) if (p.boneMap[k]) trunk.add(p.boneMap[k]);
+    if (musc && p && p.boneMap.chest) {
+      // 背骨の途中の骨（spine1・spine2 など）も
+      for (let b = p.boneMap.chest; b && b !== p.boneMap.hips; b = b.parent) if (b.isBone) trunk.add(b);
+    }
     for (const s of SLOTS) {
       const slot = this.slots[s.key];
       const show = on && slot === p;
-      for (const part of slot.boneParts) part.visible = show;
+      for (const part of slot.boneParts) part.visible = show && !(musc && trunk.has(part.userData.jointBone));
     }
   }
 
