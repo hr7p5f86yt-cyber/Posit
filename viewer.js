@@ -9,6 +9,7 @@ import { parseSpec, parseFingerSpec } from './poses.js';
 import { buildSkeletonView } from './skeletonView.js';
 import { buildHeadPlanes, FIG_HEADS, HEADH_MIN, HEADH_MAX } from './headPlanes.js';
 import { buildBodyMorphs } from './bodyShape.js';
+import { buildBreastParts } from './breastParts.js';
 import { deformFactors, installSegmentScale, setSegment, clearSegments } from './proportions.js';
 // 不具合を調べるときの入り口（画面には出ない）
 if (typeof window !== 'undefined') window.__positTHREE = THREE;
@@ -286,6 +287,7 @@ export class Viewer {
       try {
         this._followPart();
         this.controls.update();
+        this._syncBreasts();
         this._updateClipPlane();
         const bone = this.selected ? this._boneForJoint(this.selected) : null;
         if (bone) bone.getWorldPosition(this.marker.position);
@@ -302,6 +304,27 @@ export class Viewer {
       }
     };
     tick();
+  }
+
+  /**
+   * 乳房の部品を、胸の殻に合わせる（女性のときだけ出す。質感・透明・影・面の線も殻と同じにする）。
+   * 見え方の切り替えは色々な所で殻の material や visible を変えるので、毎フレーム写す
+   */
+  _syncBreasts() {
+    for (const s of SLOTS) {
+      const slot = this.slots[s.key];
+      const b = slot && slot.breast;
+      if (!b) continue;
+      const on = this.bodyType === 'female' && b.shell.visible && !!b.shell.parent
+        && this.partView !== 'hand' && this.partView !== 'foot';
+      for (const p of b.parts) {
+        p.visible = on;
+        if (p.material !== b.shell.material) p.material = b.shell.material;
+        p.castShadow = b.shell.castShadow;
+        p.receiveShadow = b.shell.receiveShadow;
+      }
+      for (const w of b.wires) w.visible = on && this.wireOn;
+    }
   }
 
   // ---- スロット -----------------------------------------------------------
@@ -560,6 +583,16 @@ export class Viewer {
       guard('体つきのモーフ', () => buildBodyMorphs(slot, {
         handFrame: { L: this._handFrame(slot, 'L'), R: this._handFrame(slot, 'R') },
       }));
+      // 女性の乳房は、胸の殻を変形せず、別の部品として胸にのせる
+      guard('乳房の部品', () => {
+        if (slot.breast) for (const m of [...slot.breast.parts, ...slot.breast.wires]) if (m.parent) m.parent.remove(m);
+        if (!this._breastWireMat) {
+          this._breastWireMat = new THREE.MeshBasicMaterial({
+            color: 0x11141a, wireframe: true, transparent: true, opacity: 0.6, depthWrite: false,
+          });
+        }
+        slot.breast = buildBreastParts(slot, { wireMaterial: this._breastWireMat });
+      });
       guard('骨格の生成', () => this._buildBoneView(slot));
     }
 

@@ -20,7 +20,6 @@
 // 違いが見て分かるよう、平均値の差を少し強めに（およそ 1.5 倍）出している。
 // それでも成人の個人差の範囲（平均 ± 2 標準偏差）には収まる量にしてある。
 import * as THREE from 'three';
-import { refineMesh, skinnedWorld } from './meshRefine.js';
 
 /** 変形の量。m … 男性、f … 女性。体の大きさ（身長 1.70m 換算）に対する割合 */
 export const SHAPE = {
@@ -29,7 +28,6 @@ export const SHAPE = {
   waist:    { m: 0.04, f: -0.15 },   // ウエスト
   hip:      { m: -0.08, f: 0.17 },   // 腰（大転子）の横幅
   legShift: { m: -0.06, f: 0.085 },  // 脚の付け根の左右位置
-  breast:   { f: 0.05, r: 0.09 },  // 乳房の前への張り出し・土台の半径
   pec:      { m: 0.020 },            // 大胸筋の厚み
   trap:     { m: 0.016 },            // 僧帽筋（首の付け根から肩への盛り上がり）
   glute:    { m: 0.008, f: -0.036 }, // 臀部（マイナスが後ろへ張り出す）
@@ -144,51 +142,9 @@ export function buildBodyMorphs(slot, opts = {}) {
     hands[sd] = { bone: hb, set, hf, c, palmLen, fseg };
   }
 
-  // 胸のまわりの三角形を細かく分ける（素体の胸は頂点がまばらで、丸いふくらみを表せないため）。
-  // 1 回目は胸全体、2 回目は乳房のあたりだけ。腕・頭・脚に引っ張られる三角形は分けない
-  {
-    const zcR = J.chest ? J.chest.z : J.hips.z;
-    for (const m of meshes) {
-      const bones0 = m.skeleton.bones;
-      const isTrunk = (g, v) => {
-        const si = g.attributes.skinIndex, sw = g.attributes.skinWeight;
-        let wt = 0;
-        for (let k = 0; k < 4; k++) {
-          const w = sw.getComponent(v, k);
-          if (!w) continue;
-          const b = bones0[si.getComponent(v, k)];
-          if (!head.has(b) && !armL.has(b) && !armR.has(b) && !legL.has(b) && !legR.has(b)) wt += w;
-        }
-        return wt > 0.5;
-      };
-      // 乳房の下（肋骨の下のふち）までは分けない。背中を大きく曲げたとき、分けた頂点が
-      // スキンのかかり方で少し内へ沈み、骨格（肋軟骨）が透けるため
-      // 正中（胸骨の前）は分けない（前かがみで胸骨が透けるため。谷間は左右のふくらみで決まる）
-      for (const [lo, hi, hx, mid] of [[0.07, 0.14, 0.16, 0.025], [0.055, 0.1, 0.13, 0.025]]) {
-        refineMesh(m, (a, b, c, Wp) => {
-          const x = (Wp[a * 3] + Wp[b * 3] + Wp[c * 3]) / 3;
-          const y = (Wp[a * 3 + 1] + Wp[b * 3 + 1] + Wp[c * 3 + 1]) / 3;
-          const z = (Wp[a * 3 + 2] + Wp[b * 3 + 2] + Wp[c * 3 + 2]) / 3;
-          if (y < yBreast - lo * s || y > yBreast + hi * s || Math.abs(x - cx) > hx * s || z < zcR) return false;
-          if (Math.abs(x - cx) < mid * s) return false;
-          return isTrunk(m.geometry, a) && isTrunk(m.geometry, b) && isTrunk(m.geometry, c);
-        });
-      }
-    }
-  }
-
-  // 胸の殻を持つメッシュ: 乳頭の高さでいちばん前に出ているもの（関節の玉などの別メッシュは除く）
-  let shellMesh = null;
-  {
-    let best = -Infinity;
-    for (const m of meshes) {
-      const Wm = skinnedWorld(m), Nm = m.geometry.attributes.position.count;
-      for (let i = 0; i < Nm; i++) {
-        if (Math.abs(Wm[i * 3 + 1] - yBreast) > 0.02 * s || Math.abs(Wm[i * 3] - cx) > 0.06 * s) continue;
-        if (Wm[i * 3 + 2] > best) { best = Wm[i * 3 + 2]; shellMesh = m; }
-      }
-    }
-  }
+  // 乳房は別の部品として作る（breastParts.js）。ここでは胸の殻そのものは変形しない
+  const zc0 = J.chest ? J.chest.z : J.hips.z;
+  slot.bodyLandmarks = { s, cx, yBreast, ySN, zc: zc0, floor, H };
 
   const v = V3(), n = V3(), M = new THREE.Matrix4(), tmp = new THREE.Matrix4();
   for (const m of meshes) {
@@ -223,286 +179,23 @@ export function buildBodyMorphs(slot, opts = {}) {
     tg.computeVertexNormals();
     const wn = tg.attributes.normal.array;
 
-    // 胸の殻のふち（下側・脇側で内へ巻き込んでいる縁）を探す。
-    // 乳房のふくらみがこの縁まで届くと、縁がめくれて内側が見え、横がえぐれたように見える。
-    // ふくらみは縁の手前でなめらかに消す（乳房の下のしわ＝乳房下溝と同じ位置になる）。
-    const zc0 = J.chest ? J.chest.z : J.hips.z;
-    const rim = [];
-    for (let i = 0; i < N; i++) {
-      const x = wp[i * 3], y = wp[i * 3 + 1], z = wp[i * 3 + 2];
-      if (y < yBreast - 0.24 * s || y > yBreast + 0.08 * s || z < zc0 - 0.02 * s) continue;
-      if (Math.abs(x - cx) > 0.2 * s) continue;
-      const ny = wn[i * 3 + 1], nz = wn[i * 3 + 2];
-      // 下を向いた面＝ふちの裏側。
-      // （殻の内張りは胸全体の裏にあるので含めない。内張りは表と同じだけ動くので、めくれない）
-      if (ny < -0.45 && nz > -0.6) rim.push(x, y, z);
-    }
-    const rimDist = (x, y, z) => {
-      let best = Infinity;
-      for (let k = 0; k < rim.length; k += 3) {
-        const d = (rim[k] - x) ** 2 + (rim[k + 1] - y) ** 2 + (rim[k + 2] - z) ** 2;
-        if (d < best) best = d;
-      }
-      return Math.sqrt(best);
-    };
-
-    // ---- 胸: 女性は乳房、男性は大胸筋の厚み ----
-    //   面の向き（法線）で効き方を決めると、横を向いた面（脇の下側）だけ押し出されずに
-    //   えぐれたように見える。そこで「胴の中心より前にあるか」という位置で効き方を決め、
-    //   最後に面のつながりに沿ってならして、しわや段差を消す。
+    // 男性の大胸筋の厚み（胴に引っ張られる頂点、胴の中心より前にあるものだけ）
     const chestF = new Float32Array(N * 3), chestM = new Float32Array(N * 3);
-    const trunkW = new Float32Array(N);
     for (let i = 0; i < N; i++) {
-      let wt = 0;
+      let wT = 0;
       for (let k = 0; k < 4; k++) {
         const w = sw.getComponent(i, k);
         if (!w) continue;
         const b = bones[si.getComponent(i, k)];
-        if (!head.has(b) && !armL.has(b) && !armR.has(b) && !legL.has(b) && !legR.has(b)) wt += w;
+        if (!head.has(b) && !armL.has(b) && !armR.has(b) && !legL.has(b) && !legR.has(b)) wT += w;
       }
-      trunkW[i] = wt;
-    }
-    const R = SHAPE.breast.r * s;
-    // 胸のかごを、乳頭の高さの楕円の筒とみなす（幅と奥行きを実測）。
-    // 乳房はこの筒の面から外へふくらむので、ふくらませる向きは筒の面の向き（法線）にする。
-    // 一つの向きに押し出すと、横を向いた面まで前へ引き出されて、上下から見たときに横が壁になる
-    let chestA = 0.15 * s, chestFront = 0.12 * s;
-    {
-      // 乳頭の高さで、胸の前半分の頂点だけを使う（脇の下や背中は胸より幅が広い）。
-      // 肩の付け根の頂点がまじることがあるので、いちばん外ではなく 9 割の位置を半幅とする
-      const xs = [];
-      let az = 0;
-      for (let i = 0; i < N; i++) {
-        if (trunkW[i] < 0.9) continue;
-        const y = wp[i * 3 + 1];
-        if (Math.abs(y - (yBreast - 0.01 * s)) > 0.012 * s) continue;
-        if (wp[i * 3 + 2] < zc0 + 0.03 * s) continue;
-        xs.push(Math.abs(wp[i * 3] - cx));
-        az = Math.max(az, wp[i * 3 + 2] - zc0);
-      }
-      xs.sort((p, q) => p - q);
-      const ax = xs.length ? xs[Math.floor(xs.length * 0.9)] : 0;
-      if (ax > 0.05 * s) chestA = ax;
-      if (az > 0.04 * s) chestFront = az;
-    }
-    slot.bodyShapeInfo = { chestA, chestFront, s };
-    // 乳房の位置と幅は胸の幅に合わせる（人の平均値を cm で当てると、胸の細い素体では
-    // 乳房の外半分が胴の横へはみ出し、上下から見たときに横が壁になる）。
-    //   乳頭 … 正中から胸の半幅の約半分（鎖骨中線）
-    //   土台 … 内側は胸骨のふち（半幅の 2 割弱）、外側は前腋窩線（胸の横へ少し回り込む）
-    const nipX = 0.5 * chestA;
-    const Rx = 0.75 * chestA;
-    const wallN = (x, z) => {
-      const v = V3((x - cx) / (chestA * chestA), 0, Math.max(0, z - zc0) / (chestFront * chestFront));
-      return v.lengthSq() > 1e-12 ? v.normalize() : V3(0, 0, 1);
-    };
-    for (let i = 0; i < N; i++) {
-      const wT = trunkW[i];
       if (wT <= 0) continue;
       const x = wp[i * 3], y = wp[i * 3 + 1], z = wp[i * 3 + 2];
-      if (Math.abs(y - yBreast) > 0.25 * s) continue;
-      let front = smooth((z - zc0) / (0.075 * s)) * wT;
-      // 殻のふちに近いところは動かさない（ふちから 3.5cm かけて効き始める）
-      // ふちの近くは丸く巻き込むように（直線的に減らすと角ができる）
-      if (front > 0 && rim.length) {
-        const t = Math.max(0, Math.min(1, (rimDist(x, y, z) - 0.004 * s) / (0.045 * s)));
-        // ふちは動かさない。素体の殻のふちは V 字なので、ふちを引き出すと
-        // 乳房の下内側が V に沿って下へとがる（下極の角は、あとで形そのものをならして丸める）
-        front *= 1 - (1 - t) ** 2.5;
-      }
+      const front = smooth((z - zc0) / (0.075 * s)) * wT;
       if (front <= 0) continue;
       for (const sx of [1, -1]) {
-        // ---- 乳房（乳腺と脂肪のふくらみ） ----
-        // 付け根（乳房の土台）は胸壁の上: 上は第2肋骨、下は第6肋骨（乳房下溝）、
-        // 内側は胸骨のふち、外側は前腋窩線。上外側は脇の下へ少し伸びる（スペンス腋窩尾部）。
-        // 乳頭は第4肋間で、土台の中心より少し下（上極 45%：下極 55%）。
-        // 横から見ると、上極は鎖骨の下からほぼまっすぐな斜面、下極は丸く張り、乳頭で滑らかにつながる。
-        // 肋骨のかごが丸いので、ふくらみは真正面でなく外へ 15° ほど向く。
-        const bx = cx + sx * nipX;                // 乳頭の位置（鎖骨中線のあたり）
-        const by = yBreast + 0.004 * s;
-        let dx = (x - bx) * sx;                   // + が外側
-        let dy = y - by;                          // + が上
-        // 土台を脇の下へ向けて少し傾ける（腋窩尾部）。
-        // 傾けすぎると下内側が谷間の下へ伸び、下向きのとがりに見えるので控えめに
-        const tc = Math.cos(0.18), ts = Math.sin(0.18);
-        const ex = dx * tc + dy * ts, ey = -dx * ts + dy * tc;
-        // 広がりは向きで滑らかに変える（符号で切り替えると、頂点を通る折れ目ができて尖って見える）
-        const sxMix = smooth(ex / (0.9 * Rx) * 0.5 + 0.5);   // 0 = 内側、1 = 外側
-        const syMix = smooth(ey / (0.9 * R) * 0.5 + 0.5);    // 0 = 下、1 = 上
-        const u = ex / (Rx * (0.7 + (1.0 - 0.7) * sxMix));
-        const v = ey / (R * (0.62 + (1.34 - 0.62) * syMix));
-        const r = Math.hypot(u, v);
-        if (r < 1) {
-          // 形 = 左右方向の丸み × 上下方向の形。どちらも頂で傾き 0、しかも頂の近くは丸い。
-          //   左右 … 丸い弧（上から見ても尖らない）
-          //   上   … 頂の近くは丸く、離れるとまっすぐな斜面（上極の直線）
-          //   下   … 丸く張る（下極）
-          // r^1.7 のような関数は傾きは 0 でも頂の曲がりが急すぎて、断面が三角に尖る
-          const soft = (t, c) => 1 - (Math.sqrt(t * t + c * c) - c) / (Math.sqrt(1 + c * c) - c);
-          const hu = soft(Math.min(1, Math.abs(u)), 0.75);
-          const vv = Math.min(1, Math.abs(v));
-          const gUp = soft(vv, 0.35);
-          const gLo = Math.pow(Math.max(0, 1 - vv * vv), 0.7);
-          const prof = hu * (gLo + (gUp - gLo) * syMix);
-          // 縁は下極ほど狭くして、丸いまま乳房下溝へ巻き込む
-          const a = prof * smooth((1 - r) / (0.25 + 0.15 * syMix)) * front;
-          // 向き: 前へ、外へ 15°（下へは押さない。下へ押すと垂れて見える）
-          // 頂（乳頭のあたり）は乳房の軸の向き、縁へいくほど胸のかごの面の向きへ。
-          // こうすると内側・外側・上下の縁が、胸の丸みに沿って丸くふくらむ
-          const axis = V3(sx * 0.27, -0.01, 1).normalize();
-          const wn2 = wallN(x, z);
-          wn2.y = -0.01;
-          const kAxis = Math.max(0, 1 - r * r);
-          const dir = wn2.normalize().lerp(axis, 0.35 + 0.45 * kAxis).normalize()
-            .multiplyScalar(SHAPE.breast.f * s * a);
-          chestF[i * 3] += dir.x; chestF[i * 3 + 1] += dir.y; chestF[i * 3 + 2] += dir.z;
-        }
-        if (sx === 1) {
-          // 谷間: 胸骨の前は平らで、乳房より低い。素体の胸の殻は真ん中が尾根のように出ているので、
-          // 女性では胸骨の前を少し下げて、左右のふくらみが分かれて見えるようにする
-          const cl = Math.exp(-(((x - cx) / (0.03 * s)) ** 2)) * bump(y, yBreast - 0.01 * s, 0.07 * s);
-          chestF[i * 3 + 2] -= 0 * cl * front;   // 谷間は左右のふくらみだけで作る（下げると胸骨が透ける）
-        }
         const pr = Math.hypot(x - (cx + sx * 0.078 * s), (y - (yBreast + 0.03 * s)) * 0.9) / (0.105 * s);
         if (pr < 1) chestM[i * 3 + 2] += SHAPE.pec.m * s * smooth(1 - pr) * front;
-      }
-    }
-    // 面のつながりに沿ってならす（同じ位置にある頂点は 1 つとみなす）
-    {
-      const id = new Int32Array(N), keyOf = new Map();
-      for (let i = 0; i < N; i++) {
-        const k = Math.round(wp[i * 3] * 2e4) + ',' + Math.round(wp[i * 3 + 1] * 2e4) + ',' + Math.round(wp[i * 3 + 2] * 2e4);
-        let v = keyOf.get(k);
-        if (v === undefined) { v = keyOf.size; keyOf.set(k, v); }
-        id[i] = v;
-      }
-      const U = keyOf.size;
-      const nb = Array.from({ length: U }, () => new Set());
-      const idx = g.index ? g.index.array : null;
-      const T = idx ? idx.length : N;
-      for (let t = 0; t < T; t += 3) {
-        const a = id[idx ? idx[t] : t], b = id[idx ? idx[t + 1] : t + 1], c = id[idx ? idx[t + 2] : t + 2];
-        nb[a].add(b); nb[a].add(c); nb[b].add(a); nb[b].add(c); nb[c].add(a); nb[c].add(b);
-      }
-      const free = new Uint8Array(U);
-      for (let i = 0; i < N; i++) {
-        const y = wp[i * 3 + 1], x = wp[i * 3];
-        // ならすのは殻のふちと脇の近くだけ（谷間とふくらみの頂は形を残す）
-        if (trunkW[i] > 0.3 && Math.abs(y - yBreast) < 0.24 * s && Math.abs(x - cx) < 0.25 * s
-          && wp[i * 3 + 2] > zc0 - 0.03 * s && Math.abs(x - cx) > 0.03 * s
-          && rim.length && rimDist(x, y, wp[i * 3 + 2]) < 0.12 * s) free[id[i]] = 1;
-      }
-      // ならした分の効き具合（ふちの近くで 1、離れると 0。ならす範囲の縁が筋にならないように）
-      const wRim = new Float32Array(N);
-      for (let i = 0; i < N; i++) {
-        if (!free[id[i]]) continue;
-        const x = wp[i * 3], y = wp[i * 3 + 1];
-        wRim[i] = smooth((0.11 * s - rimDist(x, y, wp[i * 3 + 2])) / (0.04 * s)) * smooth((Math.abs(x - cx) - 0.03 * s) / (0.02 * s));
-      }
-      for (const arr of [chestF, chestM]) {
-        let cur = new Float32Array(U * 3), cnt = new Float32Array(U);
-        for (let i = 0; i < N; i++) { const u = id[i]; cur[u * 3] += arr[i * 3]; cur[u * 3 + 1] += arr[i * 3 + 1]; cur[u * 3 + 2] += arr[i * 3 + 2]; cnt[u]++; }
-        for (let u = 0; u < U; u++) if (cnt[u] > 1) { cur[u * 3] /= cnt[u]; cur[u * 3 + 1] /= cnt[u]; cur[u * 3 + 2] /= cnt[u]; }
-        // 胸のまわりは頂点を 4〜16 倍に増やしてあるので、そのぶん回数を多くして同じ広さをならす
-        for (let it = 0; it < 24; it++) {
-          const nx = cur.slice();
-          for (let u = 0; u < U; u++) {
-            if (!free[u] || !nb[u].size) continue;
-            let ax = 0, ay = 0, az = 0;
-            for (const w of nb[u]) { ax += cur[w * 3]; ay += cur[w * 3 + 1]; az += cur[w * 3 + 2]; }
-            const k = 1 / nb[u].size;
-            nx[u * 3] = 0.5 * cur[u * 3] + 0.5 * ax * k;
-            nx[u * 3 + 1] = 0.5 * cur[u * 3 + 1] + 0.5 * ay * k;
-            nx[u * 3 + 2] = 0.5 * cur[u * 3 + 2] + 0.5 * az * k;
-          }
-          cur = nx;
-        }
-        for (let i = 0; i < N; i++) {
-          const u = id[i], k = wRim[i];
-          if (!k) continue;
-          arr[i * 3] += (cur[u * 3] - arr[i * 3]) * k;
-          arr[i * 3 + 1] += (cur[u * 3 + 1] - arr[i * 3 + 1]) * k;
-          arr[i * 3 + 2] += (cur[u * 3 + 2] - arr[i * 3 + 2]) * k;
-        }
-      }
-
-      // 乳房下溝: 実際の胸では、乳房の下のしわは乳房の真下がいちばん低く、胸骨へ向かって上がる（左右で W 字）。
-      // 素体の胸の殻は下のふちが V 字で、真ん中（みぞおち）がいちばん低い。乳房をのせると下内側が V に沿って
-      // 下へとがって見えるので、女性では殻の下の真ん中を持ち上げて W 字にする。
-      // 殻の外側・内張り・ふちを同じだけ動かすため、殻とつながった頂点（同じ部品）だけを動かす
-      {
-        // 殻の部品: 乳頭の高さで、いちばん前にある頂点から面のつながりをたどる
-        let seed = -1, best = -Infinity;
-        for (let i = 0; i < N; i++) {
-          if (trunkW[i] < 0.9 || Math.abs(wp[i * 3 + 1] - yBreast) > 0.02 * s) continue;
-          if (Math.abs(wp[i * 3] - cx) > 0.06 * s) continue;
-          if (wp[i * 3 + 2] > best) { best = wp[i * 3 + 2]; seed = i; }
-        }
-        if (seed >= 0 && m === shellMesh) {
-          const inShell = new Uint8Array(U);
-          const stack = [id[seed]]; inShell[id[seed]] = 1;
-          while (stack.length) {
-            const u = stack.pop();
-            for (const w of nb[u]) if (!inShell[w]) { inShell[w] = 1; stack.push(w); }
-          }
-          for (let i = 0; i < N; i++) {
-            if (!inShell[id[i]]) continue;
-            const x = wp[i * 3], y = wp[i * 3 + 1];
-            const lift = 0.022 * s * Math.exp(-(((x - cx) / (0.055 * s)) ** 2))
-              * smooth((yBreast - 0.04 * s - y) / (0.09 * s));
-            chestF[i * 3 + 1] += lift;
-          }
-        }
-      }
-
-      // 乳房の下極: 素体の胸の殻は、下のふちが角ばっている（中性でも横から見ると角がある）。
-      // ふくらみを足すだけだとこの角が乳房の下に残り、とがって見える。
-      // そこで女性の形そのもの（元の位置＋ふくらみ）を、下極とふちのまわりだけ
-      // Taubin 法でならして角を丸める（ふつうにならすと全体がやせるので、縮めて戻す 2 段でならす）
-      const lowFree = new Uint8Array(U);
-      for (let i = 0; i < N; i++) {
-        const x = wp[i * 3], y = wp[i * 3 + 1], z = wp[i * 3 + 2];
-        const ax = Math.abs(x - cx);
-        if (trunkW[i] > 0.3 && ax > 0.01 * s && ax < 0.19 * s && z > zc0 - 0.02 * s
-          && y < yBreast + 0.09 * s && y > yBreast - 0.17 * s) lowFree[id[i]] = 1;
-      }
-      const P = new Float32Array(U * 3), cntP = new Float32Array(U);
-      for (let i = 0; i < N; i++) {
-        const u = id[i];
-        for (let k = 0; k < 3; k++) P[u * 3 + k] += wp[i * 3 + k] + chestF[i * 3 + k];
-        cntP[u]++;
-      }
-      for (let u = 0; u < U; u++) if (cntP[u] > 1) for (let k = 0; k < 3; k++) P[u * 3 + k] /= cntP[u];
-      const P0 = P.slice();
-      let Q = P;
-      for (let it = 0; it < 48; it++) {
-        const lam = it % 2 ? -0.53 : 0.5;
-        const nx = Q.slice();
-        for (let u = 0; u < U; u++) {
-          if (!lowFree[u] || !nb[u].size) continue;
-          let ax = 0, ay = 0, az = 0;
-          for (const w of nb[u]) { ax += Q[w * 3]; ay += Q[w * 3 + 1]; az += Q[w * 3 + 2]; }
-          const k = 1 / nb[u].size;
-          nx[u * 3] = Q[u * 3] + lam * (ax * k - Q[u * 3]);
-          nx[u * 3 + 1] = Q[u * 3 + 1] + lam * (ay * k - Q[u * 3 + 1]);
-          nx[u * 3 + 2] = Q[u * 3 + 2] + lam * (az * k - Q[u * 3 + 2]);
-        }
-        Q = nx;
-      }
-      for (let i = 0; i < N; i++) {
-        const u = id[i];
-        if (!lowFree[u]) continue;
-        // ならした分は、効かせる範囲の縁で 0 になるように重みをかける（ならす範囲の縁が筋になるのを防ぐ）
-        const x = wp[i * 3], y = wp[i * 3 + 1];
-        const ax = Math.abs(x - cx);
-        const wl = smooth((yBreast + 0.06 * s - y) / (0.07 * s)) * smooth((y - (yBreast - 0.16 * s)) / (0.03 * s))
-          * smooth((ax - 0.012 * s) / (0.02 * s)) * smooth((0.185 * s - ax) / (0.03 * s));
-        // 内へ削る向きの分は捨てる（角は外へ肉を足して丸める。削ると肋骨が透ける）
-        const dn = wallN(x, wp[i * 3 + 2]);
-        let ddx = Q[u * 3] - P0[u * 3], ddy = Q[u * 3 + 1] - P0[u * 3 + 1], ddz = Q[u * 3 + 2] - P0[u * 3 + 2];
-        const inward = ddx * dn.x + ddz * dn.z;
-        if (inward < 0) { ddx -= inward * dn.x; ddz -= inward * dn.z; }
-        chestF[i * 3] += ddx * wl; chestF[i * 3 + 1] += ddy * wl; chestF[i * 3 + 2] += ddz * wl;
       }
     }
 
