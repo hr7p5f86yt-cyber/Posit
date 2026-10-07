@@ -23,11 +23,11 @@ import * as THREE from 'three';
 
 /** 変形の量。m … 男性、f … 女性。体の大きさ（身長 1.70m 換算）に対する割合 */
 export const SHAPE = {
-  shoulder: { m: 0.17, f: -0.11 },   // 肩まわりの横幅（三角筋・僧帽筋）
+  shoulder: { m: 0.17, f: -0.06 },   // 肩まわりの横幅（三角筋・僧帽筋）
   lat:      { m: 0.09, f: 0 },       // 胸郭の横幅（広背筋）。男性の逆三角形
-  waist:    { m: 0.04, f: -0.15 },   // ウエスト
-  hip:      { m: -0.08, f: 0.17 },   // 腰（大転子）の横幅
-  legShift: { m: -0.06, f: 0.085 },  // 脚の付け根の左右位置
+  waist:    { m: 0.07, f: -0.10 },   // ウエスト
+  hip:      { m: -0.08, f: 0.07 },   // 腰（大転子）の横幅
+  legShift: { m: -0.06, f: 0.04 },  // 脚の付け根の左右位置
   pec:      { m: 0.020 },            // 大胸筋の厚み
   trap:     { m: 0.016 },            // 僧帽筋（首の付け根から肩への盛り上がり）
   glute:    { m: 0.008, f: -0.036 }, // 臀部（マイナスが後ろへ張り出す）
@@ -35,18 +35,30 @@ export const SHAPE = {
   upperArm: { m: 0.21, f: -0.12 },
   forearm:  { m: 0.15, f: -0.10 },
   wrist:    { m: 0.06, f: -0.08 },   // 前腕の手首寄りにさらに足す
-  thigh:    { m: 0.06, f: 0.10 },    // 男性は膝寄り、女性は付け根寄りを太く
+  thigh:    { m: 0.06, f: 0.07 },    // 男性は膝寄り、女性は付け根寄りを太く
   shin:     { m: 0.12, f: -0.05 },
-  neck:     { m: 0.22, f: -0.14 },
+  neck:     { m: 0.22, f: -0.08 },
   palmW:    { m: 0.09, f: -0.07 },   // 掌の幅
   palmT:    { m: 0.13, f: -0.08 },   // 掌の厚み
   finger:   { m: 0.15, f: -0.14 },   // 指の太さ（女性は先ほど細く）
   knuckle:  { m: 0.0034, f: -0.0012 }, // 拳の山（中手骨頭）・指の関節の出っぱり（m。男性は骨ばって目立ち、女性はなだらか）
 };
 
+/**
+ * どの体型にもかける土台の補正。サンプル素体（球体関節の人形）は、胸の殻とお腹の玉のあいだが
+ * 関節で細く、ウエストの横幅が身長の 0.11 しかない（人の成人は 0.16〜0.18）。
+ * 人形らしさを残しつつ、絵の参考として不自然に見えない程度まで、ウエストを横・前後に広げる。
+ */
+export const BASE = {
+  waistW: 0.48,     // ウエストの横幅を何割広げるか（いちばん細い所で。上下へなだらかに弱める）
+  waistD: 0.18,     // 前後の厚み
+  width: 0.072,     // 効かせる高さの幅（m・身長 1.70m 換算）
+};
+
 const V3 = (x = 0, y = 0, z = 0) => new THREE.Vector3(x, y, z);
 const bump = (y, c, w) => Math.exp(-(((y - c) / w) ** 2));          // なだらかな山
 const smooth = t => { const u = Math.max(0, Math.min(1, t)); return u * u * (3 - 2 * u); };
+const lerp = (a, b, t) => a + (b - a) * t;
 
 /** 骨とその先の骨の集合 */
 function subtree(b) {
@@ -155,6 +167,33 @@ export function buildBodyMorphs(slot, opts = {}) {
   const zc0 = J.chest ? J.chest.z : J.hips.z;
   slot.bodyLandmarks = { s, cx, yBreast, ySN, zc: zc0, floor, H };
 
+  // ---- 土台の補正: いちばん細い高さ（胸の殻とお腹の玉のあいだ）を探す ----
+  const isTrunk = b => !head.has(b) && !armL.has(b) && !armR.has(b) && !legL.has(b) && !legR.has(b);
+  const zw = J.spine ? J.spine.z : J.hips.z;
+  let yNotch = yWaist;
+  {
+    const BIN = 0.005, y0 = floor + 0.57 * H, y1 = floor + 0.72 * H, nb = Math.ceil((y1 - y0) / BIN) + 1;
+    const half = new Float32Array(nb);
+    const q = V3();
+    for (const m of meshes) {
+      m.updateWorldMatrix(true, false); m.skeleton.update();
+      const g = m.geometry, si = g.attributes.skinIndex, sw = g.attributes.skinWeight, bones = m.skeleton.bones;
+      for (let i = 0; i < g.attributes.position.count; i++) {
+        let bw = -1, bi = 0;
+        for (let k = 0; k < 4; k++) { const w = sw.getComponent(i, k); if (w > bw) { bw = w; bi = si.getComponent(i, k); } }
+        if (!isTrunk(bones[bi])) continue;
+        m.getVertexPosition(i, q); q.applyMatrix4(m.matrixWorld);
+        const k = Math.round((q.y - y0) / BIN);
+        if (k >= 0 && k < nb) half[k] = Math.max(half[k], Math.abs(q.x - cx));
+      }
+    }
+    let best = Infinity;
+    for (let k = 2; k < nb - 2; k++) if (half[k] > 0.02 * s && half[k] < best) { best = half[k]; yNotch = y0 + k * BIN; }
+    // 関節のすき間そのものより少し下（お腹の玉の上の丸み）まで効くように、細い所とその下の中間を中心にする
+    yNotch = Math.min(yNotch, yWaist + 0.01 * s);
+  }
+  slot.baseShape = { yNotch };
+
   const v = V3(), n = V3(), M = new THREE.Matrix4(), tmp = new THREE.Matrix4();
   for (const m of meshes) {
     const g = m.geometry;
@@ -181,6 +220,45 @@ export function buildBodyMorphs(slot, opts = {}) {
       wp[i * 3] = v.x; wp[i * 3 + 1] = v.y; wp[i * 3 + 2] = v.z;
       invL[i] = new THREE.Matrix3().setFromMatrix4(L).invert();
     }
+    // 土台の補正（ウエスト）: 元の形そのものを直す（モーフではなく、どの体型にも効く）
+    {
+      const d = V3();
+      let moved = false;
+      const nrmOf = () => { const q = new THREE.BufferGeometry(); q.setAttribute('position', pos.clone()); if (g.index) q.setIndex(g.index); q.computeVertexNormals(); return q.attributes.normal.array; };
+      const n0 = g.attributes.normal ? nrmOf() : null;
+      for (let i = 0; i < N; i++) {
+        let wT = 0;
+        for (let k = 0; k < 4; k++) {
+          const w = sw.getComponent(i, k);
+          if (!w) continue;
+          const b = bones[si.getComponent(i, k)];
+          if (!head.has(b) && !armL.has(b) && !armR.has(b) && !legL.has(b) && !legR.has(b)) wT += w;
+        }
+        if (wT <= 0) continue;
+        const x = wp[i * 3], y = wp[i * 3 + 1], z = wp[i * 3 + 2];
+        const band = bump(y, yNotch, BASE.width * s) * wT;
+        if (band < 1e-3) continue;
+        d.set((x - cx) * BASE.waistW * band, 0, (z - zw) * BASE.waistD * band);
+        wp[i * 3] += d.x; wp[i * 3 + 2] += d.z;
+        d.applyMatrix3(invL[i]);
+        pos.setXYZ(i, pos.getX(i) + d.x, pos.getY(i) + d.y, pos.getZ(i) + d.z);
+        moved = true;
+      }
+      if (moved) {
+        pos.needsUpdate = true; g.computeBoundingSphere();
+        // 法線も、変形の前後の差だけを足す（継ぎ目の法線の分かれ方はそのまま）
+        if (n0) {
+          const n1 = nrmOf(), na = g.attributes.normal;
+          for (let i = 0; i < N; i++) {
+            const x = na.getX(i) + n1[i * 3] - n0[i * 3], y = na.getY(i) + n1[i * 3 + 1] - n0[i * 3 + 1], z = na.getZ(i) + n1[i * 3 + 2] - n0[i * 3 + 2];
+            const l = Math.hypot(x, y, z) || 1;
+            na.setXYZ(i, x / l, y / l, z / l);
+          }
+          na.needsUpdate = true;
+        }
+      }
+    }
+
     // ワールドでの法線（表を向いているかの判定に使う）
     const tg = new THREE.BufferGeometry();
     tg.setAttribute('position', new THREE.BufferAttribute(wp, 3));
