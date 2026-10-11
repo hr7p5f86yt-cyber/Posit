@@ -8,7 +8,7 @@ import { LightBall } from './lightBall.js';
 import { REGIONS } from './anatomy.js';
 import * as THREE from 'three';
 
-export const BUILD = '2026-10-07e';
+export const BUILD = '2026-10-11a';
 
 const SAMPLE_URL = 'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r169/examples/models/gltf/Xbot.glb';
 const SETTINGS_KEY = 'posit.settings.v1';
@@ -637,28 +637,18 @@ function buildFaceList() {
 
 let detected = null;
 
-$('btnPhoto').addEventListener('click', () => {
-  $('photoBox').hidden = false;
-  $('photoMsg').textContent = '写真を選んでください。全身が写っているものが向いています。';
-  $('photoApply').disabled = true;
-  detected = null;
-  $('photoFile').click();
-});
-$('photoClose').addEventListener('click', () => { $('photoBox').hidden = true; });
-
-$('photoFile').addEventListener('change', async e => {
-  const f = e.target.files && e.target.files[0];
-  e.target.value = '';
-  if (!f) { $('photoBox').hidden = true; return; }
+/** 画像（写真のファイル・貼り付けた画像）からポーズを読み取って、プレビューに出す */
+async function readPoseFromImage(blob) {
   $('photoBox').hidden = false;
   $('photoMsg').textContent = '読み取り中…（初回は検出モデルの取得に少し時間がかかります）';
   $('photoApply').disabled = true;
+  detected = null;
   try {
     const photo = await import('./photopose.js');
-    const img = await photo.fileToImage(f);
+    const img = await photo.fileToImage(blob);
     const res = await photo.detectPose(img);
     if (!res) {
-      $('photoMsg').textContent = '人物を見つけられませんでした。全身が大きく写った写真で試してください。';
+      $('photoMsg').textContent = '人物を見つけられませんでした。全身が大きく写った画像で試してください。';
       return;
     }
     photo.drawPreview($('photoCanvas'), img, res.image);
@@ -674,6 +664,52 @@ $('photoFile').addEventListener('change', async e => {
     const msg = err && err.message ? err.message : String(err);
     $('photoMsg').textContent = '読み取りに失敗しました: ' + msg;
   }
+}
+
+$('btnPhoto').addEventListener('click', () => {
+  $('photoBox').hidden = false;
+  $('photoMsg').textContent = '写真を選ぶか、Pinterest などでコピーした画像を貼り付けてください。';
+  $('photoApply').disabled = true;
+  detected = null;
+  const cv = $('photoCanvas'); cv.width = cv.width;   // 前のプレビューを消す
+});
+$('photoChoose').addEventListener('click', () => $('photoFile').click());
+$('photoClose').addEventListener('click', () => { $('photoBox').hidden = true; });
+
+$('photoFile').addEventListener('change', e => {
+  const f = e.target.files && e.target.files[0];
+  e.target.value = '';
+  if (f) readPoseFromImage(f);
+});
+
+/** クリップボードの画像を取り出す（Safari は押したときにだけ読める。「ペースト」の確認が出る） */
+async function pasteImage() {
+  if (!navigator.clipboard || !navigator.clipboard.read) {
+    $('photoMsg').textContent = 'このブラウザはボタンからの貼り付けに対応していません。画像を写真に保存して「写真を選ぶ」から選んでください。';
+    return;
+  }
+  try {
+    const items = await navigator.clipboard.read();
+    for (const it of items) {
+      const type = it.types.find(t => t.startsWith('image/'));
+      if (type) { readPoseFromImage(await it.getType(type)); return; }
+    }
+    $('photoMsg').textContent = 'コピーされている画像がありません。Pinterest などで画像を長押しして「コピー」してから押してください。';
+  } catch (err) {
+    const denied = err && (err.name === 'NotAllowedError' || err.name === 'SecurityError');
+    $('photoMsg').textContent = denied
+      ? '貼り付けが許可されませんでした。もう一度押して、出てきた「ペースト」をタップしてください。'
+      : '貼り付けに失敗しました: ' + (err && err.message ? err.message : err);
+  }
+}
+$('photoPaste').addEventListener('click', pasteImage);
+
+// キーボード（iPad の ⌘V など）での貼り付けも受け付ける（読み取りの窓が開いているとき）
+document.addEventListener('paste', e => {
+  if ($('photoBox').hidden) return;
+  const files = e.clipboardData ? [...e.clipboardData.files] : [];
+  const img = files.find(f => f.type.startsWith('image/'));
+  if (img) { e.preventDefault(); readPoseFromImage(img); }
 });
 
 $('photoApply').addEventListener('click', () => {

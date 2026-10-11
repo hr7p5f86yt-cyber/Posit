@@ -587,3 +587,5 @@ body.collapsed #grip { padding: 0; height: 18px; }
 @media (min-width: 720px) and (orientation: landscape) {
   #grip { display: none; }
 }
+#photoPick { margin: 0 0 10px; }
+#photoPick button { font-size: 14px; padding: 12px 6px; }

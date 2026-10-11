@@ -170,7 +170,7 @@
             <button id="btnRandomPose" class="icon sm" title="ランダムなポーズ" aria-label="ランダムなポーズ">
               <svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="4.5"/><circle cx="9" cy="9" r="1.3" fill="currentColor" stroke="none"/><circle cx="15" cy="9" r="1.3" fill="currentColor" stroke="none"/><circle cx="9" cy="15" r="1.3" fill="currentColor" stroke="none"/><circle cx="15" cy="15" r="1.3" fill="currentColor" stroke="none"/></svg>
             </button>
-            <button id="btnPhoto" class="icon sm" title="写真からポーズを読み取る" aria-label="写真からポーズを読み取る">
+            <button id="btnPhoto" class="icon sm" title="写真・コピーした画像からポーズを読み取る" aria-label="写真・コピーした画像からポーズを読み取る">
               <svg viewBox="0 0 24 24"><path d="M3 9a2 2 0 012-2h1.8l1.3-2h7.8l1.3 2H19a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><circle cx="12" cy="13" r="3.3"/></svg>
             </button>
           </div>
@@ -407,9 +407,13 @@
 
 <div id="photoBox" hidden>
   <div class="card wide-card">
-    <strong id="photoTitle">写真からポーズを読み取る</strong>
+    <strong id="photoTitle">画像からポーズを読み取る</strong>
+    <div class="twoBtn" id="photoPick">
+      <button id="photoChoose" class="ghost">写真を選ぶ</button>
+      <button id="photoPaste" class="primary">画像を貼り付け</button>
+    </div>
     <canvas id="photoCanvas"></canvas>
-    <p class="hint" id="photoMsg">写真を選んでください。</p>
+    <p class="hint" id="photoMsg">写真を選ぶか、Pinterest などでコピーした画像を貼り付けてください。</p>
     <div class="bar">
       <button id="photoApply" class="primary" disabled>当てる</button>
       <button id="photoClose" class="ghost">閉じる</button>
