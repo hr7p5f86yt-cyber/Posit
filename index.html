@@ -117,6 +117,14 @@
 
 <div id="toast" hidden></div>
 
+<!-- 写真を重ねて見る -->
+<img id="photoOverlay" hidden alt="">
+<div id="photoOverlayBar" hidden>
+  <button id="photoOverlayToggle" class="ghost small">写真を消す</button>
+  <button id="photoOverlayView" class="ghost small">写真の向きから見る</button>
+  <button id="photoOverlayClose" class="icon sm" aria-label="閉じる"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+</div>
+
 <!-- 補助線（頭身の線・正中線・肩と腰の傾き） -->
 <canvas id="guides" hidden></canvas>
 
@@ -308,7 +316,7 @@
       <p class="hint"><b>Sketchfab からの zip はそのまま選べます</b>（中の scene.gltf と scene.bin を自動で結びつけます）。GLB / FBX の1ファイル、Mixamo の FBX もそのまま使えます。展開済みなら scene.gltf と scene.bin をまとめて選んでください。3つのスロットはリグが違っていても同じポーズが当たります。</p>
       <div id="boneReport" class="hint"></div>
       <button id="btnResetAll" class="wide ghost danger">すべての設定を初期値に戻す</button>
-      <p class="hint tiny">見え方・体つき・ライト・カメラ・クロッキーの設定を、はじめて開いたときの状態に戻します。ポーズ・履歴・読み込んだモデルはそのままです。</p>
+      <p class="hint tiny">見え方・体つき・ライト・カメラ・クロッキーの設定とポーズ・手の形を、はじめて開いたときの状態に戻します。履歴・保存したポーズ・読み込んだモデルはそのままです。</p>
       <details class="inner">
         <summary>読み込んだモデルの中身</summary>
         <p class="hint">ポーズが当たらないときは、ここに出るボーン名を教えてください。対応表に足します。</p>

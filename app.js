@@ -8,7 +8,7 @@ import { LightBall } from './lightBall.js';
 import { REGIONS } from './anatomy.js';
 import * as THREE from 'three';
 
-export const BUILD = '2026-10-11a';
+export const BUILD = '2026-10-12a';
 
 const SAMPLE_URL = 'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r169/examples/models/gltf/Xbot.glb';
 const SETTINGS_KEY = 'posit.settings.v1';
@@ -636,6 +636,7 @@ function buildFaceList() {
 // ---- 写真からポーズ --------------------------------------------------------
 
 let detected = null;
+let lastPhoto = null;     // 最後に読み取った写真（重ねて見るとき・手の形に使う）
 
 /** 画像（写真のファイル・貼り付けた画像）からポーズを読み取って、プレビューに出す */
 async function readPoseFromImage(blob) {
@@ -652,14 +653,24 @@ async function readPoseFromImage(blob) {
       return;
     }
     photo.drawPreview($('photoCanvas'), img, res.image);
-    const { dirs, missing } = photo.landmarksToDirections(res.world);
+    const { dirs, missing, pts } = photo.landmarksToDirections(res.world);
     if (missing.length) {
       $('photoMsg').textContent = '肩か腰が写っていないため、姿勢を組み立てられませんでした。';
       return;
     }
     detected = dirs;
+    lastPhoto = { img, lm: res.image, pts, hands: {} };
     $('photoApply').disabled = false;
-    $('photoMsg').textContent = `${Object.keys(dirs).length} か所を読み取りました。`;
+    $('photoMsg').textContent = `${Object.keys(dirs).length} か所を読み取りました。手の形を探しています…`;
+    // 手の 21 点（見つからなくても体のポーズはそのまま使える）
+    try {
+      const found = await photo.detectHands(img, res.image);
+      for (const [sd, h] of Object.entries(found)) lastPhoto.hands[sd] = { ...photo.handToSpec(h.world, sd), image: h.image };
+      photo.drawPreview($('photoCanvas'), img, res.image, found);
+    } catch (e) { /* 手は読めなくてもよい */ }
+    const hs = Object.keys(lastPhoto.hands).map(sd => (sd === 'L' ? '左手' : '右手'));
+    $('photoMsg').textContent = `${Object.keys(dirs).length} か所を読み取りました。`
+      + (hs.length ? `手の形も読み取りました（${hs.join('・')}。人形から見た左右）。` : '手の形は読み取れませんでした（手が小さい・隠れているときは体のポーズだけ当てます）。');
   } catch (err) {
     const msg = err && err.message ? err.message : String(err);
     $('photoMsg').textContent = '読み取りに失敗しました: ' + msg;
@@ -716,12 +727,71 @@ $('photoApply').addEventListener('click', () => {
   if (!detected) return;
   snapshot();
   const n = viewer.applyDetectedPose(detected);
+  const rep = lastPhoto ? viewer.refineDetectedPose({ pts: lastPhoto.pts, hands: lastPhoto.hands }) : { contacts: [], hands: [] };
   syncSliders();
   $('photoBox').hidden = true;
   history.add({ name: '写真から', spec: toSpec(viewer.allAngles()) });
   buildHistory();
-  showToast(`${n} か所の関節を写真に合わせました`);
+  // 写真を撮った向きから見る（写真の人の向きに合わせて人形を回してあるので、正面＝写真のカメラ）
+  if (viewer.partView !== 'full') { viewer.setPartView('full', viewer.partSide); buildFrameChips(); }
+  viewer.viewFromAngle(0, 0);
+  showPhotoOverlay(true);
+  const extra = [rep.contacts.length ? `手が触れている所を合わせました（${rep.contacts.join('・')}）` : '',
+    rep.hands.length ? `指の形も写しました（${rep.hands.join('・')}）` : ''].filter(Boolean).join('。');
+  showToast(`${n} か所の関節を写真に合わせました` + (extra ? '。' + extra : ''));
 });
+
+// ---- 写真を重ねて見る（人形と写真のずれを確かめ、関節を直接動かして直せる） ----
+function alignPhotoOverlay() {
+  const el = $('photoOverlay');
+  if (!lastPhoto || el.hidden) return;
+  const p = viewer.primarySlot;
+  if (!p) return;
+  const img = lastPhoto.img, W = img.naturalWidth || img.width, H = img.naturalHeight || img.height;
+  const rect = viewer.canvas.getBoundingClientRect();
+  const pairs = [[11, 'upperArmL'], [12, 'upperArmR'], [13, 'forearmL'], [14, 'forearmR'], [15, 'handL'], [16, 'handR'],
+    [23, 'thighL'], [24, 'thighR'], [25, 'shinL'], [26, 'shinR'], [27, 'footL'], [28, 'footR']];
+  const Q = [], P = [];
+  for (const [i, k] of pairs) {
+    const lm = lastPhoto.lm[i], b = p.boneMap[k];
+    if (!lm || !b || (lm.visibility ?? 1) < 0.3) continue;
+    const v = b.getWorldPosition(new THREE.Vector3()).project(viewer.camera);
+    Q.push([lm.x * W, lm.y * H]);
+    P.push([rect.left + (v.x + 1) / 2 * rect.width, rect.top + (1 - v.y) / 2 * rect.height]);
+  }
+  if (Q.length < 4) return;
+  const mean = A => [A.reduce((s, a) => s + a[0], 0) / A.length, A.reduce((s, a) => s + a[1], 0) / A.length];
+  const qm = mean(Q), pm = mean(P);
+  let num = 0, den = 0;
+  Q.forEach((q, i) => { const dq = [q[0] - qm[0], q[1] - qm[1]], dp = [P[i][0] - pm[0], P[i][1] - pm[1]]; num += dq[0] * dp[0] + dq[1] * dp[1]; den += dq[0] * dq[0] + dq[1] * dq[1]; });
+  const sc = den > 0 ? num / den : 1;
+  el.style.width = (W * sc) + 'px';
+  el.style.height = (H * sc) + 'px';
+  el.style.left = (pm[0] - qm[0] * sc) + 'px';
+  el.style.top = (pm[1] - qm[1] * sc) + 'px';
+}
+function showPhotoOverlay(on) {
+  const el = $('photoOverlay');
+  if (on && lastPhoto) {
+    if (el.src !== lastPhoto.img.src) el.src = lastPhoto.img.src;
+    el.hidden = false;
+    $('photoOverlayBar').hidden = false;
+    $('photoOverlayToggle').textContent = '写真を消す';
+    requestAnimationFrame(alignPhotoOverlay);
+  } else {
+    el.hidden = true;
+    $('photoOverlayToggle').textContent = '写真を重ねる';
+  }
+}
+$('photoOverlayToggle').addEventListener('click', () => {
+  const on = $('photoOverlay').hidden;
+  if (on) viewer.viewFromAngle(0, 0);
+  showPhotoOverlay(on);
+});
+$('photoOverlayClose').addEventListener('click', () => { showPhotoOverlay(false); $('photoOverlayBar').hidden = true; });
+// カメラを回したら写真とは合わなくなるので、写真の向きに戻すボタンで合わせ直す
+$('photoOverlayView').addEventListener('click', () => { viewer.viewFromAngle(0, 0); requestAnimationFrame(alignPhotoOverlay); });
+window.addEventListener('resize', () => setTimeout(alignPhotoOverlay, 350));
 
 // ---- 保存したポーズ・画像の書き出し ------------------------------------------
 
@@ -1721,7 +1791,12 @@ function setCheck(id, on) {
 }
 
 function resetAllSettings() {
-  if (!window.confirm('すべての設定を初期値に戻しますか？\n（ポーズ・履歴・読み込んだモデルはそのままです）')) return;
+  if (!window.confirm('すべての設定とポーズを初期値に戻しますか？\n（履歴・保存したポーズ・読み込んだモデルはそのままです。ポーズは「1つ戻す」で戻せます）')) return;
+  // ポーズと手の形も戻す（写真から当てたポーズも含む）
+  snapshot();
+  viewer.resetPose();
+  viewer.applyHandShape('both', '');
+  showPhotoOverlay(false); $('photoOverlayBar').hidden = true;
   // クロッキーとパネルの設定
   Object.assign(settings, defaultSettings());
   saveSettings();

@@ -2590,6 +2590,155 @@ export class Viewer {
     return applied;
   }
 
+  /**
+   * 写真から当てたポーズの仕上げ。骨の向きだけを写すと、人と人形で腕の長さ・肩幅が違うぶん、
+   * 頭に触れていた手が離れる、腰に当てた手が浮く、といったずれが出る。
+   *   1. 手首が体のどこか（頭・肩・肘・腰・膝・反対の手首）の近くにあれば「触れている」とみなし、
+   *      人形の同じ所に手首が来るよう、腕（上腕・前腕）の角度を探し直す（肘の向きはなるべく写真のまま）
+   *   2. 手の向き（指先の向き・親指の側）を写真に合わせる（前腕のひねりと手首）
+   *   3. 手の 21 点が取れていれば、指の形も写す
+   * @param {object} info  { pts: 写真の点（このアプリの座標）, hands: { L/R: { spec, distal, radial } } }
+   * @returns {{contacts: string[], hands: string[]}}
+   */
+  refineDetectedPose(info) {
+    const p = this.primarySlot;
+    const report = { contacts: [], hands: [] };
+    if (!p || !p.skeleton || !info || !info.pts) return report;
+    const pts = info.pts;
+    const V = () => new THREE.Vector3();
+    const W = k => (p.boneMap[k] ? p.boneMap[k].getWorldPosition(V()) : null);
+    const mid = (a, b) => a.clone().add(b).multiplyScalar(0.5);
+    const deg = (a, b) => Math.acos(Math.max(-1, Math.min(1, a.clone().normalize().dot(b.clone().normalize())))) * 180 / Math.PI;
+    const setQ = (key, a) => {
+      const b = p.boneMap[key];
+      const nb = p.neutralWorld.get(b), np = p.neutralParent.get(b);
+      if (!nb || !np) return;
+      const d = new THREE.Quaternion().setFromAxisAngle(AX, a.x * DEG)
+        .multiply(new THREE.Quaternion().setFromAxisAngle(AZ, a.z * DEG))
+        .multiply(new THREE.Quaternion().setFromAxisAngle(AY, a.y * DEG));
+      b.quaternion.copy(np).invert().multiply(d).multiply(nb);
+    };
+    const update = () => p.pivot.updateWorldMatrix(true, true);
+    const cl = (key, a) => (this.limitsEnabled ? clampAngles(key, a) : a);
+    /** 角度をいくつかずつ動かして cost を小さくする（座標降下） */
+    const fit = (params, cost) => {
+      const cur = {};
+      for (const [k] of params) cur[k] = { ...(this.angles[k] || { x: 0, y: 0, z: 0 }) };
+      const apply = () => { for (const k of Object.keys(cur)) setQ(k, cur[k]); update(); };
+      apply();
+      let best = cost();
+      for (const step of [12, 6, 3, 1.5, 0.75]) {
+        for (let it = 0; it < 8; it++) {
+          let improved = false;
+          for (const [k, ax] of params) {
+            for (const sg of [1, -1]) {
+              const old = cur[k][ax];
+              const t = cl(k, { ...cur[k], [ax]: cur[k][ax] + sg * step });
+              if (t[ax] === old) continue;
+              cur[k] = t; apply();
+              const c = cost();
+              if (c < best - 1e-9) { best = c; improved = true; }
+              else { cur[k] = { ...cur[k], [ax]: old }; apply(); }
+            }
+          }
+          if (!improved) break;
+        }
+      }
+      for (const k of Object.keys(cur)) this.angles[k] = cur[k];
+      return best;
+    };
+    guard('写真のポーズの仕上げ', () => {
+      update();
+      // 人と人形の大きさの比（胴の長さ）
+      if (!pts.shoulderL || !pts.shoulderR || !pts.hipL || !pts.hipR) return;
+      const tP = mid(pts.shoulderL, pts.shoulderR).distanceTo(mid(pts.hipL, pts.hipR));
+      const uL = W('upperArmL'), uR = W('upperArmR'), tL = W('thighL'), tR = W('thighR');
+      if (!uL || !uR || !tL || !tR || tP < 1e-4) return;
+      const k = mid(uL, uR).distanceTo(mid(tL, tR)) / tP;
+      const hh = this.visibleHeadHeight(p);
+      // 写真の点 ↔ 人形の点
+      const anchors = side => {
+        const o = side === 'L' ? 'R' : 'L';
+        const list = [];
+        const add = (name, photo, doll) => { if (photo && doll) list.push({ name, photo, doll }); };
+        const headDoll = () => {
+          const hb = p.boneMap.head;
+          if (!hb) return null;
+          const up = new THREE.Vector3(0, 1, 0).applyQuaternion(hb.getWorldQuaternion(new THREE.Quaternion()));
+          return hb.getWorldPosition(V()).addScaledVector(up, 0.18 * hh);
+        };
+        add('頭', pts.head, headDoll());
+        add('肩', pts['shoulder' + o], W('upperArm' + o));
+        add('肘', pts['elbow' + o], W('forearm' + o));
+        add('腰', pts['hip' + side], W('thigh' + side));
+        add('腰', pts['hip' + o], W('thigh' + o));
+        add('膝', pts['knee' + side], W('shin' + side));
+        add('膝', pts['knee' + o], W('shin' + o));
+        return list;
+      };
+      const reach = 0.33 * tP;        // これより近ければ触れているとみなす（胴の長さの 1/3 ≒ 17cm）
+      const order = ['L', 'R'];
+      const solved = {};
+      // 両手が触れ合っている（合掌・手を組む）: 両手首を、人形の両手の中点のまわりに同じ並びで置く
+      const wL = pts.wristL, wR = pts.wristR;
+      let pair = null;
+      if (wL && wR && wL.distanceTo(wR) < reach) {
+        const nearBody = sd => Math.min(...anchors(sd).map(a => pts['wrist' + sd].distanceTo(a.photo)));
+        if (wL.distanceTo(wR) < Math.min(nearBody('L'), nearBody('R'))) {
+          const pm = mid(wL, wR), dm = mid(W('handL'), W('handR'));
+          pair = { L: dm.clone().addScaledVector(wL.clone().sub(pm), k), R: dm.clone().addScaledVector(wR.clone().sub(pm), k) };
+        }
+      }
+      // 反対の手首どうしが近い（手を組む・合わせる）ときは、先に片方を解いてからもう片方を合わせる
+      for (const sd of order) {
+        const w = pts['wrist' + sd];
+        if (!w || !p.boneMap['upperArm' + sd] || !p.boneMap['forearm' + sd]) continue;
+        let near = null, nd = Infinity;
+        for (const a of anchors(sd)) { const d = w.distanceTo(a.photo); if (d < nd) { nd = d; near = a; } }
+        const o = sd === 'L' ? 'R' : 'L';
+        const ow = pts['wrist' + o];
+        if (ow && solved[o] && w.distanceTo(ow) < nd && w.distanceTo(ow) < reach) {
+          near = { name: '反対の手', photo: ow, doll: W('hand' + o) }; nd = w.distanceTo(ow);
+        }
+        if (pair) { near = { name: '反対の手' }; nd = 0; }
+        if (!near || nd > reach) continue;
+        let target = pair ? pair[sd] : near.doll.clone().addScaledVector(w.clone().sub(near.photo), k);
+        const elbowP = pts['elbow' + sd] ? pts['elbow' + sd].clone().sub(pts['shoulder' + sd]) : null;
+        const ua = 'upperArm' + sd, fa = 'forearm' + sd, hd = 'hand' + sd;
+        const cost = () => {
+          const e = W(hd).distanceTo(target) / (0.01 * k * tP / 0.5);
+          let c = e * e;
+          if (elbowP) { const dv = deg(W(fa).sub(W(ua)), elbowP); c += 0.004 * dv * dv; }
+          return c;
+        };
+        fit([[ua, 'x'], [ua, 'z'], [ua, 'y'], [fa, 'x']], cost);
+        solved[sd] = true;
+        report.contacts.push(`${sd === 'L' ? '左' : '右'}手→${near.name}`);
+      }
+      // 手の向きと指の形
+      for (const sd of order) {
+        const hd = info.hands && info.hands[sd];
+        let distal = hd ? hd.distal : null, radial = hd ? hd.radial : null;
+        if (!distal && pts['wrist' + sd] && pts['index' + sd] && pts['pinky' + sd]) {
+          distal = mid(pts['index' + sd], pts['pinky' + sd]).sub(pts['wrist' + sd]);
+          radial = pts['index' + sd].clone().sub(pts['pinky' + sd]);
+        }
+        if (!distal || distal.lengthSq() < 1e-10 || !p.boneMap['hand' + sd]) continue;
+        const cost = () => {
+          const f = this._handFrame(p, sd);
+          if (!f) return 0;
+          const a = deg(f.along, distal), r = radial && radial.lengthSq() > 1e-10 ? deg(f.radial, radial) : 0;
+          return a * a + 0.5 * r * r;
+        };
+        fit([['forearm' + sd, 'y'], ['hand' + sd, 'x'], ['hand' + sd, 'z'], ['hand' + sd, 'y']], cost);
+        if (hd && hd.spec) { this.applyHandShape(sd, hd.spec); report.hands.push(sd === 'L' ? '左手' : '右手'); }
+      }
+    });
+    this.applyAll();
+    this._reapplyHandShapes();
+    return report;
+  }
+
   resetPose() {
     for (const j of JOINTS) this.angles[j.key] = { x: 0, y: 0, z: 0 };
     this.applyAll();

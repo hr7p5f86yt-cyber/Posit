@@ -589,3 +589,12 @@ body.collapsed #grip { padding: 0; height: 18px; }
 }
 #photoPick { margin: 0 0 10px; }
 #photoPick button { font-size: 14px; padding: 12px 6px; }
+
+/* 写真を重ねて見る */
+#photoOverlay { position: fixed; z-index: 6; opacity: 0.42; pointer-events: none; left: 0; top: 0; }
+#photoOverlay[hidden] { display: none; }
+#photoOverlayBar { position: fixed; z-index: 38; left: 10px; top: calc(var(--safe-t) + 64px);
+  display: flex; gap: 6px; align-items: center; padding: 6px; border-radius: 12px;
+  background: var(--sheet); border: 1px solid var(--line); }
+#photoOverlayBar[hidden] { display: none; }
+body.croquis #photoOverlay, body.croquis #photoOverlayBar { display: none; }
