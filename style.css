@@ -598,3 +598,21 @@ body.collapsed #grip { padding: 0; height: 18px; }
   background: var(--sheet); border: 1px solid var(--line); }
 #photoOverlayBar[hidden] { display: none; }
 body.croquis #photoOverlay, body.croquis #photoOverlayBar { display: none; }
+
+/* 回転の輪（3軸）: 赤=X・緑=Y・青=Z。スライダの名前の前にも同じ色の点を付ける */
+:root { --ax-x: #ff5468; --ax-y: #8fd44a; --ax-z: #4d8dff; }
+.lbl.ax::before { content: ''; display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+  margin-right: 6px; vertical-align: 1px; background: var(--muted); }
+.lbl.ax.x::before, .axdot.x { background: var(--ax-x); }
+.lbl.ax.y::before, .axdot.y { background: var(--ax-y); }
+.lbl.ax.z::before, .axdot.z { background: var(--ax-z); }
+.axdot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin: 0 2px 0 1px; vertical-align: 1px; }
+#ringInfo { position: fixed; z-index: 39; left: 50%; transform: translateX(-50%); top: calc(var(--safe-t) + 60px);
+  padding: 6px 13px; border-radius: 999px; font-size: 14px; font-weight: 600; white-space: nowrap;
+  background: var(--sheet); border: 1.5px solid var(--line); color: var(--text); pointer-events: none;
+  font-variant-numeric: tabular-nums; }
+#ringInfo[data-axis="x"] { border-color: var(--ax-x); }
+#ringInfo[data-axis="y"] { border-color: var(--ax-y); }
+#ringInfo[data-axis="z"] { border-color: var(--ax-z); }
+#ringInfo[hidden] { display: none; }
+body.croquis #ringInfo { display: none; }

@@ -119,6 +119,7 @@
 
 <!-- 写真を重ねて見る -->
 <img id="photoOverlay" hidden alt="">
+<div id="ringInfo" hidden></div>
 <div id="photoOverlayBar" hidden>
   <button id="photoOverlayToggle" class="ghost small">写真を消す</button>
   <button id="photoOverlayView" class="ghost small">写真の向きから見る</button>
@@ -218,21 +219,25 @@
       <button id="btnResetJoint" class="ghost small">この関節を戻す</button>
     </div>
     <div id="sliders">
-      <label class="row"><span class="lbl" id="labX">前後</span>
+      <label class="row"><span class="lbl ax x" id="labX">前後</span>
         <input type="range" id="axX" min="-180" max="180" step="1" value="0">
         <output id="outX">0°</output></label>
-      <label class="row"><span class="lbl" id="labY">ひねり</span>
+      <label class="row"><span class="lbl ax y" id="labY">ひねり</span>
         <input type="range" id="axY" min="-180" max="180" step="1" value="0">
         <output id="outY">0°</output></label>
-      <label class="row"><span class="lbl" id="labZ">左右</span>
+      <label class="row"><span class="lbl ax z" id="labZ">左右</span>
         <input type="range" id="axZ" min="-180" max="180" step="1" value="0">
         <output id="outZ">0°</output></label>
     </div>
     <div class="seg scroll" id="jointSeg"></div>
     <div class="pager" id="jointList"></div>
-    <p class="hint tiny">人形の関節をタップして選び、そのまま押して動かすと直接曲がります。左右は<b>人形から見た</b>左右です。</p>
+    <p class="hint tiny">人形の関節をタップして選び、そのまま押して動かすと直接曲がります。
+      関節のまわりの<b>輪</b>をなぞると、その軸だけで回ります（<span class="axdot x"></span>赤＝X・<span class="axdot y"></span>緑＝Y・<span class="axdot z"></span>青＝Z。上のスライダと同じ順）。
+      左右は<b>人形から見た</b>左右です。</p>
     <label class="row toggle"><span class="lbl">可動域を制限</span>
       <input type="checkbox" id="limitsOn" checked></label>
+    <label class="row toggle"><span class="lbl">回転の輪（3軸）を出す</span>
+      <input type="checkbox" id="ringsOn" checked></label>
   </div>
 
   <!-- クロッキー -->

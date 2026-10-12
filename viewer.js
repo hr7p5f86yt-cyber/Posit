@@ -11,6 +11,7 @@ import { buildHeadPlanes, FIG_HEADS, HEADH_MIN, HEADH_MAX } from './headPlanes.j
 import { buildBodyMorphs } from './bodyShape.js';
 import { buildBreastParts } from './breastParts.js';
 import { buildMuscles, setMusclePalette } from './muscleView.js';
+import { RotateRings } from './rotateRings.js';
 import { deformFactors, installSegmentScale, setSegment, clearSegments } from './proportions.js';
 // 不具合を調べるときの入り口（画面には出ない）
 if (typeof window !== 'undefined') window.__positTHREE = THREE;
@@ -154,6 +155,7 @@ export class Viewer {
     this._initLights();
     this._initGround();
     this._initMarker();
+    this.rings = new RotateRings(this);
     this._bindPointer();
     this._loop();
   }
@@ -321,6 +323,7 @@ export class Viewer {
         this._updateClipPlane();
         const bone = this.selected ? this._boneForJoint(this.selected) : null;
         if (bone) bone.getWorldPosition(this.marker.position);
+        this.rings.update();
         this.renderer.render(this.scene, this.camera);
         if (!this._firstFrame) { this._firstFrame = true; if (window.__positMark) window.__positMark('初回描画'); }
       } catch (err) {
@@ -2803,6 +2806,16 @@ export class Viewer {
     el.addEventListener('pointerdown', e => {
       if (!this.jointDragEnabled || !this.selected || this._jd || !e.isPrimary || this.pickMode === 'anatomy') return;
       if (e.pointerType === 'mouse' && e.button !== 0) return;
+      // 回転の輪を押したら、その軸だけで回す（関節の部分を押すより先に見る）
+      const rh = guard('回転の輪', () => this.rings.hit(e.clientX, e.clientY, e.pointerType));
+      if (rh && guard('回転の輪', () => this.rings.begin(rh, e.clientX, e.clientY))) {
+        e.stopImmediatePropagation();
+        e.preventDefault();
+        try { el.setPointerCapture(e.pointerId); } catch (err) { /* 続行 */ }
+        this._jd = { id: e.pointerId, key: this.selected, x: e.clientX, y: e.clientY, moved: false, ring: rh.axis };
+        this._jdTapped = true;
+        return;
+      }
       // 選んでいる関節の部分（関節〜その先）を押したか。細い腕でも押しやすいよう、
       // 画面の上で骨の線から 24px 以内なら受け付ける
       const key = guard('関節の判定', () => this._jointAt(e.clientX, e.clientY));
@@ -2820,7 +2833,8 @@ export class Viewer {
         jd.moved = true;
         this.onJointDragStart(jd.key);
       }
-      guard('関節のドラッグ', () => this._dragJoint(jd.key, e.clientX, e.clientY));
+      if (jd.ring) guard('回転の輪', () => this.rings.move(e.clientX, e.clientY));
+      else guard('関節のドラッグ', () => this._dragJoint(jd.key, e.clientX, e.clientY));
       this.onJointDrag(jd.key);
     });
     const end = e => {
@@ -2828,7 +2842,8 @@ export class Viewer {
       if (!jd || (e && e.pointerId !== jd.id)) return;
       this._jd = null;
       try { el.releasePointerCapture(jd.id); } catch (err) { /* 続行 */ }
-      if (jd.moved) { this._jdTapped = true; this.onJointDragEnd(jd.key); }
+      if (jd.ring) this.rings.end();
+      if (jd.moved) { this._jdTapped = true; this.onJointDragEnd(jd.key, jd.ring || null); }
     };
     el.addEventListener('pointerup', end, { capture: true });
     el.addEventListener('pointercancel', end, { capture: true });
@@ -3121,7 +3136,9 @@ export class Viewer {
   snapshotPNG(overlay = null) {
     const keepMarker = this.marker.visible;
     const keepArrow = this.lightArrow ? this.lightArrow.visible : false;
+    const keepRings = this.rings.group.visible;
     this.marker.visible = false;
+    this.rings.group.visible = false;
     if (this.lightArrow) this.lightArrow.visible = false;
     this.renderer.render(this.scene, this.camera);
     const src = this.renderer.domElement;
@@ -3131,10 +3148,16 @@ export class Viewer {
     g.drawImage(src, 0, 0);
     if (overlay && overlay.width) g.drawImage(overlay, 0, 0, c.width, c.height);
     this.marker.visible = keepMarker;
+    this.rings.group.visible = keepRings;
     if (this.lightArrow) this.lightArrow.visible = keepArrow;
     return new Promise(res => c.toBlob(b => res(b), 'image/png'));
   }
-  setUIHidden(on) { this.marker.visible = on ? false : !!(this.selected && this._boneForJoint(this.selected)); }
+  setUIHidden(on) {
+    this._uiHidden = !!on;
+    this.marker.visible = on ? false : !!(this.selected && this._boneForJoint(this.selected));
+  }
+  /** 選んだ関節のまわりに回転の輪（3軸）を出すか */
+  setRingsEnabled(on) { this.rings.setEnabled(on); }
   setLens(mm) {
     this.lensMM = mm;
     this.camera.fov = 2 * Math.atan(12 / mm) * (180 / Math.PI);

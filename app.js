@@ -8,7 +8,7 @@ import { LightBall } from './lightBall.js';
 import { REGIONS } from './anatomy.js';
 import * as THREE from 'three';
 
-export const BUILD = '2026-10-12a';
+export const BUILD = '2026-10-12b';
 
 const SAMPLE_URL = 'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r169/examples/models/gltf/Xbot.glb';
 const SETTINGS_KEY = 'posit.settings.v1';
@@ -50,6 +50,7 @@ function loadSettings() {
       guideCenter: !!s.guideCenter,
       guideTilt: !!s.guideTilt,
       musclePal: !!s.musclePal,
+      rings: s.rings !== false,
     };
   } catch (e) {
     return defaultSettings();
@@ -59,7 +60,7 @@ function loadSettings() {
 function defaultSettings() {
   return { seconds: 30, count: 10, cqCats: [], cqModel: 'skin', cqFrame: 'full', cqWire: false, cqAngle: 'random',
     cqSide: 'random', cqBody: 'keep', cqHandShape: true, lightBall: true, sheetStage: 1,
-    cqBeep: true, cqMirror: false, guideHeads: false, guideCenter: false, guideTilt: false, musclePal: false };
+    cqBeep: true, cqMirror: false, guideHeads: false, guideCenter: false, guideTilt: false, musclePal: false, rings: true };
 }
 function saveSettings() {
   try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch (e) { /* 続行 */ }
@@ -356,10 +357,33 @@ viewer.onJointDrag = () => {
   jdFrame = requestAnimationFrame(() => { jdFrame = 0; syncSliders(); });
 };
 let jdTold = false;
-viewer.onJointDragEnd = () => {
+viewer.onJointDragEnd = (key, ring) => {
   syncSliders();
+  if (ring) { hideRingInfo(); return; }
   if (!jdTold) { jdTold = true; showToast('関節を直接動かしました。上の「戻す」で戻せます'); }
 };
+
+// 回転の輪（3軸）: 赤=X・緑=Y・青=Z。回している間は、軸の名前と角度を画面の上に出す
+let ringInfoTimer = 0;
+function hideRingInfo() {
+  clearTimeout(ringInfoTimer);
+  ringInfoTimer = setTimeout(() => { $('ringInfo').hidden = true; }, 700);
+}
+viewer.rings.onChange = (key, axis, val) => {
+  const j = JOINT_BY_KEY[key];
+  const name = j ? j.axes[{ x: 0, y: 1, z: 2 }[axis]] : axis.toUpperCase();
+  const el = $('ringInfo');
+  el.dataset.axis = axis;
+  el.textContent = `${jointLabel(key)}・${name} ${Math.round(val)}°`;
+  el.hidden = false;
+  clearTimeout(ringInfoTimer);
+};
+$('ringsOn').checked = settings.rings;
+viewer.setRingsEnabled(settings.rings);
+$('ringsOn').addEventListener('change', e => {
+  settings.rings = e.target.checked; saveSettings();
+  viewer.setRingsEnabled(settings.rings);
+});
 
 // ---- スライダ --------------------------------------------------------------
 
@@ -1817,6 +1841,7 @@ function resetAllSettings() {
   setCheck('musclePal', false);
   setCheck('canonRest', true);
   setCheck('limitsOn', true);
+  setCheck('ringsOn', true);
   // 見る範囲とカメラ（ライトの向きはカメラが基準なので先に戻す）
   viewer.setPartView('full', 'R');
   setRange('lens', 40);
