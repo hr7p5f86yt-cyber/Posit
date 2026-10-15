@@ -134,7 +134,7 @@ class Slot {
 
 export class Viewer {
   /** この viewer.js の版（app.js の BUILD と同じでなければ、古いファイルが混ざっている） */
-  static BUILD = '2026-10-16b';
+  static BUILD = '2026-10-16c';
 
   constructor(canvas) {
     this.canvas = canvas;
@@ -2910,8 +2910,9 @@ export class Viewer {
 
   /**
    * 腰を動かす。mode:
-   *   'pull'  … 腰を引っ張る（手・足を引っ張るのと同じ）。画面の面の中で自由に動き、足は床に付いたまま
-   *             （固定していない足も、動かしている間だけその場に留める）→ しゃがむ・重心を移す・踏み込む
+   *   'pull'  … 腰を引っ張る（手・足を引っ張るのと同じ）。画面の面の中で自由に動く。
+   *             固定した足（右下の「固定」）はその場に残り、固定していない足は体と一緒に動く
+   *             → 両足を固定すればしゃがむ・重心を移す、片足だけ固定すれば片足立ちのまま腰を動かせる
    *   'slide' … 体全体（固定した手・足ごと）を床の上で滑らせる
    */
   beginBodyMove(clientX, clientY, mode = 'pull') {
@@ -2928,11 +2929,7 @@ export class Viewer {
     else plane = new THREE.Plane().setFromNormalAndCoplanarPoint(new THREE.Vector3(n.x, 0, n.z).normalize(), p0);
     const P0 = this.pull._rayPoint(clientX, clientY, plane);
     if (!P0) return false;
-    // 引っ張るときは、固定していない足もその間だけ留める（離したら外す）
     const temp = [];
-    if (mode === 'pull') {
-      for (const k of ['footL', 'footR']) if (!this.locks.has(k) && this.toggleLock(k, true)) temp.push(k);
-    }
     const locks0 = new Map([...this.locks].map(([k, L]) => [k, L.pos.clone()]));
     this._bodyMove = { plane, P0, shift0: this.bodyShift.clone(), mode, temp, locks0 };
     if (this.onLocksChanged) this.onLocksChanged();
@@ -2952,6 +2949,21 @@ export class Viewer {
     this.bodyShift.copy(m.shift0).add(d);
     this.applyAll();
     this._enforceLocks('hips');
+    // 片足だけ固定して腰を下げたとき、固定していない足は床より下へは行かせない（床に着いたところで止める）
+    const p = this.primarySlot;
+    if (m.mode === 'pull' && this.locks.size && p && p.restLowestY != null) {
+      let fixed = false;
+      for (const k of ['footL', 'footR']) {
+        const b = p.boneMap[k];
+        if (!b || this.locks.has(k)) continue;
+        const w = b.getWorldPosition(new THREE.Vector3());
+        if (w.y < p.restLowestY - 0.002) {
+          w.y = p.restLowestY;
+          if (this.pull.solve(k, w, b.getWorldQuaternion(new THREE.Quaternion()))) { fixed = true; this.applyAll(); }
+        }
+      }
+      if (fixed) this.applyAll();
+    }
   }
   endBodyMove() {
     const m = this._bodyMove;
