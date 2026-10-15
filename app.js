@@ -1,14 +1,14 @@
 // app.js — 画面まわりの配線
 import { Viewer, SLOTS, VIEW_MODES, MATERIAL_MODES, THREE_REVISION } from './viewer.js';
 import { JOINTS, JOINT_BY_KEY, JOINT_GROUPS, jointLabel } from './bones.js';
-import { POSE_CATEGORIES, POSE_PRESETS, HAND_SHAPES, FACE_PRESETS, toSpec } from './poses.js';
+import { POSE_CATEGORIES, POSE_PRESETS, POSE_HANDS, HAND_SHAPES, FACE_PRESETS, toSpec } from './poses.js';
 import { PoseHistory, relativeTime, HISTORY_LIMIT } from './history.js';
 import { CroquisSession, CROQUIS_SECONDS, CROQUIS_COUNTS } from './croquis.js';
 import { LightBall } from './lightBall.js';
 import { REGIONS } from './anatomy.js';
 import * as THREE from 'three';
 
-export const BUILD = '2026-10-16d';
+export const BUILD = '2026-10-16e';
 
 const SAMPLE_URL = 'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r169/examples/models/gltf/Xbot.glb';
 const SETTINGS_KEY = 'posit.settings.v1';
@@ -799,9 +799,18 @@ if (window.ResizeObserver) {
   }).observe($('poseList'));
 }
 
+/** ポーズに合う手の形を当てる（グー・握る・平ら…。決めていないポーズは平ら） */
+function applyPoseHands(pose) {
+  const h = POSE_HANDS[pose.id] || ['', ''];
+  ['L', 'R'].forEach((sd, i) => {
+    const shape = HAND_SHAPES.find(x => x.id === h[i]);
+    viewer.applyHandShape(sd, shape ? shape.spec : '');
+  });
+}
 function applyPose(pose) {
   snapshot();
   viewer.applyPose(pose.spec);
+  applyPoseHands(pose);
   history.add({ poseId: pose.id, name: pose.name, spec: pose.spec });
   buildHistory();
   syncSliders();
@@ -1186,7 +1195,10 @@ function buildHistory() {
     b.append(nm, tm);
     b.addEventListener('click', () => {
       snapshot();
-      viewer.applyPose(it.spec);
+      // 一覧のポーズなら、いまの一覧の角度で（v53 で直したポーズは、前の履歴でも直った形で出る）
+      const preset = it.poseId && POSE_PRESETS.find(p => p.id === it.poseId);
+      viewer.applyPose(preset ? preset.spec : it.spec);
+      if (preset) applyPoseHands(preset);
       syncSliders();
       showToast(it.name);
     });
@@ -1311,6 +1323,7 @@ const croquis = new CroquisSession({
   onPose: (pose, index) => {
     croquisSetup();
     viewer.applyPose(pose.spec);
+    applyPoseHands(pose);
     lastBeepSec = null;
     // ポーズごとに左右をランダムに反転（同じポーズでも違う向きで描ける）
     let mirrored = false;
