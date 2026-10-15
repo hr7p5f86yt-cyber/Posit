@@ -5,7 +5,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { JOINTS, JOINT_BY_KEY, JOINT_GROUPS, mapBones, mapBonesByStructure, mapFingers, fingerCount, clampAngles, limitExcess, wrapDeg, normalizeName } from './bones.js';
-import { parseSpec, parseFingerSpec } from './poses.js';
+import { parseSpec, parseFingerSpec, POSE_PRESETS } from './poses.js';
 import { buildSkeletonView } from './skeletonView.js';
 import { buildHeadPlanes, FIG_HEADS, HEADH_MIN, HEADH_MAX } from './headPlanes.js';
 import { buildBodyMorphs } from './bodyShape.js';
@@ -13,6 +13,7 @@ import { buildBreastParts } from './breastParts.js';
 import { buildMuscles, setMusclePalette } from './muscleView.js';
 import { RotateRings } from './rotateRings.js';
 import { LimbPull } from './limbPull.js';
+import { JointDots } from './jointDots.js';
 import { WIRE, makeWireMaterial, makeWireGeometry, setWireOpacity, setWireStyle, setWireLatticeHeight } from './wireLines.js';
 import { deformFactors, installSegmentScale, setSegment, clearSegments } from './proportions.js';
 // 不具合を調べるときの入り口（画面には出ない）
@@ -35,6 +36,15 @@ const DEG = Math.PI / 180;
 const AX = new THREE.Vector3(1, 0, 0);
 const AY = new THREE.Vector3(0, 1, 0);
 const AZ = new THREE.Vector3(0, 0, 1);
+
+/** はじめのポーズ（起動したとき・全身リセット・すべてを初期値に戻す）: 両手を広げる */
+export const DEFAULT_POSE_ID = 'armsOpen';
+const DEFAULT_SPEC = (POSE_PRESETS.find(p => p.id === DEFAULT_POSE_ID) || { spec: '' }).spec;
+
+/** 画面に印を出す関節（あごは頭と重なるので出さない）。trunk = 体幹、pull = 引っ張れる手・足 */
+const DOT_KEYS = ['hips', 'spine', 'chest', 'neck', 'head',
+  'shoulderL', 'shoulderR', 'upperArmL', 'upperArmR', 'forearmL', 'forearmR', 'handL', 'handR',
+  'thighL', 'thighR', 'shinL', 'shinR', 'footL', 'footR'];
 const UP = new THREE.Vector3(0, 1, 0);
 
 /** 親から子の順に並べた関節。ポーズはこの順で適用する */
@@ -160,6 +170,7 @@ export class Viewer {
     this._initMarker();
     this.rings = new RotateRings(this);
     this.pull = new LimbPull(this);
+    this.dots = new JointDots(this, DOT_KEYS);
     this._bindPointer();
     this._loop();
   }
@@ -329,6 +340,7 @@ export class Viewer {
         const bone = this.selected ? this._boneForJoint(this.selected) : null;
         if (bone) bone.getWorldPosition(this.marker.position);
         this.rings.update();
+        this.dots.update();
         this.renderer.render(this.scene, this.camera);
         if (!this._firstFrame) { this._firstFrame = true; if (window.__positMark) window.__positMark('初回描画'); }
       } catch (err) {
@@ -2778,9 +2790,26 @@ export class Viewer {
     this.applyAll();
   }
 
+  /** はじめのポーズの角度（関節ごと） */
+  defaultAngles() {
+    const m = parseSpec(DEFAULT_SPEC), out = {};
+    for (const j of JOINTS) {
+      const a = m[j.key] || { x: 0, y: 0, z: 0 };
+      out[j.key] = this.limitsEnabled ? clampAngles(j.key, { ...a }) : { ...a };
+    }
+    return out;
+  }
+
+  /** はじめのポーズ（両手を広げる）に戻す。手の形も戻す */
+  resetToDefault() {
+    this.setAngles(this.defaultAngles());
+    this.applyHandShape('both', '');
+  }
+
+  /** 選んだ関節を、はじめのポーズの角度に戻す */
   resetSelected() {
     if (!this.selected) return;
-    this.angles[this.selected] = { x: 0, y: 0, z: 0 };
+    this.angles[this.selected] = { ...this.defaultAngles()[this.selected] };
     this.applyAll();
   }
 
@@ -2873,7 +2902,19 @@ export class Viewer {
       if (!this.jointDragEnabled || this._jd || !e.isPrimary || this.pickMode === 'anatomy') return;
       if (e.pointerType === 'mouse' && e.button !== 0) return;
       // 回転の輪を押したら、その軸だけで回す（関節の部分を押すより先に見る）
-      const rh = this.selected ? guard('回転の輪', () => this.rings.hit(e.clientX, e.clientY, e.pointerType)) : null;
+      let rh = this.selected ? guard('回転の輪', () => this.rings.hit(e.clientX, e.clientY, e.pointerType)) : null;
+      // 関節の印: 輪より近ければ印を優先する（輪の上に別の関節の印があることがある）
+      const dh = guard('関節の印', () => this.dots.hit(e.clientX, e.clientY, e.pointerType));
+      if (dh && rh && (dh.d <= 10 || dh.d < rh.d)) rh = null;
+      if (dh && !rh) {
+        e.stopImmediatePropagation();
+        e.preventDefault();
+        try { el.setPointerCapture(e.pointerId); } catch (err) { /* 続行 */ }
+        const pull = this.pull.canPull(dh.key) && guard('引っ張る', () => this.pull.begin(dh.key, e.clientX, e.clientY));
+        this._jd = { id: e.pointerId, key: dh.key, x: e.clientX, y: e.clientY, moved: false, dot: true, pull: !!pull };
+        this._jdTapped = true;           // 印のタップは、下の面ではなく印の関節を選ぶ（離したときに選ぶ）
+        return;
+      }
       if (rh && guard('回転の輪', () => this.rings.begin(rh, e.clientX, e.clientY))) {
         e.stopImmediatePropagation();
         e.preventDefault();
@@ -2906,6 +2947,8 @@ export class Viewer {
       if (!jd.moved) {
         if (Math.hypot(e.clientX - jd.x, e.clientY - jd.y) < 5) return;
         jd.moved = true;
+        // 印から曲げるときは、その関節を選んでから（輪・名前が出る）
+        if (jd.dot && !jd.pull && this.selected !== jd.key) this.select(jd.key);
         this.onJointDragStart(jd.key);
       }
       if (jd.ring) guard('回転の輪', () => this.rings.move(e.clientX, e.clientY));
@@ -2920,6 +2963,7 @@ export class Viewer {
       try { el.releasePointerCapture(jd.id); } catch (err) { /* 続行 */ }
       if (jd.ring) this.rings.end();
       if (jd.pull) this.pull.end();
+      if (jd.dot && !jd.moved && e && e.type === 'pointerup') this.select(jd.key);
       if (jd.moved) { this._jdTapped = true; this.onJointDragEnd(jd.key, jd.ring || (jd.pull ? 'pull' : null)); }
     };
     el.addEventListener('pointerup', end, { capture: true });
@@ -3307,6 +3351,8 @@ export class Viewer {
   setRingsEnabled(on) { this.rings.setEnabled(on); }
   /** 手・足を引っ張って腕・脚ごと動かせるか */
   setPullEnabled(on) { this.pull.setEnabled(on); }
+  /** 関節の印を出すか */
+  setDotsEnabled(on) { this.dots.setEnabled(on); }
   setLens(mm) {
     this.lensMM = mm;
     this.camera.fov = 2 * Math.atan(12 / mm) * (180 / Math.PI);

@@ -8,7 +8,7 @@ import { LightBall } from './lightBall.js';
 import { REGIONS } from './anatomy.js';
 import * as THREE from 'three';
 
-export const BUILD = '2026-10-15b';
+export const BUILD = '2026-10-15c';
 
 const SAMPLE_URL = 'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r169/examples/models/gltf/Xbot.glb';
 const SETTINGS_KEY = 'posit.settings.v1';
@@ -59,6 +59,7 @@ function loadSettings() {
       guideSeen: !!s.guideSeen,
       wireMode: s.wireMode === 'lattice' ? 'lattice' : 'mesh',
       wireDensity: [0, 1, 2, 3].includes(s.wireDensity) ? s.wireDensity : 1,
+      dots: s.dots !== false,
     };
   } catch (e) {
     return defaultSettings();
@@ -68,7 +69,7 @@ function loadSettings() {
 function defaultSettings() {
   return { seconds: 30, count: 10, cqCats: [], cqModel: 'skin', cqFrame: 'full', cqWire: false, cqAngle: 'random',
     cqSide: 'random', cqBody: 'keep', cqHandShape: true, lightBall: true, sheetStage: 1,
-    cqBeep: true, cqMirror: false, guideHeads: false, guideCenter: false, guideTilt: false, musclePal: false, rings: true, wireW: 1, wireA: 0.85, shotShadow: false, shotCrop: true, pull: true, wireMode: 'mesh', wireDensity: 1 };
+    cqBeep: true, cqMirror: false, guideHeads: false, guideCenter: false, guideTilt: false, musclePal: false, rings: true, wireW: 1, wireA: 0.85, shotShadow: false, shotCrop: true, pull: true, wireMode: 'mesh', wireDensity: 1, dots: true };
 }
 function saveSettings() {
   try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch (e) { /* 続行 */ }
@@ -368,11 +369,61 @@ viewer.onSelect = key => {
 // 画面の上の、選んだ関節の操作（戻す・左右へ写す・選択を外す）
 function syncSelBar(key) {
   $('selBar').hidden = !key;
+  $('quickPop').hidden = true;
   if (!key) return;
   $('selBarName').textContent = jointLabel(key);
   const j = JOINT_BY_KEY[key];
   $('selBarCopy').hidden = !(j && j.side && j.base !== 'jaw');
+  // 手を選んだら「手の形」、首・頭・あごを選んだら「顔」を、パネルを開かずに選べる
+  const more = quickKind(key);
+  $('selBarMore').hidden = !more;
+  if (more) $('selBarMore').textContent = more === 'hand' ? '手の形' : '顔';
 }
+function quickKind(key) {
+  if (/^hand[LR]$/.test(key || '') && viewer.fingerBoneCount()) return 'hand';
+  if (/^(neck|head|jaw)$/.test(key || '')) return 'face';
+  return null;
+}
+function openQuickPop() {
+  const key = viewer.selected, kind = quickKind(key);
+  if (!kind) return;
+  const grid = $('quickPopGrid');
+  grid.innerHTML = '';
+  const side = kind === 'hand' ? key.slice(-1) : null;
+  $('quickPopTitle').textContent = kind === 'hand'
+    ? `${side === 'L' ? '人形の左手' : '人形の右手'}の形（人形から見た左右）`
+    : '顔の向き・表情';
+  for (const it of kind === 'hand' ? HAND_SHAPES : FACE_PRESETS) {
+    const b = document.createElement('button');
+    b.textContent = it.name;
+    b.addEventListener('click', () => {
+      if (kind === 'hand') viewer.applyHandShape(side, it.spec);
+      else { snapshot(); viewer.applyFacePreset(it.spec); syncSliders(); }
+      for (const x of grid.children) x.classList.toggle('on', x === b);
+    });
+    grid.appendChild(b);
+  }
+  $('quickPop').hidden = false;
+}
+$('selBarMore').addEventListener('click', () => {
+  if ($('quickPop').hidden) openQuickPop(); else $('quickPop').hidden = true;
+});
+// 上のバーの「画像に保存」: 画面のまま／背景を透過
+$('btnShot').addEventListener('click', e => { e.stopPropagation(); $('shotPop').hidden = !$('shotPop').hidden; });
+$('shotPopPlain').addEventListener('click', () => { $('shotPop').hidden = true; exportImage(false); });
+$('shotPopClear').addEventListener('click', () => { $('shotPop').hidden = true; exportImage(true); });
+// 小窓の外を触ったら閉じる
+document.addEventListener('pointerdown', e => {
+  if (!$('shotPop').hidden && !e.target.closest('#shotPop, #btnShot')) $('shotPop').hidden = true;
+  if (!$('quickPop').hidden && !e.target.closest('#quickPop, #selBar')) $('quickPop').hidden = true;
+}, { capture: true });
+// 関節の印
+$('dotsOn').checked = settings.dots;
+viewer.setDotsEnabled(settings.dots);
+$('dotsOn').addEventListener('change', e => {
+  settings.dots = e.target.checked; saveSettings();
+  viewer.setDotsEnabled(settings.dots);
+});
 $('selBarReset').addEventListener('click', () => {
   if (!viewer.selected) return;
   snapshot(); viewer.resetSelected(); syncSliders();
@@ -1436,6 +1487,7 @@ async function loadSample() {
     mark('サンプル取得開始');
     await viewer.loadURL(SAMPLE_URL, 'skin');
     mark('サンプル取得完了');
+    viewer.resetToDefault();        // はじめのポーズ（両手を広げる）
     syncSliders();
   } catch (err) {
     if (window.__positShowError) {
@@ -1914,7 +1966,7 @@ $('canonRest').addEventListener('change', e => { viewer.setCanonicalRest(e.targe
 $('gridOn').addEventListener('change', e => viewer.setGridVisible(e.target.checked));
 $('limitsOn').addEventListener('change', e => { viewer.setLimitsEnabled(e.target.checked); syncSliders(); });
 
-$('btnReset').addEventListener('click', () => { snapshot(); viewer.resetPose(); syncSliders(); });
+$('btnReset').addEventListener('click', () => { snapshot(); viewer.resetToDefault(); syncSliders(); showToast('はじめのポーズ（両手を広げる）に戻しました'); });
 $('btnMirror').addEventListener('click', () => {
   snapshot();
   viewer.mirrorPose();
@@ -1939,8 +1991,7 @@ function resetAllSettings() {
   if (!window.confirm('すべての設定とポーズを初期値に戻しますか？\n（履歴・保存したポーズ・読み込んだモデルはそのままです。ポーズは「1つ戻す」で戻せます）')) return;
   // ポーズと手の形も戻す（写真から当てたポーズも含む）
   snapshot();
-  viewer.resetPose();
-  viewer.applyHandShape('both', '');
+  viewer.resetToDefault();
   showPhotoOverlay(false); $('photoOverlayBar').hidden = true;
   // クロッキーとパネルの設定
   Object.assign(settings, defaultSettings());
@@ -1967,6 +2018,7 @@ function resetAllSettings() {
   setCheck('limitsOn', true);
   setCheck('ringsOn', true);
   setCheck('pullOn', true);
+  setCheck('dotsOn', true);
   setCheck('shotShadow', false);
   setCheck('shotCrop', true);
   // 見る範囲とカメラ（ライトの向きはカメラが基準なので先に戻す）

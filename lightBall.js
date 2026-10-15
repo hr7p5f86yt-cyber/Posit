@@ -9,9 +9,9 @@
 import * as THREE from 'three';
 
 const DEG = Math.PI / 180;
-const SIZE = 104;         // CSS ピクセル
-const R_OUT = 40;         // 外側の輪（真後ろ）
-const R_IN = 27;          // 内側の円（真横）
+const SIZE = 84;          // CSS ピクセル（v46 で 104 → 84。両手を広げたポーズの手にかからないように）
+const R_OUT = 32;         // 外側の輪（真後ろ）
+const R_IN = 22;          // 内側の円（真横）
 
 /** 方位・高さ（世界）→ 光の来る向き（世界、単位ベクトル） */
 export function dirFromAzEl(az, el) {
