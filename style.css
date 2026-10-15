@@ -732,4 +732,14 @@ body.croquis #actBar, body.croquis #posePop { display: none; }
 @media (min-width: 700px) { #posePopGrid { grid-template-columns: repeat(4, 1fr); } }
 #posePopGrid button { padding: 10px 4px; font-size: 13px; border-radius: 10px; }
 
+/* 手・足の固定ボタン（右下に縦に並べる。左右は人形から見た左右） */
+#lockBar { position: fixed; z-index: 30; right: 8px; bottom: calc(var(--view-b, 0px) + 100px);
+  display: flex; flex-direction: column; gap: 6px; align-items: stretch; }
+#lockBar .lbTitle { font-size: 11px; color: var(--muted); text-align: center; }
+#lockBar .qb { height: 34px; min-width: 52px; padding: 0 8px; font-size: 12.5px; }
+#lockBar .qb.on { background: #ffb547; color: #2a1a00; border-color: #ffb547; }
+#lockBar .qb.on::before { content: '🔒'; font-size: 10px; margin-right: 2px; }
+#actBar .qb.on { background: #ffb547; color: #2a1a00; border-color: #ffb547; }
+body.croquis #lockBar { display: none; }
+
 /* ===== style.css ここまで ===== */

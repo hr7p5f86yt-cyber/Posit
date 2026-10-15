@@ -8,7 +8,7 @@ import { LightBall } from './lightBall.js';
 import { REGIONS } from './anatomy.js';
 import * as THREE from 'three';
 
-export const BUILD = '2026-10-15e';
+export const BUILD = '2026-10-16a';
 
 const SAMPLE_URL = 'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r169/examples/models/gltf/Xbot.glb';
 const SETTINGS_KEY = 'posit.settings.v1';
@@ -413,7 +413,7 @@ $('selBarLock').addEventListener('click', () => {
   if (!ks) return;
   const on = !ks.every(k => viewer.isLocked(k));
   for (const k of ks) viewer.toggleLock(k, on);
-  syncLockBtn(key);
+  syncLockBar();
   showToast(on
     ? (key === 'hips' ? '両足を固定しました。腰を押して動かすと、足はそのままで腰が動きます' : `${jointLabel(key)}を固定しました。ほかを動かしても、この位置に残ります`)
     : '固定を外しました');
@@ -499,10 +499,34 @@ $('posePopRandom').addEventListener('click', () => {
   const pool = POSE_PRESETS.filter(x => !popCat || x.category === popCat);
   applyPose(pool[Math.floor(Math.random() * pool.length)]);
 });
-// 体全体: 腰を選ぶ（腰を押して動かすと体全体が動き、緑の輪で向きが変わる）
+// 体全体: オンの間は、人形のどこを押して動かしても体全体が床の上を滑る。腰を選ぶので、緑の輪で向きが変わる
+function setBodyMode(on) {
+  viewer.setBodyMode(on);
+  $('actBody').classList.toggle('on', on);
+}
 $('actBody').addEventListener('click', () => {
-  viewer.select(viewer.selected === 'hips' ? null : 'hips');
+  const on = !viewer.bodyMode;
+  setBodyMode(on);
+  if (on) {
+    viewer.select('hips');
+    showToast('体全体: 人形を押して動かすと体ごと滑ります。緑の輪で向きを変えます。もう一度押すと終わります');
+  } else if (viewer.selected === 'hips') viewer.select(null);
 });
+
+// 手・足の固定ボタン（右下）。左右は人形から見た左右
+function syncLockBar() {
+  for (const b of document.querySelectorAll('#lockBar [data-lock]')) b.classList.toggle('on', viewer.isLocked(b.dataset.lock));
+  if (viewer.selected) syncLockBtn(viewer.selected);
+}
+for (const b of document.querySelectorAll('#lockBar [data-lock]')) {
+  b.addEventListener('click', () => {
+    const k = b.dataset.lock, on = !viewer.isLocked(k);
+    viewer.toggleLock(k, on);
+    syncLockBar();
+    showToast(on ? `${jointLabel(k)}を固定しました（ほかを動かしても、この位置に残ります）` : `${jointLabel(k)}の固定を外しました`);
+  });
+}
+viewer.onLocksChanged = () => syncLockBar();
 
 // キープ: ポーズを 1 つ取っておき、ほかのポーズに変えたあと、ボタンで行き来する（端末に覚えておく）
 const KEEP_KEY = 'posit.keep';
@@ -606,7 +630,7 @@ const AXES = [
 ];
 
 function syncSliders() {
-  if (typeof syncLockBtn === 'function' && viewer.selected) syncLockBtn(viewer.selected);
+  if (typeof syncLockBar === 'function') syncLockBar();
   const key = viewer.selected;
   const j = key ? JOINT_BY_KEY[key] : null;
   const a = key ? viewer.getAngles(key) : { x: 0, y: 0, z: 0 };

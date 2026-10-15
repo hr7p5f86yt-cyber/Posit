@@ -2873,12 +2873,12 @@ export class Viewer {
   toggleLock(key, on = !this.locks.has(key)) {
     const slot = this.primarySlot;
     const b = slot && slot.boneMap[key];
-    if (!on || !b || !this.pull.canPull(key)) { this.locks.delete(key); return false; }
+    if (!on || !b || !slot.skeleton) { this.locks.delete(key); return false; }
     this.locks.set(key, { pos: b.getWorldPosition(new THREE.Vector3()), quat: b.getWorldQuaternion(new THREE.Quaternion()) });
     return true;
   }
   isLocked(key) { return this.locks.has(key); }
-  clearLocks() { this.locks.clear(); }
+  clearLocks() { this.locks.clear(); if (this.onLocksChanged) this.onLocksChanged(); }
   /** 固定している所を、いまの位置で固定し直す（戻す・やり直すのあと） */
   relock() { for (const k of [...this.locks.keys()]) this.toggleLock(k, true); }
 
@@ -2903,25 +2903,33 @@ export class Viewer {
   _applyAngles() { this.applyAll(); }
 
   /**
-   * 体全体を動かす（腰をつかんで動かす）。画面の面の中で動く。足を固定していなければ床の上を滑り、
-   * 足を固定していれば、腰が上下・前後して脚が曲がる（しゃがむ・重心を移す）
+   * 腰を動かす。mode:
+   *   'pull'  … 腰を引っ張る（手・足を引っ張るのと同じ）。画面の面の中で自由に動き、足は床に付いたまま
+   *             （固定していない足も、動かしている間だけその場に留める）→ しゃがむ・重心を移す・踏み込む
+   *   'slide' … 体全体（固定した手・足ごと）を床の上で滑らせる
    */
-  beginBodyMove(clientX, clientY) {
+  beginBodyMove(clientX, clientY, mode = 'pull') {
     const slot = this.primarySlot;
     const hips = slot && slot.boneMap.hips;
     if (!hips) return false;
     this.camera.updateMatrixWorld();
     const n = new THREE.Vector3(); this.camera.getWorldDirection(n);
-    // 足を固定していないときは、床と平行に動かす（上下は床合わせで戻るので）
-    const freeY = this.locks.has('footL') || this.locks.has('footR');
     const p0 = hips.getWorldPosition(new THREE.Vector3());
-    const plane = freeY ? new THREE.Plane().setFromNormalAndCoplanarPoint(n, p0)
-      : new THREE.Plane().setFromNormalAndCoplanarPoint(new THREE.Vector3(0, 1, 0), p0);
-    // 床と平行な面が画面とほぼ平行（真横から見ている）ときは、画面の面にする
-    if (!freeY && Math.abs(n.y) < 0.25) plane.setFromNormalAndCoplanarPoint(new THREE.Vector3(n.x, 0, n.z).normalize(), p0);
+    let plane;
+    if (mode === 'pull') plane = new THREE.Plane().setFromNormalAndCoplanarPoint(n, p0);
+    else if (Math.abs(n.y) > 0.25) plane = new THREE.Plane().setFromNormalAndCoplanarPoint(new THREE.Vector3(0, 1, 0), p0);
+    // 床と平行な面が画面とほぼ平行（真横から見ている）ときは、画面に向いた縦の面で、横にだけ動かす
+    else plane = new THREE.Plane().setFromNormalAndCoplanarPoint(new THREE.Vector3(n.x, 0, n.z).normalize(), p0);
     const P0 = this.pull._rayPoint(clientX, clientY, plane);
     if (!P0) return false;
-    this._bodyMove = { plane, P0, shift0: this.bodyShift.clone(), freeY };
+    // 引っ張るときは、固定していない足もその間だけ留める（離したら外す）
+    const temp = [];
+    if (mode === 'pull') {
+      for (const k of ['footL', 'footR']) if (!this.locks.has(k) && this.toggleLock(k, true)) temp.push(k);
+    }
+    const locks0 = new Map([...this.locks].map(([k, L]) => [k, L.pos.clone()]));
+    this._bodyMove = { plane, P0, shift0: this.bodyShift.clone(), mode, temp, locks0 };
+    if (this.onLocksChanged) this.onLocksChanged();
     return true;
   }
   moveBody(clientX, clientY) {
@@ -2930,13 +2938,26 @@ export class Viewer {
     const P = this.pull._rayPoint(clientX, clientY, m.plane);
     if (!P) return;
     const d = P.sub(m.P0);
-    if (!m.freeY) d.y = 0;
+    if (m.mode === 'slide') {
+      d.y = 0;
+      // 体ごと動かすので、固定した手・足の位置も一緒に動かす
+      for (const [k, p0] of m.locks0) { const L = this.locks.get(k); if (L) L.pos.copy(p0).add(d); }
+    }
     this.bodyShift.copy(m.shift0).add(d);
-    // 腰が足より下へ行きすぎないように（足を固定してしゃがむときの下限）
     this.applyAll();
     this._enforceLocks('hips');
   }
-  endBodyMove() { this._bodyMove = null; }
+  endBodyMove() {
+    const m = this._bodyMove;
+    this._bodyMove = null;
+    if (m && m.temp.length) {
+      for (const k of m.temp) this.locks.delete(k);
+      if (this.onLocksChanged) this.onLocksChanged();
+    }
+  }
+
+  /** 体全体モード（オンの間は、人形のどこを押して動かしても体全体が床の上を滑る） */
+  setBodyMode(on) { this.bodyMode = !!on; }
 
   mirrorPose() {
     const swap = (aKey, bKey) => {
@@ -3011,12 +3032,14 @@ export class Viewer {
       // 関節の印: 輪より近ければ印を優先する（輪の上に別の関節の印があることがある）
       const dh = guard('関節の印', () => this.dots.hit(e.clientX, e.clientY, e.pointerType));
       if (dh && rh && (dh.d <= 10 || dh.d < rh.d)) rh = null;
+      // 体全体モードでは、輪は線の真上を押したときだけ（体のどこを押しても滑らせやすいように）
+      if (rh && this.bodyMode && rh.d > 12) rh = null;
       if (dh && !rh) {
         e.stopImmediatePropagation();
         e.preventDefault();
         try { el.setPointerCapture(e.pointerId); } catch (err) { /* 続行 */ }
         const pull = this.pull.canPull(dh.key) && guard('引っ張る', () => this.pull.begin(dh.key, e.clientX, e.clientY));
-        const body = dh.key === 'hips' && guard('体を動かす', () => this.beginBodyMove(e.clientX, e.clientY));
+        const body = (dh.key === 'hips' || this.bodyMode) && guard('体を動かす', () => this.beginBodyMove(e.clientX, e.clientY, this.bodyMode ? 'slide' : 'pull'));
         this._jd = { id: e.pointerId, key: dh.key, x: e.clientX, y: e.clientY, moved: false, dot: true, pull: !!pull, body: !!body };
         this._jdTapped = true;           // 印のタップは、下の面ではなく印の関節を選ぶ（離したときに選ぶ）
         return;
@@ -3030,6 +3053,15 @@ export class Viewer {
         return;
       }
       const key = guard('関節の判定', () => this._jointAt(e.clientX, e.clientY));
+      // 体全体モード: 人形のどこを押しても体全体が滑る。腰（骨盤）を押したら、選んでいなくても腰を引っ張る
+      if (key && (this.bodyMode || (key === 'hips' && this.pull.enabled))
+        && guard('体を動かす', () => this.beginBodyMove(e.clientX, e.clientY, this.bodyMode ? 'slide' : 'pull'))) {
+        e.stopImmediatePropagation();
+        e.preventDefault();
+        try { el.setPointerCapture(e.pointerId); } catch (err) { /* 続行 */ }
+        this._jd = { id: e.pointerId, key: 'hips', x: e.clientX, y: e.clientY, moved: false, body: true };
+        return;
+      }
       // 手・足を押したら、選んでいなくても引っ張って動かせる（腕・脚がついてくる）。動かさずに離せばタップで選ぶ
       if (key && this.pull.canPull(key) && guard('引っ張る', () => this.pull.begin(key, e.clientX, e.clientY))) {
         e.stopImmediatePropagation();
@@ -3046,7 +3078,7 @@ export class Viewer {
       e.preventDefault();
       try { el.setPointerCapture(e.pointerId); } catch (err) { /* 続行 */ }
       // 腰を選んでいるときは、押して動かすと体全体が動く（回すのは輪で）
-      const body = this.selected === 'hips' && guard('体を動かす', () => this.beginBodyMove(e.clientX, e.clientY));
+      const body = this.selected === 'hips' && guard('体を動かす', () => this.beginBodyMove(e.clientX, e.clientY, this.bodyMode ? 'slide' : 'pull'));
       this._jd = { id: e.pointerId, key: this.selected, x: e.clientX, y: e.clientY, moved: false, body: !!body };
     }, { capture: true });
     el.addEventListener('pointermove', e => {
@@ -3078,6 +3110,8 @@ export class Viewer {
       if (jd.ring) this.rings.end();
       if (jd.pull) this.pull.end();
       if (jd.body) this.endBodyMove();
+      // 腰をタップしただけ（動かさない）なら、ふつうのタップとして腰を選ぶ
+      if (jd.body && !jd.moved && !jd.dot && e && e.type === 'pointerup') this._jdTapped = false;
       if (jd.dot && !jd.moved && e && e.type === 'pointerup') this.select(jd.key);
       if (jd.moved) { this._jdTapped = true; this.onJointDragEnd(jd.key, jd.ring || (jd.pull ? 'pull' : jd.body ? 'body' : null)); }
     };
