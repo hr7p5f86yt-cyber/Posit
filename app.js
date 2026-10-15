@@ -8,7 +8,7 @@ import { LightBall } from './lightBall.js';
 import { REGIONS } from './anatomy.js';
 import * as THREE from 'three';
 
-export const BUILD = '2026-10-15d';
+export const BUILD = '2026-10-15e';
 
 const SAMPLE_URL = 'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r169/examples/models/gltf/Xbot.glb';
 const SETTINGS_KEY = 'posit.settings.v1';
@@ -97,6 +97,7 @@ $('btnUndo').addEventListener('click', () => {
   if (!prev) return;
   redoStack.push(viewer.allAngles());
   viewer.setAngles(prev);
+  viewer.relock();
   syncSliders();
   syncUndoButtons();
 });
@@ -105,6 +106,7 @@ $('btnRedo').addEventListener('click', () => {
   if (!next) return;
   undoStack.push(viewer.allAngles());
   viewer.setAngles(next);
+  viewer.relock();
   syncSliders();
   syncUndoButtons();
 });
@@ -146,7 +148,7 @@ function updateInsets() {
   const sheet = $('sheet').getBoundingClientRect();
   const top = Math.round(($('topbar').getBoundingClientRect().bottom || 0) - 4);
   // 画面の下の「見る向き」のボタンの段（約 46px）にも人形がかからないように、そのぶん下を空ける
-  const bar = getComputedStyle($('viewBar')).display !== 'none' ? 46 : 0;
+  const bar = getComputedStyle($('viewBar')).display !== 'none' ? 90 : 0;     // 見る向き＋ポーズ・キープの 2 段
   let ins;
   if (wideLayout()) {
     // 横長の画面：パネルは右。たたんだときは下のタブだけなので、右は空ける
@@ -157,6 +159,8 @@ function updateInsets() {
   // 見る向きのボタンは、空いている所の下の端に置く
   document.documentElement.style.setProperty('--view-b', `${ins.bottom}px`);
   $('viewBar').style.right = `${8 + (ins.right || 0)}px`;
+  $('actBar').style.right = `${8 + (ins.right || 0)}px`;
+  $('posePop').style.right = `${8 + (ins.right || 0)}px`;
   viewer.setInsets({ ...ins, bottom: ins.bottom + bar });
 }
 let insetTimer = null;
@@ -357,6 +361,7 @@ viewer.onSlotsChanged = () => {
   if ($('faceWrap').classList.contains('on')) buildFaceList();
 };
 
+let hipsTold = false;
 viewer.onSelect = key => {
   const label = key ? jointLabel(key) : '';
   syncSelBar(key);
@@ -369,6 +374,10 @@ viewer.onSelect = key => {
   }
   // 関節を選んでも、たたんだパネルは開かない（人形の上で操作できるので）。開いたときは関節のページになっている
   if (key) { showTab('joint', false); focusJointGroup(key); }
+  if (key === 'hips' && !hipsTold) {
+    hipsTold = true;
+    showToast('腰を押して動かすと体全体が動きます。緑の輪で向きを変えます');
+  }
 };
 
 // 画面の上の、選んだ関節の操作（戻す・左右へ写す・選択を外す）
@@ -380,10 +389,35 @@ function syncSelBar(key) {
   const j = JOINT_BY_KEY[key];
   $('selBarCopy').hidden = !(j && j.side && j.base !== 'jaw');
   // 手を選んだら「手の形」、首・頭・あごを選んだら「顔」を、パネルを開かずに選べる
+  syncLockBtn(key);
   const more = quickKind(key);
   $('selBarMore').hidden = !more;
   if (more) $('selBarMore').textContent = more === 'hand' ? '手の形' : '顔';
 }
+// 固定: 手・足はその手・足、腰は両足（足を固定して腰を動かすと、しゃがむ・重心を移す）
+function lockKeys(key) {
+  if (/^(hand|foot)[LR]$/.test(key || '')) return [key];
+  if (key === 'hips') return ['footL', 'footR'];
+  return null;
+}
+function syncLockBtn(key) {
+  const ks = lockKeys(key), b = $('selBarLock');
+  b.hidden = !ks;
+  if (!ks) return;
+  const on = ks.every(k => viewer.isLocked(k));
+  b.classList.toggle('on', on);
+  b.textContent = key === 'hips' ? (on ? '両足を固定中' : '両足を固定') : (on ? '固定中' : '固定');
+}
+$('selBarLock').addEventListener('click', () => {
+  const key = viewer.selected, ks = lockKeys(key);
+  if (!ks) return;
+  const on = !ks.every(k => viewer.isLocked(k));
+  for (const k of ks) viewer.toggleLock(k, on);
+  syncLockBtn(key);
+  showToast(on
+    ? (key === 'hips' ? '両足を固定しました。腰を押して動かすと、足はそのままで腰が動きます' : `${jointLabel(key)}を固定しました。ほかを動かしても、この位置に残ります`)
+    : '固定を外しました');
+});
 function quickKind(key) {
   if (/^hand[LR]$/.test(key || '') && viewer.fingerBoneCount()) return 'hand';
   if (/^(neck|head|jaw)$/.test(key || '')) return 'face';
@@ -421,6 +455,7 @@ $('shotPopClear').addEventListener('click', () => { $('shotPop').hidden = true; 
 document.addEventListener('pointerdown', e => {
   if (!$('shotPop').hidden && !e.target.closest('#shotPop, #btnShot')) $('shotPop').hidden = true;
   if (!$('quickPop').hidden && !e.target.closest('#quickPop, #selBar')) $('quickPop').hidden = true;
+  if (!$('posePop').hidden && !e.target.closest('#posePop, #actPose')) $('posePop').hidden = true;
 }, { capture: true });
 // 関節の印
 $('dotsOn').checked = settings.dots;
@@ -442,6 +477,62 @@ $('selBarCopy').addEventListener('click', () => {
   if (r) showToast(`${r}へ写しました（鏡に映した形）`);
 });
 $('selBarClose').addEventListener('click', () => viewer.select(null));
+
+// ---- 画面の上のポーズ一覧・体全体・キープ ----------------------------------------
+let popCat = '';
+function buildPosePop() {
+  buildChips('posePopCats', [{ key: '', label: 'すべて' }, ...POSE_CATEGORIES.map(c => ({ key: c.key, label: c.name }))],
+    o => popCat === o.key, o => { popCat = o.key; buildPosePop(); });
+  const grid = $('posePopGrid');
+  grid.innerHTML = '';
+  for (const p of POSE_PRESETS.filter(x => !popCat || x.category === popCat)) {
+    const b = document.createElement('button');
+    b.textContent = p.name;
+    b.addEventListener('click', () => { applyPose(p); for (const x of grid.children) x.classList.toggle('on', x === b); });
+    grid.appendChild(b);
+  }
+}
+$('actPose').addEventListener('click', () => {
+  if ($('posePop').hidden) { buildPosePop(); $('posePop').hidden = false; } else $('posePop').hidden = true;
+});
+$('posePopRandom').addEventListener('click', () => {
+  const pool = POSE_PRESETS.filter(x => !popCat || x.category === popCat);
+  applyPose(pool[Math.floor(Math.random() * pool.length)]);
+});
+// 体全体: 腰を選ぶ（腰を押して動かすと体全体が動き、緑の輪で向きが変わる）
+$('actBody').addEventListener('click', () => {
+  viewer.select(viewer.selected === 'hips' ? null : 'hips');
+});
+
+// キープ: ポーズを 1 つ取っておき、ほかのポーズに変えたあと、ボタンで行き来する（端末に覚えておく）
+const KEEP_KEY = 'posit.keep';
+let kept = (() => { try { return JSON.parse(localStorage.getItem(KEEP_KEY) || 'null'); } catch (e) { return null; } })();
+const currentPoseData = () => ({ spec: toSpec(viewer.allAngles()), hands: { ...viewer.handShape } });
+function saveKeep() { try { localStorage.setItem(KEEP_KEY, JSON.stringify(kept)); } catch (e) { /* 続行 */ } }
+function syncKeep() {
+  const b = $('actKeep');
+  b.classList.toggle('kept', !!kept);
+  b.textContent = kept ? '⇄ キープ' : 'キープ';
+  b.title = kept ? 'キープしたポーズと入れ替える' : 'いまのポーズをキープ';
+  $('actKeepClear').hidden = !kept;
+}
+$('actKeep').addEventListener('click', () => {
+  if (!kept) {
+    kept = currentPoseData(); saveKeep(); syncKeep();
+    showToast('いまのポーズをキープしました。ほかのポーズに変えたあと「⇄ キープ」で行き来できます');
+    return;
+  }
+  // いまのポーズとキープを入れ替える（どちらも残る）
+  const now = currentPoseData();
+  snapshot();
+  viewer.applyPose(kept.spec);
+  for (const sd of ['L', 'R']) viewer.applyHandShape(sd, (kept.hands && kept.hands[sd]) || '');
+  kept = now; saveKeep(); syncKeep();
+  syncSliders();
+  showToast('キープしたポーズに切り替えました（もう一度押すと戻ります）');
+});
+$('actKeepClear').addEventListener('click', () => { kept = null; saveKeep(); syncKeep(); showToast('キープを消しました'); });
+syncKeep();
 
 // 操作のしかた（はじめて開いたときに 1 度だけ出す。「？」からいつでも開ける）
 function openGuide() { $('guideBox').hidden = false; }
@@ -515,6 +606,7 @@ const AXES = [
 ];
 
 function syncSliders() {
+  if (typeof syncLockBtn === 'function' && viewer.selected) syncLockBtn(viewer.selected);
   const key = viewer.selected;
   const j = key ? JOINT_BY_KEY[key] : null;
   const a = key ? viewer.getAngles(key) : { x: 0, y: 0, z: 0 };
@@ -1796,12 +1888,12 @@ bindRange('wireAlpha', 'outWireA', v => {
 for (const id of ['wireWidth', 'wireAlpha']) {
   $(id).addEventListener('pointerdown', () => { if (!$('wireOn').checked) setCheck('wireOn', true); });
 }
-// 面の線の数（少なめ = 四角の面 … とても多め = 三角形を 3 分割）と引き方（面の割れ／等間隔の輪切り）
+// 面の線の数（少なめ = 四角の面 … とても多め = 三角形を 3 分割）と引き方（面の割れ／体に沿った輪切り）
 const WIRE_DENSITIES = [
   { value: 0, label: '少なめ' }, { value: 1, label: 'ふつう' }, { value: 2, label: '多め' }, { value: 3, label: 'とても多め' },
 ];
 const WIRE_MODES = [
-  { value: 'mesh', label: '面の割れに沿う' }, { value: 'lattice', label: '等間隔の輪切り' },
+  { value: 'mesh', label: '面の割れに沿う' }, { value: 'lattice', label: '体に沿った輪切り' },
 ];
 function buildWireChips() {
   viewer.setWireStyle(settings.wireMode, settings.wireDensity);

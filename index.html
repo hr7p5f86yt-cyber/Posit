@@ -135,6 +135,7 @@
   <span id="selBarName"></span>
   <button id="selBarReset" class="qb" title="この関節を戻す">戻す</button>
   <button id="selBarCopy" class="qb" title="反対側へ鏡に映して写す">反対へ写す</button>
+  <button id="selBarLock" class="qb" hidden>固定</button>
   <button id="selBarMore" class="qb" hidden>手の形</button>
   <button id="selBarClose" class="qb icon" aria-label="選択を外す"><svg viewBox="0 0 24 24"><path d="M7 7l10 10M17 7L7 17"/></svg></button>
 </div>
@@ -145,6 +146,20 @@
 <div id="shotPop" hidden>
   <button id="shotPopPlain" class="ghost">画面を画像に</button>
   <button id="shotPopClear" class="ghost">背景を透過して画像に</button>
+</div>
+<div id="posePop" hidden>
+  <div class="ppHead">
+    <div class="scroller" id="posePopCats"></div>
+    <button id="posePopRandom" class="qb icon" title="ランダム" aria-label="ランダム"><svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="3.5"/><circle cx="9" cy="9" r="1.1" fill="currentColor"/><circle cx="15" cy="15" r="1.1" fill="currentColor"/><circle cx="15" cy="9" r="1.1" fill="currentColor"/><circle cx="9" cy="15" r="1.1" fill="currentColor"/></svg></button>
+  </div>
+  <div class="qpGrid" id="posePopGrid"></div>
+</div>
+<div id="actBar">
+  <button class="qb accent" id="actPose">ポーズ</button>
+  <button class="qb" id="actBody" title="腰を選んで、体全体を動かす・回す">体全体</button>
+  <div class="spacer"></div>
+  <button class="qb" id="actKeep" title="いまのポーズをキープ">キープ</button>
+  <button class="qb icon" id="actKeepClear" hidden aria-label="キープを消す"><svg viewBox="0 0 24 24"><path d="M7 7l10 10M17 7L7 17"/></svg></button>
 </div>
 <div id="viewBar">
   <button class="qb" data-az="0" data-el="4">正面</button>
@@ -510,6 +525,9 @@
       <li><span class="gi">🤏</span><div><b>2 本指</b>でつまむと拡大・縮小、そのまま動かすと平行移動</div></li>
       <li><span class="gi">⤢</span><div>何もない所を<b>2 回タップ</b>すると、全体が画面に収まります</div></li>
       <li><span class="gi">⬚</span><div>画面の下のボタンで<b>正面・横・後ろ・上</b>から。<br>上のボタンで 1 つ戻す・やり直す・画像に保存</div></li>
+      <li><span class="gi">⤧</span><div>画面の下の<b>ポーズ</b>で一覧から選ぶ、<b>体全体</b>で腰を押して体ごと動かす・緑の輪で回す。
+        手・足は選んで<b>固定</b>できます</div></li>
+      <li><span class="gi">⇄</span><div><b>キープ</b>でポーズを 1 つ取っておき、ほかのポーズと行き来できます</div></li>
       <li><span class="gi">▭</span><div>下のパネルは<b>はじめはたたんで</b>あります。下のタブか上の <b>⌃</b> で開きます（ポーズの一覧・設定）</div></li>
     </ul>
     <p class="hint tiny">左右はいつも<b>人形から見た</b>左右です。この案内は「？」（困ったとき）からまた開けます。</p>

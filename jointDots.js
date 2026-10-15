@@ -34,6 +34,36 @@ export class JointDots {
       this.dots.set(k, { el: d, x: 0, y: 0, depth: 0, far: false, on: false, cls: '' });
     }
     this._tmp = new THREE.Vector3();
+    // 固定した手・足の印（錠前）。関節の印を出していなくても出す
+    this.pinLayer = document.createElement('div');
+    this.pinLayer.id = 'lockPins';
+    document.body.appendChild(this.pinLayer);
+    this.pins = new Map();
+    for (const k of ['handL', 'handR', 'footL', 'footR']) {
+      const el = document.createElement('div');
+      el.className = 'jpin';
+      el.innerHTML = '<svg viewBox="0 0 24 24"><rect x="5" y="10.5" width="14" height="10" rx="2.2"/><path d="M8.5 10.5V8a3.5 3.5 0 017 0v2.5"/></svg>';
+      el.hidden = true;
+      this.pinLayer.appendChild(el);
+      this.pins.set(k, el);
+    }
+  }
+
+  _updatePins() {
+    const v = this.v, slot = v.primarySlot;
+    const show = !v._uiHidden && slot && slot.skeleton && v.locks && v.locks.size;
+    this.pinLayer.style.display = show ? '' : 'none';
+    if (!show) return;
+    const rect = v.canvas.getBoundingClientRect();
+    for (const [k, el] of this.pins) {
+      const b = slot.boneMap[k];
+      if (!v.locks.has(k) || !b) { el.hidden = true; continue; }
+      const q = b.getWorldPosition(new THREE.Vector3()).project(v.camera);
+      if (q.z > 1) { el.hidden = true; continue; }
+      const x = rect.left + (q.x + 1) / 2 * rect.width, y = rect.top + (1 - q.y) / 2 * rect.height;
+      el.style.transform = `translate(${x.toFixed(1)}px, ${y.toFixed(1)}px)`;
+      el.hidden = false;
+    }
   }
 
   setEnabled(on) {
@@ -49,6 +79,7 @@ export class JointDots {
 
   /** 毎フレーム: 印を関節の位置へ */
   update() {
+    this._updatePins();
     const v = this.v;
     const show = this._show();
     this.layer.style.display = show ? '' : 'none';

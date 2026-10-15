@@ -14,10 +14,12 @@
 //   5. それぞれの世界での向きを、関節の角度（D = Rx·Rz·Ry）に直し、可動域に収める
 
 import * as THREE from 'three';
-import { JOINT_BY_KEY, clampAngles } from './bones.js';
+import { JOINT_BY_KEY, clampAngles, limitExcess } from './bones.js';
 
 const DEG = Math.PI / 180;
 const AX = new THREE.Vector3(1, 0, 0);
+/** 1 回解くごとに、肘・膝を自然な向きへ寄せる割合 */
+const NATURAL_PULL = 0.35;
 
 export const PULL_CHAINS = {
   handL: ['upperArmL', 'forearmL', 'handL'],
@@ -158,30 +160,65 @@ export class LimbPull {
     side.addScaledVector(u, -side.dot(u));
     if (side.lengthSq() < 1e-12) return false;
     side.normalize();
+    const sideCur = side.clone();
+    const nat = this._naturalSide(slot, key);
+    if (nat) nat.addScaledVector(u, -nat.dot(u));
+    const natOk = nat && nat.length() > 0.2;
+    if (natOk) nat.normalize();
     const a = (L1 * L1 - L2 * L2 + dist * dist) / (2 * dist);
     const h = Math.sqrt(Math.max(0, L1 * L1 - a * a));
-    const E2 = S.clone().addScaledVector(u, a).addScaledVector(side, h);
+    const dirU = toE.clone().normalize();
+    const cur = k => ({ ...(v.angles[k] || { x: 0, y: 0, z: 0 }) });
+    const Dof = (Pw, np, W2, nb) => Pw.clone().multiply(np.clone().invert()).invert().multiply(W2).multiply(nb.clone().invert());
 
-    // 3. 上腕（腿）: 骨の向きと肘の軸を合わせる
-    const dirU = toE.clone().normalize(), dirU2 = E2.clone().sub(S).normalize();
-    const dirF2 = Tc.clone().sub(E2).normalize();
-    let hingeNew = dirU2.clone().cross(dirF2);
-    if (hingeNew.length() < Math.sin(6 * DEG) || h < 0.08 * L1) {
-      // 伸びきり: 軸は今の軸を、骨の向きの変化と同じだけ回したもの
-      hingeNew = hingeCur.clone().applyQuaternion(new THREE.Quaternion().setFromUnitVectors(dirU, dirU2));
-    } else hingeNew.normalize().multiplyScalar(flex);
-    const qU = frameQuat(dirU2, hingeNew).multiply(frameQuat(dirU, hingeCur).invert());
-    const WA2 = qU.clone().multiply(WA);
-
-    // 4. 前腕（脛）: 肘の軸のまわりに、目標へ向ける
-    const dirF = H.clone().sub(E).normalize().applyQuaternion(qU);
-    const qF = new THREE.Quaternion().setFromUnitVectors(dirF, dirF2);
-    const WB2 = qF.multiply(qU).multiply(WB);
+    // 肘（膝）を出す側 sd のときの、上腕・前腕の世界の向きと角度
+    const trySide = sd => {
+      const E2 = S.clone().addScaledVector(u, a).addScaledVector(sd, h);
+      // 3. 上腕（腿）: 骨の向きと肘の軸を合わせる
+      const dirU2 = E2.clone().sub(S).normalize();
+      const dirF2 = Tc.clone().sub(E2).normalize();
+      let hingeNew = dirU2.clone().cross(dirF2);
+      if (hingeNew.length() < Math.sin(6 * DEG) || h < 0.08 * L1) {
+        // 伸びきり: 軸は今の軸を、骨の向きの変化と同じだけ回したもの
+        hingeNew = hingeCur.clone().applyQuaternion(new THREE.Quaternion().setFromUnitVectors(dirU, dirU2));
+      } else hingeNew.normalize().multiplyScalar(flex);
+      const qU = frameQuat(dirU2, hingeNew).multiply(frameQuat(dirU, hingeCur).invert());
+      const WA2 = qU.clone().multiply(WA);
+      // 4. 前腕（脛）: 肘の軸のまわりに、目標へ向ける
+      const dirF = H.clone().sub(E).normalize().applyQuaternion(qU);
+      const WB2 = new THREE.Quaternion().setFromUnitVectors(dirF, dirF2).multiply(qU).multiply(WB);
+      const aA = anglesFrom(Dof(PwA, npA, WA2, nbA), cur(ka));
+      const aB = anglesFrom(Dof(WA2, npB, WB2, nbB), cur(kb));
+      return { WA2, WB2, aA, aB };
+    };
+    // 肘（膝）の出る側の候補: 今の側（線の振れに合わせて回したもの）、自然な側へ寄せたもの、まわり 16 方向。
+    // 可動域を越える量（無理な形）・今の側からの変わり方・自然な側からのずれ、で点を付け、いちばん良いものにする
+    //  （下ろした手を真上へ引くと、肘が後ろへ引けきる……のような形を避ける。肘は下・外へ逃がす）
+    const cands = [sideCur];
+    if (natOk) {
+      cands.push(sideCur.clone().multiplyScalar(1 - NATURAL_PULL).addScaledVector(nat, NATURAL_PULL).normalize());
+      const b1 = sideCur.clone(), b2 = u.clone().cross(sideCur).normalize();
+      for (let i = 0; i < 16; i++) {
+        const t = (i / 16) * Math.PI * 2;
+        cands.push(b1.clone().multiplyScalar(Math.cos(t)).addScaledVector(b2, Math.sin(t)));
+      }
+    }
+    const angDeg = (p, q) => Math.acos(Math.max(-1, Math.min(1, p.dot(q)))) / DEG;
+    let bestSide = null;
+    for (const sd of cands) {
+      if (sd.lengthSq() < 1e-8) continue;
+      const r = trySide(sd);
+      const over = v.limitsEnabled ? limitExcess(ka, r.aA) + limitExcess(kb, r.aB) : 0;
+      // 曲がりが小さいとき（伸びきり近く）は、どちら側でも形はほぼ同じなので、今の側を強く保つ
+      const bend = Math.min(1, h / (0.3 * L1));
+      const cost = over * 4 + angDeg(sd, sideCur) * (0.25 + 0.75 * (1 - bend))
+        + (natOk ? angDeg(sd, nat) * 0.35 * bend : 0);
+      if (!bestSide || cost < bestSide.cost) bestSide = { ...r, cost };
+    }
+    const { WA2, WB2 } = bestSide;
 
     // 5. 世界の向き → 関節の角度（親の今の向きを使う）。可動域に収める
     const lim = (k, ang) => (v.limitsEnabled ? clampAngles(k, ang) : ang);
-    const cur = k => ({ ...(v.angles[k] || { x: 0, y: 0, z: 0 }) });
-    const Dof = (Pw, np, W2, nb) => Pw.clone().multiply(np.clone().invert()).invert().multiply(W2).multiply(nb.clone().invert());
     let aA = lim(ka, anglesFrom(Dof(PwA, npA, WA2, nbA), cur(ka)));
     // 子の角度は、親を可動域に収めた「後」の向きから出す（収めた分のずれを子で取り戻す）
     let aB = lim(kb, anglesFrom(Dof(this._worldFromAngles(slot, ka, aA, PwA), npB, WB2, nbB), cur(kb)));
@@ -228,6 +265,20 @@ export class LimbPull {
       v.angles[kc] = lim(kc, anglesFrom(Dof(qB, npC, endQ, nbC), cur(kc)));
     }
     return true;
+  }
+
+  /** 肘（膝）が自然に向く向き（世界）。体（胸・腰）の向きに合わせて回す */
+  _naturalSide(slot, key) {
+    const arm = /^hand/.test(key);
+    const out = key.endsWith('L') ? 1 : -1;            // 人形の左 = +X
+    const body = slot.boneMap[arm ? 'chest' : 'hips'] || slot.boneMap.hips;
+    if (!body) return null;
+    const nb = slot.neutralWorld.get(body);
+    if (!nb) return null;
+    const q = wquat(body).multiply(nb.clone().invert());    // 基準姿勢からの体の回り
+    // 基準姿勢: 人形は +Z を向き、上が +Y
+    const v = arm ? new THREE.Vector3(0.35 * out, -0.8, -0.5) : new THREE.Vector3(0.15 * out, 0, 1);
+    return v.normalize().applyQuaternion(q);
   }
 
   /** 角度から骨の世界での向き（親の世界の向き Pw のもとで） */

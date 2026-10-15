@@ -14,7 +14,7 @@ import { buildMuscles, setMusclePalette } from './muscleView.js';
 import { RotateRings } from './rotateRings.js';
 import { LimbPull } from './limbPull.js';
 import { JointDots } from './jointDots.js';
-import { WIRE, makeWireMaterial, makeWireGeometry, setWireOpacity, setWireStyle, setWireLatticeHeight } from './wireLines.js';
+import { WIRE, makeWireMaterial, makeWireGeometry, setWireOpacity, setWireStyle, setWireLatticeHeight, addContourAttribute } from './wireLines.js';
 import { deformFactors, installSegmentScale, setSegment, clearSegments } from './proportions.js';
 // 不具合を調べるときの入り口（画面には出ない）
 if (typeof window !== 'undefined') window.__positTHREE = THREE;
@@ -147,6 +147,8 @@ export class Viewer {
     this.limitsEnabled = true;
     this.canonicalRest = true;
     this.wireOn = false;
+    this.bodyShift = new THREE.Vector3();   // 体全体の移動（世界、m）
+    this.locks = new Map();                 // 固定した手・足 → { pos, quat }
     this.wireOpacity = 0.85;
     this.bodyType = 'neutral';
     this.headRatio = null;          // null なら元のまま
@@ -745,6 +747,8 @@ export class Viewer {
       if (b.parent) b.parent.getWorldQuaternion(pq);
       slot.neutralParent.set(b, pq);
     }
+    // 体全体の移動（腰の位置）の基準
+    if (slot.boneMap.hips) slot.hipRest = slot.boneMap.hips.position.clone();
   }
 
   /**
@@ -1438,10 +1442,14 @@ export class Viewer {
       if (g.boundingBox) latH = Math.max(latH, g.boundingBox.max.y - g.boundingBox.min.y);
     }
     const mat = makeWireMaterial({ opacity: this.wireOpacity, latH: latH || 1.8 });
-    if (slot.breast && this._breastWireMat) setWireLatticeHeight(this._breastWireMat, latH || 1.8);
+    if (slot.breast && this._breastWireMat) {
+      setWireLatticeHeight(this._breastWireMat, latH || 1.8);
+      for (const w of slot.breast.wires) guard('輪切りの線', () => addContourAttribute(w.geometry, w, slot));
+    }
     for (const m of slot.meshes) {
       let w;
       const wg = makeWireGeometry(m.geometry);
+      guard('輪切りの線', () => addContourAttribute(wg, m, slot));
       if (m.isSkinnedMesh && m.skeleton) {
         w = new THREE.SkinnedMesh(wg, mat);
         w.bindMode = m.bindMode;
@@ -2320,12 +2328,15 @@ export class Viewer {
     a[axis] = deg;
     if (this.limitsEnabled) Object.assign(a, clampAngles(jointKey, a));
     this.applyAll();
+    this._enforceLocks(jointKey);
   }
 
   getAngles(jointKey) { return this.angles[jointKey] || { x: 0, y: 0, z: 0 }; }
 
   /** 角度一式をまとめて差し替える（省略した関節は 0 に戻る） */
   setAngles(map) {
+    const bp = map && map.bodyPos;
+    this.bodyShift.set(bp ? (bp.x || 0) / 100 : 0, bp ? (bp.y || 0) / 100 : 0, bp ? (bp.z || 0) / 100 : 0);
     for (const j of JOINTS) {
       const src = map[j.key];
       this.angles[j.key] = src
@@ -2336,11 +2347,14 @@ export class Viewer {
     this.applyAll();
   }
 
-  applyPose(spec) { this.setAngles(parseSpec(spec)); }
+  applyPose(spec) { this.clearLocks(); this.setAngles(parseSpec(spec)); }
 
   allAngles() {
     const out = {};
     for (const j of JOINTS) out[j.key] = { ...this.angles[j.key] };
+    // 体全体の移動（cm）。0 なら入れない
+    const b = this.bodyShift;
+    if (b.lengthSq() > 1e-8) out.bodyPos = { x: b.x * 100, y: b.y * 100, z: b.z * 100 };
     return out;
   }
 
@@ -2376,6 +2390,18 @@ export class Viewer {
           const np = slot.neutralParent.get(bone);
           if (!nb || !np) continue;
           bone.quaternion.copy(np).invert().multiply(delta).multiply(nb);
+        }
+      }
+      // 体全体の移動: 腰の骨の位置を、世界での移動量だけずらす（親の向き・縮尺を外して骨の座標に直す）
+      for (const s2 of SLOTS) {
+        const slot = this.slots[s2.key];
+        const hips = slot.boneMap && slot.boneMap.hips;
+        if (!hips || !slot.hipRest) continue;
+        hips.position.copy(slot.hipRest);
+        if (this.bodyShift.lengthSq() > 1e-12 && hips.parent) {
+          hips.parent.updateWorldMatrix(true, false);
+          const inv = new THREE.Matrix3().setFromMatrix4(hips.parent.matrixWorld).invert();
+          hips.position.add(this.bodyShift.clone().applyMatrix3(inv));
         }
       }
       this.container.updateWorldMatrix(true, true);
@@ -2786,6 +2812,7 @@ export class Viewer {
   }
 
   resetPose() {
+    this.bodyShift.set(0, 0, 0);
     for (const j of JOINTS) this.angles[j.key] = { x: 0, y: 0, z: 0 };
     this.applyAll();
   }
@@ -2802,6 +2829,7 @@ export class Viewer {
 
   /** はじめのポーズ（両手を広げる）に戻す。手の形も戻す */
   resetToDefault() {
+    this.clearLocks();
     this.setAngles(this.defaultAngles());
     this.applyHandShape('both', '');
   }
@@ -2837,6 +2865,79 @@ export class Viewer {
     return `${nm(s)}→${nm(o)}`;
   }
 
+  // ---- 手・足の固定（ロック） -------------------------------------------
+  //   固定した手・足は、ほかの所を動かしても（腰を動かす・体をひねる・肩を回す…）世界の同じ位置・向きに残る。
+  //   腕・脚を引っ張る仕組み（limbPull.js）で、毎回その位置へ解き直す
+
+  /** 手・足を固定する／外す。戻り値: 固定したか */
+  toggleLock(key, on = !this.locks.has(key)) {
+    const slot = this.primarySlot;
+    const b = slot && slot.boneMap[key];
+    if (!on || !b || !this.pull.canPull(key)) { this.locks.delete(key); return false; }
+    this.locks.set(key, { pos: b.getWorldPosition(new THREE.Vector3()), quat: b.getWorldQuaternion(new THREE.Quaternion()) });
+    return true;
+  }
+  isLocked(key) { return this.locks.has(key); }
+  clearLocks() { this.locks.clear(); }
+  /** 固定している所を、いまの位置で固定し直す（戻す・やり直すのあと） */
+  relock() { for (const k of [...this.locks.keys()]) this.toggleLock(k, true); }
+
+  /**
+   * 固定した手・足を、その位置へ戻す。skip: いま動かしている関節（その腕・脚は動かしている本人なので戻さない）
+   */
+  _enforceLocks(skip = null) {
+    if (!this.locks.size) return;
+    const chainOf = k => (/L$/.test(k) ? 'L' : /R$/.test(k) ? 'R' : '') + (/^(shoulder|upperArm|forearm|hand)/.test(k) ? 'arm' : /^(thigh|shin|foot)/.test(k) ? 'leg' : '');
+    const skipChain = skip ? chainOf(skip) : '';
+    let moved = false;
+    // 脚を先に（体の高さが決まってから腕）
+    for (const k of ['footL', 'footR', 'handL', 'handR']) {
+      const L = this.locks.get(k);
+      if (!L || chainOf(k) === skipChain) continue;
+      if (this.pull.solve(k, L.pos, L.quat)) { moved = true; this._applyAngles(); }
+    }
+    if (moved) this._applyAngles();
+  }
+
+  /** 角度を骨に当てる（固定の解き直しの途中で使う。床合わせは最後に 1 回） */
+  _applyAngles() { this.applyAll(); }
+
+  /**
+   * 体全体を動かす（腰をつかんで動かす）。画面の面の中で動く。足を固定していなければ床の上を滑り、
+   * 足を固定していれば、腰が上下・前後して脚が曲がる（しゃがむ・重心を移す）
+   */
+  beginBodyMove(clientX, clientY) {
+    const slot = this.primarySlot;
+    const hips = slot && slot.boneMap.hips;
+    if (!hips) return false;
+    this.camera.updateMatrixWorld();
+    const n = new THREE.Vector3(); this.camera.getWorldDirection(n);
+    // 足を固定していないときは、床と平行に動かす（上下は床合わせで戻るので）
+    const freeY = this.locks.has('footL') || this.locks.has('footR');
+    const p0 = hips.getWorldPosition(new THREE.Vector3());
+    const plane = freeY ? new THREE.Plane().setFromNormalAndCoplanarPoint(n, p0)
+      : new THREE.Plane().setFromNormalAndCoplanarPoint(new THREE.Vector3(0, 1, 0), p0);
+    // 床と平行な面が画面とほぼ平行（真横から見ている）ときは、画面の面にする
+    if (!freeY && Math.abs(n.y) < 0.25) plane.setFromNormalAndCoplanarPoint(new THREE.Vector3(n.x, 0, n.z).normalize(), p0);
+    const P0 = this.pull._rayPoint(clientX, clientY, plane);
+    if (!P0) return false;
+    this._bodyMove = { plane, P0, shift0: this.bodyShift.clone(), freeY };
+    return true;
+  }
+  moveBody(clientX, clientY) {
+    const m = this._bodyMove;
+    if (!m) return;
+    const P = this.pull._rayPoint(clientX, clientY, m.plane);
+    if (!P) return;
+    const d = P.sub(m.P0);
+    if (!m.freeY) d.y = 0;
+    this.bodyShift.copy(m.shift0).add(d);
+    // 腰が足より下へ行きすぎないように（足を固定してしゃがむときの下限）
+    this.applyAll();
+    this._enforceLocks('hips');
+  }
+  endBodyMove() { this._bodyMove = null; }
+
   mirrorPose() {
     const swap = (aKey, bKey) => {
       const a = this.angles[aKey], b = this.angles[bKey];
@@ -2850,6 +2951,8 @@ export class Viewer {
     swap('thighL', 'thighR');
     swap('shinL', 'shinR');
     swap('footL', 'footR');
+    this.bodyShift.x *= -1;
+    this.clearLocks();
     for (const k of ['hips', 'spine', 'chest', 'neck', 'head']) {
       this.angles[k].y *= -1;
       this.angles[k].z *= -1;
@@ -2860,6 +2963,8 @@ export class Viewer {
   _ground() {
     const p = this.primarySlot;
     if (!p || !p.skeleton) return;
+    // 足を固定しているときは、床合わせで体を上下させない（固定した足が床に付いたまま、腰だけが上下する）
+    if (this.locks && (this.locks.has('footL') || this.locks.has('footR'))) return;
     guard('接地', () => {
       this.container.position.y = 0;
       this.container.updateWorldMatrix(true, true);
@@ -2911,7 +3016,8 @@ export class Viewer {
         e.preventDefault();
         try { el.setPointerCapture(e.pointerId); } catch (err) { /* 続行 */ }
         const pull = this.pull.canPull(dh.key) && guard('引っ張る', () => this.pull.begin(dh.key, e.clientX, e.clientY));
-        this._jd = { id: e.pointerId, key: dh.key, x: e.clientX, y: e.clientY, moved: false, dot: true, pull: !!pull };
+        const body = dh.key === 'hips' && guard('体を動かす', () => this.beginBodyMove(e.clientX, e.clientY));
+        this._jd = { id: e.pointerId, key: dh.key, x: e.clientX, y: e.clientY, moved: false, dot: true, pull: !!pull, body: !!body };
         this._jdTapped = true;           // 印のタップは、下の面ではなく印の関節を選ぶ（離したときに選ぶ）
         return;
       }
@@ -2939,7 +3045,9 @@ export class Viewer {
       e.stopImmediatePropagation();
       e.preventDefault();
       try { el.setPointerCapture(e.pointerId); } catch (err) { /* 続行 */ }
-      this._jd = { id: e.pointerId, key: this.selected, x: e.clientX, y: e.clientY, moved: false };
+      // 腰を選んでいるときは、押して動かすと体全体が動く（回すのは輪で）
+      const body = this.selected === 'hips' && guard('体を動かす', () => this.beginBodyMove(e.clientX, e.clientY));
+      this._jd = { id: e.pointerId, key: this.selected, x: e.clientX, y: e.clientY, moved: false, body: !!body };
     }, { capture: true });
     el.addEventListener('pointermove', e => {
       const jd = this._jd;
@@ -2951,9 +3059,15 @@ export class Viewer {
         if (jd.dot && !jd.pull && this.selected !== jd.key) this.select(jd.key);
         this.onJointDragStart(jd.key);
       }
-      if (jd.ring) guard('回転の輪', () => this.rings.move(e.clientX, e.clientY));
-      else if (jd.pull) guard('引っ張る', () => this.pull.move(e.clientX, e.clientY));
-      else guard('関節のドラッグ', () => this._dragJoint(jd.key, e.clientX, e.clientY));
+      if (jd.body) guard('体を動かす', () => this.moveBody(e.clientX, e.clientY));
+      else if (jd.ring) guard('回転の輪', () => { this.rings.move(e.clientX, e.clientY); this._enforceLocks(jd.key); });
+      else if (jd.pull) guard('引っ張る', () => {
+        this.pull.move(e.clientX, e.clientY);
+        // 固定した手・足を引っ張ったら、固定する位置も一緒に動かす
+        if (this.locks.has(jd.key)) this.toggleLock(jd.key, true);
+        this._enforceLocks(jd.key);
+      });
+      else guard('関節のドラッグ', () => { this._dragJoint(jd.key, e.clientX, e.clientY); this._enforceLocks(jd.key); });
       this.onJointDrag(jd.key);
     });
     const end = e => {
@@ -2963,8 +3077,9 @@ export class Viewer {
       try { el.releasePointerCapture(jd.id); } catch (err) { /* 続行 */ }
       if (jd.ring) this.rings.end();
       if (jd.pull) this.pull.end();
+      if (jd.body) this.endBodyMove();
       if (jd.dot && !jd.moved && e && e.type === 'pointerup') this.select(jd.key);
-      if (jd.moved) { this._jdTapped = true; this.onJointDragEnd(jd.key, jd.ring || (jd.pull ? 'pull' : null)); }
+      if (jd.moved) { this._jdTapped = true; this.onJointDragEnd(jd.key, jd.ring || (jd.pull ? 'pull' : jd.body ? 'body' : null)); }
     };
     el.addEventListener('pointerup', end, { capture: true });
     el.addEventListener('pointercancel', end, { capture: true });

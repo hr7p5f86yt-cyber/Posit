@@ -8,8 +8,9 @@
 //     - 少なめ … 四角の面: 2 つの三角形が四角を作っている所は、その対角線を描かない（元の網目は四角でできている）
 //     - ふつう … 三角形の縁
 //     - 多め／とても多め … 三角形を 2 分割・3 分割した線も描く（重心座標が 1/2, 1/3 … になる所）
-//   等間隔の輪切り（lattice）… 体を等しい間隔の平面で切った線（左右・上下・前後の 3 方向）。
-//     網目に関係なく線の数を大きく減らせる（輪切りの間隔で数が決まる）。腕や脚では輪と縦の線になる
+//   体に沿った輪切り（lattice）… 胴・首と頭・腕・脚・足のそれぞれを、その部分の軸に直角な輪と、
+//     軸に沿った縦の線で切る（v48。前の版は世界の 3 方向の平面で切っていたので、斜めの部分で線が詰まった）。
+//     網目に関係なく線の数を大きく減らせる（輪の間隔・縦の線の本数で数が決まる）
 //
 // 縁や線からの距離は、画面の画素で測る（dFdx / dFdy）。拡大・縮小しても線は同じ太さ。
 // スキン・モーフ・クリップ面はふつうの MeshBasicMaterial のまま効く。
@@ -23,14 +24,15 @@ export const WIRE = {
   div: { value: 1 },         // 面の割れ: 三角形を何分割するか（1・2・3）
   quad: { value: 0 },        // 面の割れ: 1 なら四角の面（対角線を描かない）
   latF: { value: 1 / 28 },   // 輪切り: 間隔（体の高さに対する割合）
+  mer: { value: 12 },        // 輪切り: 縦の線の本数（ひと回り）
 };
 
 /** 線の数の段（0 = 少なめ … 3 = とても多め）ごとの値 */
 export const WIRE_DENSITY = [
-  { name: '少なめ', div: 1, quad: 1, latF: 1 / 16 },
-  { name: 'ふつう', div: 1, quad: 0, latF: 1 / 26 },
-  { name: '多め', div: 2, quad: 0, latF: 1 / 42 },
-  { name: 'とても多め', div: 3, quad: 0, latF: 1 / 64 },
+  { name: '少なめ', div: 1, quad: 1, latF: 1 / 16, mer: 6 },
+  { name: 'ふつう', div: 1, quad: 0, latF: 1 / 26, mer: 8 },
+  { name: '多め', div: 2, quad: 0, latF: 1 / 42, mer: 12 },
+  { name: 'とても多め', div: 3, quad: 0, latF: 1 / 64, mer: 16 },
 ];
 
 /** 線の数と引き方を変える */
@@ -40,6 +42,7 @@ export function setWireStyle(mode, density) {
   WIRE.div.value = d.div;
   WIRE.quad.value = d.quad;
   WIRE.latF.value = d.latF;
+  WIRE.mer.value = d.mer;
 }
 
 const _mats = new Set();
@@ -59,10 +62,11 @@ const baseMaterial = opts => {
 
 // 共通: 輪切りの線までの距離と、線の濃さ
 const LATTICE = `
-    vec3 q = vObj / max(uLatH * uLatF, 1e-6);
-    vec3 qx = dFdx(q), qy = dFdy(q);
-    vec3 qp = abs(q - floor(q + 0.5)) / max(sqrt(qx * qx + qy * qy), vec3(1e-6));
-    float dLat = min(min(qp.x, qp.y), qp.z);`;
+    // rings across the body part (vCont.x = distance along its axis) and lines along it (vCont.y = turns around it)
+    vec2 q = vec2(vCont.x / max(uLatH * uLatF, 1e-6), vCont.y * uMer);
+    vec2 qx = dFdx(q), qy = dFdy(q);
+    vec2 qp = abs(q - floor(q + 0.5)) / max(sqrt(qx * qx + qy * qy), vec2(1e-6));
+    float dLat = vCont.z > 0.5 ? min(qp.x, qp.y) : 1e4;`;
 const ALPHA = `
     float hw = max(0.25, uWireW * 0.5);
     float a = 1.0 - smoothstep(hw - 0.3, hw + 0.3, d);
@@ -70,7 +74,7 @@ const ALPHA = `
     a *= min(1.0, uWireW);
     if (a < 0.01) discard;
     diffuseColor.a *= a;`;
-const UNIFORMS = 'uniform float uWireW;\nuniform float uWireMode;\nuniform float uWireDiv;\nuniform float uWireQuad;\nuniform float uLatF;\nuniform float uLatH;\nvarying vec3 vObj;\n';
+const UNIFORMS = 'uniform float uWireW;\nuniform float uWireMode;\nuniform float uWireDiv;\nuniform float uWireQuad;\nuniform float uLatF;\nuniform float uLatH;\nuniform float uMer;\nvarying vec3 vCont;\n';
 const bindUniforms = (sh, mat) => {
   sh.uniforms.uWireW = WIRE.width;
   sh.uniforms.uWireMode = WIRE.mode;
@@ -78,6 +82,7 @@ const bindUniforms = (sh, mat) => {
   sh.uniforms.uWireQuad = WIRE.quad;
   sh.uniforms.uLatF = WIRE.latF;
   sh.uniforms.uLatH = mat.userData.uLatH;
+  sh.uniforms.uMer = WIRE.mer;
 };
 
 /**
@@ -90,8 +95,8 @@ export function makeWireMaterial(opts = {}) {
   mat.onBeforeCompile = sh => {
     bindUniforms(sh, mat);
     sh.vertexShader = sh.vertexShader
-      .replace('#include <common>', '#include <common>\nattribute vec3 bary;\nattribute vec3 edgeOn;\nattribute vec3 edgeQuad;\nvarying vec3 vBary;\nvarying vec3 vEdgeOn;\nvarying vec3 vEdgeQuad;\nvarying vec3 vObj;')
-      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvBary = bary;\nvEdgeOn = edgeOn;\nvEdgeQuad = edgeQuad;\nvObj = position;');
+      .replace('#include <common>', '#include <common>\nattribute vec3 bary;\nattribute vec3 edgeOn;\nattribute vec3 edgeQuad;\nattribute vec3 cont;\nvarying vec3 vBary;\nvarying vec3 vEdgeOn;\nvarying vec3 vEdgeQuad;\nvarying vec3 vCont;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvBary = bary;\nvEdgeOn = edgeOn;\nvEdgeQuad = edgeQuad;\nvCont = cont;');
     sh.fragmentShader = sh.fragmentShader
       .replace('#include <common>', '#include <common>\n' + UNIFORMS + 'varying vec3 vBary;\nvarying vec3 vEdgeOn;\nvarying vec3 vEdgeQuad;')
       .replace('#include <clipping_planes_fragment>', `#include <clipping_planes_fragment>
@@ -114,7 +119,7 @@ export function makeWireMaterial(opts = {}) {
     }${ALPHA}
   }`);
   };
-  mat.customProgramCacheKey = () => 'posit-wire-line2';
+  mat.customProgramCacheKey = () => 'posit-wire-line3';
   return mat;
 }
 
@@ -132,8 +137,8 @@ function makeGridWireMaterial(opts) {
   mat.onBeforeCompile = sh => {
     bindUniforms(sh, mat);
     sh.vertexShader = sh.vertexShader
-      .replace('#include <common>', '#include <common>\nattribute vec3 grid;\nvarying vec3 vGrid;\nvarying vec3 vObj;')
-      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvGrid = grid;\nvObj = position;');
+      .replace('#include <common>', '#include <common>\nattribute vec3 grid;\nattribute vec3 cont;\nvarying vec3 vGrid;\nvarying vec3 vCont;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvGrid = grid;\nvCont = cont;');
     sh.fragmentShader = sh.fragmentShader
       .replace('#include <common>', '#include <common>\n' + UNIFORMS + 'varying vec3 vGrid;')
       .replace('#include <clipping_planes_fragment>', `#include <clipping_planes_fragment>
@@ -159,7 +164,7 @@ function makeGridWireMaterial(opts) {
     }${ALPHA}
   }`);
   };
-  mat.customProgramCacheKey = () => 'posit-wire-grid2';
+  mat.customProgramCacheKey = () => 'posit-wire-grid3';
   return mat;
 }
 
@@ -265,6 +270,113 @@ export function makeWireGeometry(geo, keep = null) {
   g.userData = { ...geo.userData };
   delete g.userData.maskReady; delete g.userData.masks; delete g.userData.fullIndex; delete g.userData.maskKey;
   g.boundingBox = geo.boundingBox; g.boundingSphere = geo.boundingSphere;
+  return g;
+}
+
+/**
+ * 体に沿った輪切りの座標を、面の線の形（インデックスなし）に付ける。
+ * 三角形ごとに「いちばん重みの大きい骨」から体の部分（胴・首と頭・左右の腕・左右の脚・左右の足）を決め、
+ * その部分の軸（骨の基準の並び）に沿った距離と、軸のまわりの角度を、3 頂点とも同じ部分で測る
+ * （三角形の中で部分が混ざらないので、線が途切れず素直に引ける。部分の境目では線が切り替わる）。
+ * 座標は形の座標（スキン前）で測るので、ポーズを変えても線は体に付いたまま。
+ * cont = (軸に沿った距離, 軸のまわりの回転（1 = ひと回り）, 1 = 線を引く／0 = 引かない)
+ * @param {THREE.BufferGeometry} g  インデックスなしの形（position・skinIndex・skinWeight）
+ * @param {THREE.SkinnedMesh} mesh  骨と結び付いたメッシュ（骨の基準の位置を出すのに使う）
+ * @param {object} slot  ビューアの slot（boneMap・boneToJoint）
+ */
+export function addContourAttribute(g, mesh, slot) {
+  const pos = g.attributes.position, si = g.attributes.skinIndex, sw = g.attributes.skinWeight;
+  const n = pos.count, nTri = Math.floor(n / 3);
+  const cont = new Float32Array(n * 3);
+  g.setAttribute('cont', new THREE.BufferAttribute(cont, 3));
+  if (!mesh || !mesh.isSkinnedMesh || !mesh.skeleton || !si || !sw || !slot || !slot.boneMap) return g;
+  const sk = mesh.skeleton, bones = sk.bones;
+  // 骨の基準の位置（形の座標）: bindMatrixInverse · boneInverse⁻¹ の原点
+  const bindInv = mesh.bindMatrixInverse;
+  const bp = b => {
+    const i = bones.indexOf(b);
+    if (i < 0) return null;
+    return new THREE.Vector3().applyMatrix4(bindInv.clone().multiply(sk.boneInverses[i].clone().invert()));
+  };
+  const P = k => (slot.boneMap[k] ? bp(slot.boneMap[k]) : null);
+  // 体の部分ごとの軸と起点
+  const parts = {};
+  const def = (name, from, to, ext = null) => {
+    const a = P(from);
+    let b = to ? P(to) : null;
+    if (a && !b && ext) b = a.clone().add(ext);
+    if (!a || !b || a.distanceTo(b) < 1e-6) return;
+    const axis = b.clone().sub(a).normalize();
+    // 角度の基準: 人形の前（形の座標の +Z）を軸に直角にしたもの。足のように軸が前を向くときは上（+Y）
+    let ref = new THREE.Vector3(0, 0, 1);
+    if (Math.abs(ref.dot(axis)) > 0.8) ref = new THREE.Vector3(0, 1, 0);
+    ref.addScaledVector(axis, -ref.dot(axis)).normalize();
+    parts[name] = { o: a, axis, ref, side: axis.clone().cross(ref).normalize() };
+  };
+  def('trunk', 'hips', 'neck');
+  def('head', 'neck', 'head');        // 首の付け根→頭のボーンの向きを、頭の上までそのまま延ばす
+  for (const sd of ['L', 'R']) {
+    def('arm' + sd, 'upperArm' + sd, 'hand' + sd);
+    def('leg' + sd, 'thigh' + sd, 'foot' + sd);
+    const foot = slot.boneMap['foot' + sd];
+    const toe = foot && foot.children.find(c => c.isBone);
+    if (foot && toe) {
+      const a = bp(foot), b = bp(toe);
+      if (a && b && a.distanceTo(b) > 1e-6) {
+        const axis = b.clone().sub(a).normalize();
+        let ref = new THREE.Vector3(0, 1, 0);
+        if (Math.abs(ref.dot(axis)) > 0.8) ref = new THREE.Vector3(0, 0, 1);
+        ref.addScaledVector(axis, -ref.dot(axis)).normalize();
+        parts['foot' + sd] = { o: a, axis, ref, side: axis.clone().cross(ref).normalize() };
+      }
+    }
+  }
+  const partOfKey = k => {
+    if (/^(hips|spine|chest|shoulder[LR])$/.test(k)) return 'trunk';
+    if (/^(neck|head|jaw)$/.test(k)) return 'head';
+    const m = k.match(/^(upperArm|forearm|hand)([LR])$/); if (m) return 'arm' + m[2];
+    const l = k.match(/^(thigh|shin)([LR])$/); if (l) return 'leg' + l[2];
+    const f = k.match(/^foot([LR])$/); if (f) return parts['foot' + f[1]] ? 'foot' + f[1] : 'leg' + f[1];
+    return null;
+  };
+  // 骨の番号 → 体の部分（指・つま先などは、関節の付いた親までたどる）
+  const partOfBone = bones.map(b => {
+    for (let x = b, i = 0; x && i < 30; x = x.parent, i++) {
+      const k = slot.boneToJoint && slot.boneToJoint.get(x);
+      if (k) return partOfKey(k);
+    }
+    return null;
+  });
+  const v = new THREE.Vector3();
+  for (let t = 0; t < nTri; t++) {
+    // 三角形でいちばん重みの大きい骨
+    const acc = new Map();
+    for (let c = 0; c < 3; c++) for (let q = 0; q < 4; q++) {
+      const w = sw.getComponent(t * 3 + c, q);
+      if (w > 0) { const bi = si.getComponent(t * 3 + c, q); acc.set(bi, (acc.get(bi) || 0) + w); }
+    }
+    let bi = -1, bw = -1;
+    for (const [k, w] of acc) if (w > bw) { bw = w; bi = k; }
+    const pn = bi >= 0 ? partOfBone[bi] : null;
+    const pt = pn && parts[pn];
+    if (!pt) continue;
+    const th = [];
+    for (let c = 0; c < 3; c++) {
+      const i = t * 3 + c;
+      v.set(pos.getX(i), pos.getY(i), pos.getZ(i)).sub(pt.o);
+      const along = v.dot(pt.axis);
+      cont[i * 3] = along;
+      th.push(Math.atan2(v.dot(pt.side), v.dot(pt.ref)) / (Math.PI * 2));
+      cont[i * 3 + 2] = 1;
+    }
+    // 継ぎ目（ひと回りの境目）をまたぐ三角形は、続けて数える
+    const mx = Math.max(...th), mn = Math.min(...th);
+    for (let c = 0; c < 3; c++) {
+      let a = th[c];
+      if (mx - mn > 0.5 && a < 0) a += 1;
+      cont[(t * 3 + c) * 3 + 1] = a;
+    }
+  }
   return g;
 }
 

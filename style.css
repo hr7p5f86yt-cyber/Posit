@@ -702,4 +702,34 @@ ul.guide .gi .gdot { width: 14px; height: 14px; border-radius: 50%; border: 2px 
 #selBar .qb { flex: none; }
 @media (max-width: 400px) { #selBar .qb { padding: 0 6px; font-size: 12.5px; } #selBarName { font-size: 12.5px; padding-left: 8px; } }
 
+/* 固定した手・足の錠前 */
+#lockPins { position: fixed; inset: 0; z-index: 21; pointer-events: none; overflow: hidden; }
+.jpin { position: absolute; left: 0; top: 0; width: 22px; height: 22px; margin: -30px 0 0 -11px; border-radius: 7px;
+  background: #ffb547; color: #2a1a00; display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.4); }
+.jpin svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; }
+.jpin[hidden] { display: none; }
+body.croquis #lockPins { display: none !important; }
+#selBar .qb.on { background: #ffb547; color: #2a1a00; }
+
+/* 見る向きの帯の上の段: ポーズ・体全体・キープ */
+#actBar { position: fixed; z-index: 30; left: 8px; right: 8px; bottom: calc(var(--view-b, 0px) + 54px);
+  display: flex; gap: 6px; align-items: center; pointer-events: none; }
+#actBar .qb { pointer-events: auto; }
+#actBar .qb.accent { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+#actBar .qb.kept { background: #ffb547; color: #2a1a00; border-color: #ffb547; }
+#actBar .qb[hidden] { display: none; }
+body.croquis #actBar, body.croquis #posePop { display: none; }
+/* ポーズの一覧（パネルを開かずに選ぶ） */
+#posePop { position: fixed; z-index: 37; left: 8px; right: 8px; bottom: calc(var(--view-b, 0px) + 98px);
+  max-height: min(52vh, 420px); display: flex; flex-direction: column; gap: 8px; padding: 10px; border-radius: 16px;
+  background: rgba(24, 28, 35, 0.95); border: 1px solid var(--line);
+  -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); max-width: 520px; margin: 0 auto; }
+#posePop[hidden] { display: none; }
+#posePop .ppHead { display: flex; gap: 6px; align-items: center; }
+#posePop .ppHead .scroller { flex: 1; min-width: 0; margin: 0; }
+#posePopGrid { overflow-y: auto; display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+@media (min-width: 700px) { #posePopGrid { grid-template-columns: repeat(4, 1fr); } }
+#posePopGrid button { padding: 10px 4px; font-size: 13px; border-radius: 10px; }
+
 /* ===== style.css ここまで ===== */
