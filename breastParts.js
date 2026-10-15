@@ -20,6 +20,7 @@
 //   3. 縁は殻の面の少し内側に沈めて、継ぎ目を見せない
 //   4. スキンの重みは、真下にある殻の三角形の重みを写す（ポーズを付けると殻と一緒に動く・曲がる）
 import * as THREE from 'three';
+import { makeGridWireGeometry } from './wireLines.js';
 
 /** 形の数値。幅は胸の半幅に対する割合、高さ・張り出しは背丈 1.70m 換算の長さに対する割合 */
 export const BREAST = {
@@ -377,29 +378,14 @@ export function buildBreastParts(slot, opts = {}) {
     part.visible = false;
     parts.push(part);
     if (wireMat) {
-      // 面の線は、細かい網目の全部ではなく、体の網目と同じくらいの間隔（約 1.5cm）の線だけを描く。
-      // 線は細かい頂点をたどるので、乳房の丸みの上にのる（三角形 (a, b, b) は線 a-b として描かれる）
-      const lineIdx = [];
-      const seg = (p, q) => { if (p !== q) lineIdx.push(p, q, q); };
+      // 面の線は、細かい網目の全部ではなく、体の網目と同じくらいの間隔（約 1.5cm）の線だけを描く:
+      // 輪は RS 本おき、向きは AS 本おき、斜めの線はひとつおきのます目に 1 本（体の網目と同じく三角形に見える）。
+      // 線は網目の座標が整数になる所を塗るので、乳房の丸みの上にのり、太さを変えても途切れない（wireLines.js）
       const RS = Math.max(1, Math.round(0.015 * s / ((rIn + rOut + rUp + rDn) / 4 / NR)));   // 輪の間隔
       const AS = 4;                                                                         // 72 方向のうち 4 つおき
-      for (let r = RS; r <= NR; r += RS) for (let a = 0; a < NA; a++) seg(vid[r][a], vid[r][(a + 1) % NA]);
-      for (let a = 0; a < NA; a += AS) {
-        for (let r = 0; r < NR; r++) seg(r === 0 ? vid[0][0] : vid[r][a], vid[r + 1][a]);
-      }
-      // 斜めの線（体の網目と同じく三角形に見えるように、ひとつおきのます目に 1 本）
-      for (let a = 0; a < NA; a += AS * 2) {
-        for (let r0 = RS; r0 + RS <= NR; r0 += RS) {
-          for (let i = 0; i < RS; i++) {
-            const a0 = Math.round(a + (i / RS) * AS) % NA, a1 = Math.round(a + ((i + 1) / RS) * AS) % NA;
-            seg(vid[r0 + i][a0], vid[r0 + i + 1][a1]);
-          }
-        }
-      }
-      const wgeo = new THREE.BufferGeometry();
-      for (const [k, at] of Object.entries(geo.attributes)) wgeo.setAttribute(k, at);
-      wgeo.setIndex(lineIdx);
-      wgeo.boundingBox = geo.boundingBox; wgeo.boundingSphere = geo.boundingSphere;
+      const vr = new Float32Array(NV), va = new Float32Array(NV);
+      for (let r = 0; r <= NR; r++) for (let a = 0; a < vid[r].length; a++) { vr[vid[r][a]] = r; va[vid[r][a]] = a; }
+      const wgeo = makeGridWireGeometry(geo, vr, va, { RS, AS, NR, NA });
       const w = make(wireMat);
       w.geometry = wgeo;
       w.renderOrder = 5;
@@ -412,3 +398,5 @@ export function buildBreastParts(slot, opts = {}) {
   slot.breastInfo = { A, F, s };
   return { parts, wires, shell };
 }
+
+// ===== breastParts.js ここまで =====

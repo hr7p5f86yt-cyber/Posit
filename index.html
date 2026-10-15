@@ -120,11 +120,29 @@
 <!-- 写真を重ねて見る -->
 <img id="photoOverlay" hidden alt="">
 <div id="ringInfo" hidden></div>
+
 <div id="photoOverlayBar" hidden>
   <button id="photoOverlayToggle" class="ghost small">写真を消す</button>
   <button id="photoOverlayView" class="ghost small">写真の向きから見る</button>
   <button id="photoOverlayClose" class="icon sm" aria-label="閉じる"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
 </div>
+
+<!-- 画面の上ですぐ使うボタン: 選んだ関節の操作（上）と、見る向き（下） -->
+<div id="selBar" hidden>
+  <span id="selBarName"></span>
+  <button id="selBarReset" class="qb" title="この関節を戻す">戻す</button>
+  <button id="selBarCopy" class="qb" title="反対側へ写す">左右へ写す</button>
+  <button id="selBarClose" class="qb icon" aria-label="選択を外す"><svg viewBox="0 0 24 24"><path d="M7 7l10 10M17 7L7 17"/></svg></button>
+</div>
+<div id="viewBar">
+  <button class="qb" data-az="0" data-el="4">正面</button>
+  <button class="qb" data-az="90" data-el="3" title="人形の左側から">左横</button>
+  <button class="qb" data-az="-90" data-el="3" title="人形の右側から">右横</button>
+  <button class="qb" data-az="180" data-el="6">後ろ</button>
+  <button class="qb" data-az="0" data-el="68">上</button>
+  <button class="qb" id="viewBarFit" title="全体を画面に収める">全体</button>
+</div>
+
 
 <!-- 補助線（頭身の線・正中線・肩と腰の傾き） -->
 <canvas id="guides" hidden></canvas>
@@ -201,12 +219,18 @@
         <button id="btnClearHistory" class="ghost wide">履歴を消す</button>
       </section>
       <section class="pane" id="savedWrap">
+        <button id="btnSavePose" class="primary wide">いまのポーズを保存</button>
         <div class="twoBtn">
-          <button id="btnSavePose" class="primary">いまのポーズを保存</button>
           <button id="btnExportImg" class="ghost">画面を画像に</button>
+          <button id="btnExportClear" class="ghost">背景を透過して画像に</button>
         </div>
+        <label class="row toggle"><span class="lbl">透過のとき床の影も入れる</span>
+          <input type="checkbox" id="shotShadow"></label>
+        <label class="row toggle"><span class="lbl">透過のとき人形のまわりで切り抜く</span>
+          <input type="checkbox" id="shotCrop" checked></label>
         <div id="savedList"></div>
-        <p class="hint tiny">保存したポーズはこの端末の中に残ります（名前・関節の角度・手の形）。画像は補助線も入れて書き出します。</p>
+        <p class="hint tiny">保存したポーズはこの端末の中に残ります（名前・関節の角度・手の形）。画像は補助線も入れて書き出します。
+          透過の画像は、背景と床の線を抜いた PNG です（お絵描きアプリに読み込んで、下絵や参考に重ねられます）。</p>
       </section>
     </div>
     <input type="file" id="photoFile" accept="image/*" hidden>
@@ -231,13 +255,16 @@
     </div>
     <div class="seg scroll" id="jointSeg"></div>
     <div class="pager" id="jointList"></div>
-    <p class="hint tiny">人形の関節をタップして選び、そのまま押して動かすと直接曲がります。
+    <p class="hint tiny"><b>手・足</b>は、選ばなくてもそのまま押して動かすと、腕・脚ごとついてきます。
+      ほかの関節はタップして選び、そのまま押して動かすと直接曲がります。
       関節のまわりの<b>輪</b>をなぞると、その軸だけで回ります（<span class="axdot x"></span>赤＝X・<span class="axdot y"></span>緑＝Y・<span class="axdot z"></span>青＝Z。上のスライダと同じ順）。
       左右は<b>人形から見た</b>左右です。</p>
     <label class="row toggle"><span class="lbl">可動域を制限</span>
       <input type="checkbox" id="limitsOn" checked></label>
     <label class="row toggle"><span class="lbl">回転の輪（3軸）を出す</span>
       <input type="checkbox" id="ringsOn" checked></label>
+    <label class="row toggle"><span class="lbl">手・足を引っ張って腕・脚ごと動かす</span>
+      <input type="checkbox" id="pullOn" checked></label>
   </div>
 
   <!-- クロッキー -->
@@ -293,6 +320,10 @@
         <input type="range" id="skinOpacity" min="0.08" max="1" step="0.01" value="1"><output id="outOpacity">100%</output></label>
       <label class="row toggle"><span class="lbl">面の線を出す</span>
         <input type="checkbox" id="wireOn"></label>
+      <label class="row"><span class="lbl">線の太さ</span>
+        <input type="range" id="wireWidth" min="0.5" max="6" step="0.25" value="1"><output id="outWireW">×1</output></label>
+      <label class="row"><span class="lbl">線の濃さ</span>
+        <input type="range" id="wireAlpha" min="0.1" max="1" step="0.05" value="0.85"><output id="outWireA">85%</output></label>
       <label class="row toggle"><span class="lbl">面で捉えた頭部</span>
         <input type="checkbox" id="headPlanes"></label>
       <label class="row toggle"><span class="lbl">骨格を重ねる</span>
@@ -434,10 +465,28 @@
   </div>
 </div>
 
+<div id="guideBox" hidden>
+  <div class="card wide-card">
+    <strong>操作のしかた</strong>
+    <ul class="guide">
+      <li><span class="gi">✋</span><div><b>手・足を押して動かす</b><br>腕・脚ごとついてきます（引っ張る）</div></li>
+      <li><span class="gi">👆</span><div><b>関節をタップ</b>して選ぶ<br>選んだ所を押して動かすと曲がります</div></li>
+      <li><span class="gi"><i class="axdot x"></i><i class="axdot y"></i><i class="axdot z"></i></span><div><b>輪をなぞる</b><br>赤＝前後・緑＝ひねり・青＝左右に回ります</div></li>
+      <li><span class="gi">↻</span><div><b>何もない所を 1 本指で</b>動かすと、回して見られます</div></li>
+      <li><span class="gi">🤏</span><div><b>2 本指</b>でつまむと拡大・縮小、そのまま動かすと平行移動</div></li>
+      <li><span class="gi">⤢</span><div>何もない所を<b>2 回タップ</b>すると、全体が画面に収まります</div></li>
+      <li><span class="gi">⬚</span><div>画面の下のボタンで<b>正面・横・後ろ・上</b>から。<br>上のボタンで 1 つ戻す・やり直す</div></li>
+    </ul>
+    <p class="hint tiny">左右はいつも<b>人形から見た</b>左右です。この案内は「？」（困ったとき）からまた開けます。</p>
+    <button id="guideClose" class="primary wide">はじめる</button>
+  </div>
+</div>
+
 <div id="helpBox" hidden>
   <div class="card wide-card">
     <strong>困ったとき</strong>
     <p class="hint" id="buildTag"></p>
+    <button id="btnGuide" class="wide ghost">操作のしかた</button>
     <button id="btnResetAll2" class="wide ghost">すべての設定を初期値に戻す</button>
     <button id="btnPurge" class="wide ghost">キャッシュを消して再読込</button>
     <p class="hint" id="diag">タップすると状態を表示します。</p>
@@ -472,3 +521,5 @@
 <script type="module" src="./app.js"></script>
 </body>
 </html>
+
+<!-- ===== index.html ここまで ===== -->

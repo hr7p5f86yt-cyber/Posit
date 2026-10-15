@@ -307,3 +307,5 @@ export function drawPreview(canvas, image, imageLandmarks, hands = null) {
     }
   }
 }
+
+// ===== photopose.js ここまで =====

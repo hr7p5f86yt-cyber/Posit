@@ -357,3 +357,5 @@ export function buildHeadPlanes(headBone, parent, opts = {}) {
            neckRel: Number.isFinite(opts.neckRel) ? opts.neckRel : 0,
            heads: total > 1e-4 && headH > 1e-4 ? total / headH : 0 };
 }
+
+// ===== headPlanes.js ここまで =====

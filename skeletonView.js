@@ -1394,3 +1394,5 @@ export function buildSkeletonView(slot, extra = {}) {
     ms: { measure: Math.round(T1 - T0), build: Math.round(T2 - T1), fit: Math.round(T3 - T2), attach: Math.round(performance.now() - T3) } };
   return meshes;
 }
+
+// ===== skeletonView.js ここまで =====

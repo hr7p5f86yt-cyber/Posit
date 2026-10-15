@@ -1185,3 +1185,5 @@ function deepLayer(src, skipBones, inset, pushBack, fill = null) {
   src.parent.add(mesh);
   return mesh;
 }
+
+// ===== muscleView.js ここまで =====

@@ -34,7 +34,7 @@ uniform float opacity;
 varying vec3 vW;
 varying vec3 vC;
 void main() {
-  // 輪の中心より奥（カメラと反対側）は暗く・薄く
+  // the far half (behind the center as seen from the camera) is darker and fainter
   float d = dot(normalize(vW - vC), normalize(cameraPosition - vC));
   float f = smoothstep(-0.1, 0.1, d);
   gl_FragColor = vec4(mix(color * 0.5, color, f), opacity * mix(0.38, 1.0, f));
@@ -152,6 +152,7 @@ export class RotateRings {
   hit(clientX, clientY, pointerType) {
     const key = this.v.selected;
     if (!this._visibleFor(key)) return null;
+    this.v.camera.updateMatrixWorld();
     const f = this.frame(key);
     if (!f) return null;
     const rect = this._rect();
@@ -235,3 +236,5 @@ export class RotateRings {
     return d;
   }
 }
+
+// ===== rotateRings.js ここまで =====

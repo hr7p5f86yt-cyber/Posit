@@ -58,3 +58,5 @@ export function relativeTime(ts) {
   if (day === 1) return `昨日 ${hhmm}`;
   return `${d.getMonth() + 1}/${d.getDate()} ${hhmm}`;
 }
+
+// ===== history.js ここまで =====

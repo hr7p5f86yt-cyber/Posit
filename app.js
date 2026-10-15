@@ -8,7 +8,7 @@ import { LightBall } from './lightBall.js';
 import { REGIONS } from './anatomy.js';
 import * as THREE from 'three';
 
-export const BUILD = '2026-10-12b';
+export const BUILD = '2026-10-15a';
 
 const SAMPLE_URL = 'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r169/examples/models/gltf/Xbot.glb';
 const SETTINGS_KEY = 'posit.settings.v1';
@@ -51,6 +51,12 @@ function loadSettings() {
       guideTilt: !!s.guideTilt,
       musclePal: !!s.musclePal,
       rings: s.rings !== false,
+      wireW: Number.isFinite(s.wireW) ? s.wireW : 1,
+      wireA: Number.isFinite(s.wireA) ? s.wireA : 0.85,
+      shotShadow: !!s.shotShadow,
+      shotCrop: s.shotCrop !== false,
+      pull: s.pull !== false,
+      guideSeen: !!s.guideSeen,
     };
   } catch (e) {
     return defaultSettings();
@@ -60,7 +66,7 @@ function loadSettings() {
 function defaultSettings() {
   return { seconds: 30, count: 10, cqCats: [], cqModel: 'skin', cqFrame: 'full', cqWire: false, cqAngle: 'random',
     cqSide: 'random', cqBody: 'keep', cqHandShape: true, lightBall: true, sheetStage: 1,
-    cqBeep: true, cqMirror: false, guideHeads: false, guideCenter: false, guideTilt: false, musclePal: false, rings: true };
+    cqBeep: true, cqMirror: false, guideHeads: false, guideCenter: false, guideTilt: false, musclePal: false, rings: true, wireW: 1, wireA: 0.85, shotShadow: false, shotCrop: true, pull: true };
 }
 function saveSettings() {
   try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch (e) { /* 続行 */ }
@@ -132,12 +138,19 @@ function updateInsets() {
   if (document.body.classList.contains('croquis')) { viewer.setInsets(null); return; }
   const sheet = $('sheet').getBoundingClientRect();
   const top = Math.round(($('topbar').getBoundingClientRect().bottom || 0) - 4);
+  // 画面の下の「見る向き」のボタンの段（約 46px）にも人形がかからないように、そのぶん下を空ける
+  const bar = getComputedStyle($('viewBar')).display !== 'none' ? 46 : 0;
+  let ins;
   if (wideLayout()) {
     // 横長の画面：パネルは右。たたんだときは下のタブだけなので、右は空ける
-    if (sheetStage === 0) viewer.setInsets({ top, right: 0, bottom: Math.round(window.innerHeight - sheet.top), left: 0 });
-    else viewer.setInsets({ top, right: Math.round(window.innerWidth - sheet.left), bottom: 0, left: 0 });
+    if (sheetStage === 0) ins = { top, right: 0, bottom: Math.round(window.innerHeight - sheet.top), left: 0 };
+    else ins = { top, right: Math.round(window.innerWidth - sheet.left), bottom: 0, left: 0 };
   }
-  else viewer.setInsets({ top, right: 0, bottom: Math.max(0, Math.round(window.innerHeight - sheet.top)), left: 0 });
+  else ins = { top, right: 0, bottom: Math.max(0, Math.round(window.innerHeight - sheet.top)), left: 0 };
+  // 見る向きのボタンは、空いている所の下の端に置く
+  document.documentElement.style.setProperty('--view-b', `${ins.bottom}px`);
+  $('viewBar').style.right = `${8 + (ins.right || 0)}px`;
+  viewer.setInsets({ ...ins, bottom: ins.bottom + bar });
 }
 let insetTimer = null;
 const queueInsets = (ms = 0) => {
@@ -339,6 +352,7 @@ viewer.onSlotsChanged = () => {
 
 viewer.onSelect = key => {
   const label = key ? jointLabel(key) : '';
+  syncSelBar(key);
   $('selBadge').textContent = label;
   $('selName').textContent = label || '選択なし';
   $('btnResetJoint').disabled = !key;
@@ -349,6 +363,44 @@ viewer.onSelect = key => {
   if (key) { showTab('joint'); focusJointGroup(key); }
 };
 
+// 画面の上の、選んだ関節の操作（戻す・左右へ写す・選択を外す）
+function syncSelBar(key) {
+  $('selBar').hidden = !key;
+  if (!key) return;
+  $('selBarName').textContent = jointLabel(key);
+  const j = JOINT_BY_KEY[key];
+  $('selBarCopy').hidden = !(j && j.side && j.base !== 'jaw');
+}
+$('selBarReset').addEventListener('click', () => {
+  if (!viewer.selected) return;
+  snapshot(); viewer.resetSelected(); syncSliders();
+  showToast(`${jointLabel(viewer.selected)}を戻しました`);
+});
+$('selBarCopy').addEventListener('click', () => {
+  if (!viewer.selected) return;
+  snapshot();
+  const r = viewer.copyLimbToOther(viewer.selected);
+  syncSliders();
+  if (r) showToast(`${r}へ写しました（鏡に映した形）`);
+});
+$('selBarClose').addEventListener('click', () => viewer.select(null));
+
+// 操作のしかた（はじめて開いたときに 1 度だけ出す。「？」からいつでも開ける）
+function openGuide() { $('guideBox').hidden = false; }
+$('guideClose').addEventListener('click', () => {
+  $('guideBox').hidden = true;
+  if (!settings.guideSeen) { settings.guideSeen = true; saveSettings(); }
+});
+$('btnGuide').addEventListener('click', () => { $('helpBox').hidden = true; openGuide(); });
+if (!settings.guideSeen) setTimeout(openGuide, 600);
+let dblTold = false;
+viewer.onDoubleTap = () => { if (!dblTold) { dblTold = true; showToast('全体を画面に収めました'); } };
+// 見る向き（左右は人形から見た左右）。「全体」は人形全体を画面に収める
+for (const b of document.querySelectorAll('#viewBar .qb[data-az]')) {
+  b.addEventListener('click', () => viewer.viewFromAngle(+b.dataset.az, +b.dataset.el));
+}
+$('viewBarFit').addEventListener('click', () => viewer.fitView());
+
 // 人形の上で関節を押したまま動かす
 let jdFrame = 0;
 viewer.onJointDragStart = () => { snapshot(); };
@@ -357,8 +409,13 @@ viewer.onJointDrag = () => {
   jdFrame = requestAnimationFrame(() => { jdFrame = 0; syncSliders(); });
 };
 let jdTold = false;
+let pullTold = false;
 viewer.onJointDragEnd = (key, ring) => {
   syncSliders();
+  if (ring === 'pull') {
+    if (!pullTold) { pullTold = true; showToast('手・足を引っ張ると、腕・脚ごとついてきます。上の「戻す」で戻せます'); }
+    return;
+  }
   if (ring) { hideRingInfo(); return; }
   if (!jdTold) { jdTold = true; showToast('関節を直接動かしました。上の「戻す」で戻せます'); }
 };
@@ -378,6 +435,12 @@ viewer.rings.onChange = (key, axis, val) => {
   el.hidden = false;
   clearTimeout(ringInfoTimer);
 };
+$('pullOn').checked = settings.pull;
+viewer.setPullEnabled(settings.pull);
+$('pullOn').addEventListener('change', e => {
+  settings.pull = e.target.checked; saveSettings();
+  viewer.setPullEnabled(settings.pull);
+});
 $('ringsOn').checked = settings.rings;
 viewer.setRingsEnabled(settings.rings);
 $('ringsOn').addEventListener('change', e => {
@@ -874,13 +937,14 @@ $('btnSavePose').addEventListener('click', () => {
 });
 
 /** いまの画面を PNG にして、共有シート（写真に保存など）かダウンロードで渡す */
-async function exportImage() {
+async function exportImage(transparent = false) {
   drawGuides();
   const g = $('guides');
-  const blob = await viewer.snapshotPNG(g.hidden ? null : g);
+  const blob = await viewer.snapshotPNG(g.hidden ? null : g,
+    transparent ? { transparent: true, shadow: settings.shotShadow, crop: settings.shotCrop } : {});
   if (!blob) { showToast('画像を作れませんでした'); return; }
   const d = new Date();
-  const name = `posit-${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}-${String(d.getHours()).padStart(2, '0')}${String(d.getMinutes()).padStart(2, '0')}${String(d.getSeconds()).padStart(2, '0')}.png`;
+  const name = `posit-${transparent ? 'clear-' : ''}${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}-${String(d.getHours()).padStart(2, '0')}${String(d.getMinutes()).padStart(2, '0')}${String(d.getSeconds()).padStart(2, '0')}.png`;
   const file = new File([blob], name, { type: 'image/png' });
   try {
     if (navigator.canShare && navigator.canShare({ files: [file] })) {
@@ -897,7 +961,12 @@ async function exportImage() {
   setTimeout(() => URL.revokeObjectURL(url), 4000);
   showToast('画像を書き出しました');
 }
-$('btnExportImg').addEventListener('click', () => exportImage());
+$('btnExportImg').addEventListener('click', () => exportImage(false));
+$('btnExportClear').addEventListener('click', () => exportImage(true));
+$('shotShadow').checked = settings.shotShadow;
+$('shotCrop').checked = settings.shotCrop;
+$('shotShadow').addEventListener('change', e => { settings.shotShadow = e.target.checked; saveSettings(); });
+$('shotCrop').addEventListener('change', e => { settings.shotCrop = e.target.checked; saveSettings(); });
 
 // ---- 履歴 -----------------------------------------------------------------
 
@@ -1632,6 +1701,20 @@ function bindRange(id, outId, fn, fmt) {
 }
 
 bindRange('skinOpacity', 'outOpacity', v => viewer.setSkinOpacity(v), v => `${Math.round(v * 100)}%`);
+// 面の線の太さと濃さ（端末に覚えておく）。動かしている間は線を出して見せる
+bindRange('wireWidth', 'outWireW', v => {
+  viewer.setWireWidth(v);
+  if (settings.wireW !== v) { settings.wireW = v; saveSettings(); }
+}, v => `×${+v.toFixed(2)}`);
+bindRange('wireAlpha', 'outWireA', v => {
+  viewer.setWireOpacity(v);
+  if (settings.wireA !== v) { settings.wireA = v; saveSettings(); }
+}, v => `${Math.round(v * 100)}%`);
+for (const id of ['wireWidth', 'wireAlpha']) {
+  $(id).addEventListener('pointerdown', () => { if (!$('wireOn').checked) setCheck('wireOn', true); });
+}
+setRange('wireWidth', settings.wireW);
+setRange('wireAlpha', settings.wireA);
 bindRange('exposure', 'outExp', v => viewer.setExposure(v), v => v.toFixed(2));
 bindRange('envInt', 'outEnv', v => viewer.setEnvIntensity(v), v => v.toFixed(2));
 bindRange('lightAz', 'outAz', v => viewer.setLightDirection(v, viewer.lightElevation), v => `${v | 0}°`);
@@ -1836,12 +1919,17 @@ function resetAllSettings() {
   viewer.applyMaterialMode('clay');
   setRange('skinOpacity', 1);
   setCheck('wireOn', false);
+  setRange('wireWidth', 1);
+  setRange('wireAlpha', 0.85);
   setCheck('headPlanes', false);
   setCheck('boneView', false);
   setCheck('musclePal', false);
   setCheck('canonRest', true);
   setCheck('limitsOn', true);
   setCheck('ringsOn', true);
+  setCheck('pullOn', true);
+  setCheck('shotShadow', false);
+  setCheck('shotCrop', true);
   // 見る範囲とカメラ（ライトの向きはカメラが基準なので先に戻す）
   viewer.setPartView('full', 'R');
   setRange('lens', 40);
@@ -1938,3 +2026,5 @@ if ('serviceWorker' in navigator) {
       .catch(() => {});
   });
 }
+
+// ===== app.js ここまで =====

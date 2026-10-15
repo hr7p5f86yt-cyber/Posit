@@ -146,3 +146,5 @@ export function setSegment(b, d, w, l) {
 export function clearSegments(bones) {
   for (const b of bones) b.userData.seg = null;
 }
+
+// ===== proportions.js ここまで =====

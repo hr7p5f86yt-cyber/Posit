@@ -1,5 +1,5 @@
 // sw.js — オフライン動作用のキャッシュ
-const CACHE = 'posit-v43';
+const CACHE = 'posit-v44';
 
 const SHELL = [
   './',
@@ -12,11 +12,13 @@ const SHELL = [
   './history.js',
   './croquis.js',
   './skeletonView.js',
+  './wireLines.js',
   './anatomy.js',
   './muscleView.js',
   './rotateRings.js',
   './bodyShape.js',
   './lightBall.js',
+  './limbPull.js',
   './breastParts.js',
   './proportions.js',
   './headPlanes.js',
@@ -77,3 +79,5 @@ self.addEventListener('fetch', event => {
     }
   })());
 });
+
+// ===== sw.js ここまで =====

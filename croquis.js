@@ -95,3 +95,5 @@ export class CroquisSession {
     this.onFinish(done);
   }
 }
+
+// ===== croquis.js ここまで =====

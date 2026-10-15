@@ -488,3 +488,5 @@ export function mapBonesByStructure(bones, posOf) {
   }
   return map;
 }
+
+// ===== bones.js ここまで =====

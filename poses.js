@@ -183,3 +183,5 @@ export function parseFingerSpec(spec) {
   }
   return out;
 }
+
+// ===== poses.js ここまで =====

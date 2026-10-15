@@ -238,3 +238,5 @@ export class LightBall {
     if (this.tip) this.tip.textContent = `${describeLight(L)}・強さ ${kI.toFixed(1)}`;
   }
 }
+
+// ===== lightBall.js ここまで =====

@@ -12,6 +12,8 @@ import { buildBodyMorphs } from './bodyShape.js';
 import { buildBreastParts } from './breastParts.js';
 import { buildMuscles, setMusclePalette } from './muscleView.js';
 import { RotateRings } from './rotateRings.js';
+import { LimbPull } from './limbPull.js';
+import { WIRE, makeWireMaterial, makeWireGeometry, setWireOpacity } from './wireLines.js';
 import { deformFactors, installSegmentScale, setSegment, clearSegments } from './proportions.js';
 // 不具合を調べるときの入り口（画面には出ない）
 if (typeof window !== 'undefined') window.__positTHREE = THREE;
@@ -135,6 +137,7 @@ export class Viewer {
     this.limitsEnabled = true;
     this.canonicalRest = true;
     this.wireOn = false;
+    this.wireOpacity = 0.85;
     this.bodyType = 'neutral';
     this.headRatio = null;          // null なら元のまま
     this.partView = 'full';         // full / upper / face / hand / foot
@@ -156,6 +159,7 @@ export class Viewer {
     this._initGround();
     this._initMarker();
     this.rings = new RotateRings(this);
+    this.pull = new LimbPull(this);
     this._bindPointer();
     this._loop();
   }
@@ -164,7 +168,8 @@ export class Viewer {
 
   _initScene() {
     const renderer = new THREE.WebGLRenderer({
-      canvas: this.canvas, antialias: true, alpha: false, powerPreference: 'high-performance',
+      // alpha: 背景を透過した画像を書き出せるように（ふだんは背景色で塗るので見た目は同じ）
+      canvas: this.canvas, antialias: true, alpha: true, powerPreference: 'high-performance',
     });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     renderer.shadowMap.enabled = true;
@@ -253,6 +258,7 @@ export class Viewer {
     shadowPlane.rotation.x = -Math.PI / 2;
     shadowPlane.receiveShadow = true;
     this.scene.add(shadowPlane);
+    this.shadowPlane = shadowPlane;
 
     const grid = new THREE.GridHelper(20, 40, 0x3a4250, 0x262c36);
     grid.material.transparent = true;
@@ -626,11 +632,7 @@ export class Viewer {
       // 女性の乳房は、胸の殻を変形せず、別の部品として胸にのせる
       guard('乳房の部品', () => {
         if (slot.breast) for (const m of [...slot.breast.parts, ...slot.breast.wires]) if (m.parent) m.parent.remove(m);
-        if (!this._breastWireMat) {
-          this._breastWireMat = new THREE.MeshBasicMaterial({
-            color: 0x11141a, wireframe: true, transparent: true, opacity: 0.6, depthWrite: false,
-          });
-        }
+        if (!this._breastWireMat) this._breastWireMat = makeWireMaterial({ opacity: this.wireOpacity, grid: true });
         slot.breast = buildBreastParts(slot, { wireMaterial: this._breastWireMat });
       });
       guard('骨格の生成', () => this._buildBoneView(slot));
@@ -1413,20 +1415,22 @@ export class Viewer {
   // ---- 面の線（ワイヤー）-----------------------------------------------
 
   _buildWireframe(slot) {
-    for (const w of slot.wireMeshes) if (w.parent) w.parent.remove(w);
+    for (const w of slot.wireMeshes) { if (w.parent) w.parent.remove(w); if (w.geometry) w.geometry.dispose(); }
     slot.wireMeshes = [];
     if (!slot.meshes.length) return;
-    const mat = new THREE.MeshBasicMaterial({
-      color: 0x11141a, wireframe: true, transparent: true, opacity: 0.6, depthWrite: false,
-    });
+    // 面の線は、三角形の縁だけを塗る別の形で描く（太さを変えられるように。wireLines.js）
+    const mat = makeWireMaterial({ opacity: this.wireOpacity });
     for (const m of slot.meshes) {
       let w;
+      const wg = makeWireGeometry(m.geometry);
       if (m.isSkinnedMesh && m.skeleton) {
-        w = new THREE.SkinnedMesh(m.geometry, mat);
+        w = new THREE.SkinnedMesh(wg, mat);
+        w.bindMode = m.bindMode;
         w.bind(m.skeleton, m.bindMatrix);
       } else {
-        w = new THREE.Mesh(m.geometry, mat);
+        w = new THREE.Mesh(wg, mat);
       }
+      w.raycast = () => {};
       w.position.copy(m.position);
       w.quaternion.copy(m.quaternion);
       w.scale.copy(m.scale);
@@ -1456,6 +1460,11 @@ export class Viewer {
     this._refreshWire();
     this._applyClipping();
   }
+
+  /** 面の線の太さ（画面の画素。1 = 前の版までと同じ細さ） */
+  setWireWidth(px) { WIRE.width.value = Math.max(0.25, Math.min(8, px)); }
+  /** 面の線の濃さ（0〜1） */
+  setWireOpacity(v) { this.wireOpacity = Math.max(0.05, Math.min(1, v)); setWireOpacity(this.wireOpacity); }
 
   // ---- 面で捉えた頭部 ---------------------------------------------------
 
@@ -1898,6 +1907,16 @@ export class Viewer {
     this.camera.position.copy(at).addScaledVector(dir, dist);
     this.controls.update();
     this._prevPartFrame = this._partFrame();
+  }
+
+  /** いまの向きのまま、人形（見ている範囲）全体を画面に収める */
+  fitView() {
+    const d = this.camera.position.clone().sub(this.controls.target);
+    const f = this._partFrame();
+    if (f) d.applyQuaternion(f.quat.clone().invert());
+    const len = d.length() || 1;
+    const az = Math.atan2(d.x, d.z) / DEG, el = Math.asin(Math.max(-1, Math.min(1, d.y / len))) / DEG;
+    this.viewFromAngle(az, el);
   }
 
   frameModel() {
@@ -2753,6 +2772,30 @@ export class Viewer {
     this.applyAll();
   }
 
+  /**
+   * 選んだ関節のある腕（脚）を、反対側へ鏡に映して写す。腕なら手の形も写す。
+   * @returns {string|null} 写した所の名前（「左腕→右腕」など）
+   */
+  copyLimbToOther(key) {
+    const j = JOINT_BY_KEY[key];
+    if (!j || !j.side) return null;
+    const s = j.side, o = s === 'L' ? 'R' : 'L';
+    const arm = ['shoulder', 'upperArm', 'forearm', 'hand'];
+    const leg = ['thigh', 'shin', 'foot'];
+    const group = arm.includes(j.base) ? arm : leg.includes(j.base) ? leg : null;
+    if (!group) return null;
+    for (const b of group) {
+      const a = this.angles[b + s] || { x: 0, y: 0, z: 0 };
+      this.angles[b + o] = { x: a.x, y: -a.y, z: -a.z };
+      if (this.limitsEnabled) Object.assign(this.angles[b + o], clampAngles(b + o, this.angles[b + o]));
+    }
+    if (group === arm) this.handShape[o] = this.handShape[s];
+    this.applyAll();
+    this._reapplyHandShapes();
+    const nm = side => (side === 'L' ? '左' : '右') + (group === arm ? '腕' : '脚');
+    return `${nm(s)}→${nm(o)}`;
+  }
+
   mirrorPose() {
     const swap = (aKey, bKey) => {
       const a = this.angles[aKey], b = this.angles[bKey];
@@ -2788,12 +2831,23 @@ export class Viewer {
   _bindPointer() {
     let startX = 0, startY = 0, moved = false;
     const el = this.canvas;
-    el.addEventListener('pointerdown', e => { startX = e.clientX; startY = e.clientY; moved = false; });
+    // タップの判定は、関節を動かす処理より先に（そちらが止めても届くように capture で）受け取る
+    el.addEventListener('pointerdown', e => { startX = e.clientX; startY = e.clientY; moved = false; }, { capture: true });
     el.addEventListener('pointermove', e => {
       if (Math.abs(e.clientX - startX) > 6 || Math.abs(e.clientY - startY) > 6) moved = true;
     });
+    // 何もない所をすばやく 2 回タップすると、いまの向きのまま全体を画面に収める
+    this.onDoubleTap = () => {};
     el.addEventListener('pointerup', e => {
-      if (!moved && !this._jdTapped) guard('タップ選択', () => this._pick(e.clientX, e.clientY));
+      if (!moved && !this._jdTapped && e.isPrimary) {
+        const now = performance.now(), last = this._lastTap;
+        const dbl = !!(last && now - last.t < 330 && Math.hypot(e.clientX - last.x, e.clientY - last.y) < 32);
+        this._lastTap = dbl ? null : { t: now, x: e.clientX, y: e.clientY };
+        if (dbl && !guard('タップ選択', () => this._jointAt(e.clientX, e.clientY))) {
+          guard('全体を収める', () => this.fitView());
+          this.onDoubleTap();
+        } else guard('タップ選択', () => this._pick(e.clientX, e.clientY));
+      }
       this._jdTapped = false;
     });
 
@@ -2804,10 +2858,10 @@ export class Viewer {
     this.onJointDragEnd = () => {};
     this.jointDragEnabled = true;
     el.addEventListener('pointerdown', e => {
-      if (!this.jointDragEnabled || !this.selected || this._jd || !e.isPrimary || this.pickMode === 'anatomy') return;
+      if (!this.jointDragEnabled || this._jd || !e.isPrimary || this.pickMode === 'anatomy') return;
       if (e.pointerType === 'mouse' && e.button !== 0) return;
       // 回転の輪を押したら、その軸だけで回す（関節の部分を押すより先に見る）
-      const rh = guard('回転の輪', () => this.rings.hit(e.clientX, e.clientY, e.pointerType));
+      const rh = this.selected ? guard('回転の輪', () => this.rings.hit(e.clientX, e.clientY, e.pointerType)) : null;
       if (rh && guard('回転の輪', () => this.rings.begin(rh, e.clientX, e.clientY))) {
         e.stopImmediatePropagation();
         e.preventDefault();
@@ -2816,9 +2870,18 @@ export class Viewer {
         this._jdTapped = true;
         return;
       }
+      const key = guard('関節の判定', () => this._jointAt(e.clientX, e.clientY));
+      // 手・足を押したら、選んでいなくても引っ張って動かせる（腕・脚がついてくる）。動かさずに離せばタップで選ぶ
+      if (key && this.pull.canPull(key) && guard('引っ張る', () => this.pull.begin(key, e.clientX, e.clientY))) {
+        e.stopImmediatePropagation();
+        e.preventDefault();
+        try { el.setPointerCapture(e.pointerId); } catch (err) { /* 続行 */ }
+        this._jd = { id: e.pointerId, key, x: e.clientX, y: e.clientY, moved: false, pull: true };
+        return;
+      }
+      if (!this.selected) return;
       // 選んでいる関節の部分（関節〜その先）を押したか。細い腕でも押しやすいよう、
       // 画面の上で骨の線から 24px 以内なら受け付ける
-      const key = guard('関節の判定', () => this._jointAt(e.clientX, e.clientY));
       if (key !== this.selected && !guard('関節の判定', () => this._nearSelected(e.clientX, e.clientY, 24))) return;
       e.stopImmediatePropagation();
       e.preventDefault();
@@ -2834,6 +2897,7 @@ export class Viewer {
         this.onJointDragStart(jd.key);
       }
       if (jd.ring) guard('回転の輪', () => this.rings.move(e.clientX, e.clientY));
+      else if (jd.pull) guard('引っ張る', () => this.pull.move(e.clientX, e.clientY));
       else guard('関節のドラッグ', () => this._dragJoint(jd.key, e.clientX, e.clientY));
       this.onJointDrag(jd.key);
     });
@@ -2843,7 +2907,8 @@ export class Viewer {
       this._jd = null;
       try { el.releasePointerCapture(jd.id); } catch (err) { /* 続行 */ }
       if (jd.ring) this.rings.end();
-      if (jd.moved) { this._jdTapped = true; this.onJointDragEnd(jd.key, jd.ring || null); }
+      if (jd.pull) this.pull.end();
+      if (jd.moved) { this._jdTapped = true; this.onJointDragEnd(jd.key, jd.ring || (jd.pull ? 'pull' : null)); }
     };
     el.addEventListener('pointerup', end, { capture: true });
     el.addEventListener('pointercancel', end, { capture: true });
@@ -3130,27 +3195,78 @@ export class Viewer {
   setGridVisible(on) { this.grid.visible = on; }
 
   /**
-   * いまの画面を PNG にする（選択の印・光の矢印は外す）。overlay は重ねる 2D キャンバス（補助線など）
+   * いまの画面を PNG にする（選択の印・回転の輪・光の矢印は外す）。overlay は重ねる 2D キャンバス（補助線など）
+   * opts.transparent … 背景・床の線を抜いて透過にする。opts.shadow … 透過でも床の影は残す。
+   * opts.crop … 透過のとき、人形のまわりで切り抜く（少し余白を付ける）
    * @returns {Promise<Blob|null>}
    */
-  snapshotPNG(overlay = null) {
-    const keepMarker = this.marker.visible;
-    const keepArrow = this.lightArrow ? this.lightArrow.visible : false;
-    const keepRings = this.rings.group.visible;
+  snapshotPNG(overlay = null, opts = {}) {
+    const tr = !!opts.transparent;
+    const keep = {
+      marker: this.marker.visible, rings: this.rings.group.visible,
+      arrow: this.lightArrow ? this.lightArrow.visible : false,
+      bg: this.scene.background, grid: this.grid.visible,
+      shadow: this.shadowPlane ? this.shadowPlane.visible : false,
+      clear: this.renderer.getClearColor(new THREE.Color()), clearA: this.renderer.getClearAlpha(),
+    };
     this.marker.visible = false;
     this.rings.group.visible = false;
     if (this.lightArrow) this.lightArrow.visible = false;
+    if (tr) {
+      this.scene.background = null;
+      this.renderer.setClearColor(0x000000, 0);
+      this.grid.visible = false;
+      if (this.shadowPlane) this.shadowPlane.visible = !!opts.shadow;
+    }
+    // 描いた直後（同じ処理の中）なら、画面の中身をそのまま写せる
     this.renderer.render(this.scene, this.camera);
     const src = this.renderer.domElement;
-    const c = document.createElement('canvas');
+    let c = document.createElement('canvas');
     c.width = src.width; c.height = src.height;
-    const g = c.getContext('2d');
+    let g = c.getContext('2d');
     g.drawImage(src, 0, 0);
     if (overlay && overlay.width) g.drawImage(overlay, 0, 0, c.width, c.height);
-    this.marker.visible = keepMarker;
-    this.rings.group.visible = keepRings;
-    if (this.lightArrow) this.lightArrow.visible = keepArrow;
+    // 元に戻す
+    this.marker.visible = keep.marker;
+    this.rings.group.visible = keep.rings;
+    if (this.lightArrow) this.lightArrow.visible = keep.arrow;
+    if (tr) {
+      this.scene.background = keep.bg;
+      this.renderer.setClearColor(keep.clear, keep.clearA);
+      this.grid.visible = keep.grid;
+      if (this.shadowPlane) this.shadowPlane.visible = keep.shadow;
+      this.renderer.render(this.scene, this.camera);
+    }
+    if (tr && opts.crop) {
+      const box = Viewer._alphaBox(g, c.width, c.height);
+      if (box) {
+        const m = Math.round(Math.max(box.w, box.h) * 0.04) + 2;
+        const x0 = Math.max(0, box.x - m), y0 = Math.max(0, box.y - m);
+        const x1 = Math.min(c.width, box.x + box.w + m), y1 = Math.min(c.height, box.y + box.h + m);
+        const cc = document.createElement('canvas');
+        cc.width = x1 - x0; cc.height = y1 - y0;
+        cc.getContext('2d').drawImage(c, x0, y0, cc.width, cc.height, 0, 0, cc.width, cc.height);
+        c = cc;
+      }
+    }
     return new Promise(res => c.toBlob(b => res(b), 'image/png'));
+  }
+
+  /** 透明でない所を囲む箱（なければ null） */
+  static _alphaBox(g, w, h) {
+    let d;
+    try { d = g.getImageData(0, 0, w, h).data; } catch (e) { return null; }
+    let x0 = w, y0 = h, x1 = -1, y1 = -1;
+    for (let y = 0; y < h; y++) {
+      const row = y * w * 4;
+      for (let x = 0; x < w; x++) {
+        if (d[row + x * 4 + 3] > 6) {
+          if (x < x0) x0 = x; if (x > x1) x1 = x;
+          if (y < y0) y0 = y; if (y > y1) y1 = y;
+        }
+      }
+    }
+    return x1 < 0 ? null : { x: x0, y: y0, w: x1 - x0 + 1, h: y1 - y0 + 1 };
   }
   setUIHidden(on) {
     this._uiHidden = !!on;
@@ -3158,6 +3274,8 @@ export class Viewer {
   }
   /** 選んだ関節のまわりに回転の輪（3軸）を出すか */
   setRingsEnabled(on) { this.rings.setEnabled(on); }
+  /** 手・足を引っ張って腕・脚ごと動かせるか */
+  setPullEnabled(on) { this.pull.setEnabled(on); }
   setLens(mm) {
     this.lensMM = mm;
     this.camera.fov = 2 * Math.atan(12 / mm) * (180 / Math.PI);
@@ -3167,3 +3285,5 @@ export class Viewer {
 
 export const THREE_REVISION = THREE.REVISION;
 export { JOINTS, JOINT_BY_KEY, JOINT_GROUPS };
+
+// ===== viewer.js ここまで =====

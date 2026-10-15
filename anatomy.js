@@ -181,3 +181,5 @@ export const MUSCLES = {
   peroneus:     { ja: '長腓骨筋', la: 'M. fibularis longus', region: 'leg', origin: '腓骨の外側面', insertion: '第1中足骨・内側楔状骨', action: '足の裏を外へ向ける' },
   achilles:     { ja: 'アキレス腱（踵骨腱）', la: 'Tendo calcaneus', region: 'foot', origin: '腓腹筋・ヒラメ筋', insertion: '踵骨隆起', action: 'ふくらはぎの力をかかとへ伝える' },
 };
+
+// ===== anatomy.js ここまで =====

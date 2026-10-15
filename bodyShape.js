@@ -437,3 +437,5 @@ export function buildBodyMorphs(slot, opts = {}) {
   slot.bodyMorphs = true;
   return true;
 }
+
+// ===== bodyShape.js ここまで =====
