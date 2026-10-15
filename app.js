@@ -8,7 +8,7 @@ import { LightBall } from './lightBall.js';
 import { REGIONS } from './anatomy.js';
 import * as THREE from 'three';
 
-export const BUILD = '2026-10-15c';
+export const BUILD = '2026-10-15d';
 
 const SAMPLE_URL = 'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r169/examples/models/gltf/Xbot.glb';
 const SETTINGS_KEY = 'posit.settings.v1';
@@ -59,7 +59,9 @@ function loadSettings() {
       guideSeen: !!s.guideSeen,
       wireMode: s.wireMode === 'lattice' ? 'lattice' : 'mesh',
       wireDensity: [0, 1, 2, 3].includes(s.wireDensity) ? s.wireDensity : 1,
-      dots: s.dots !== false,
+      // 関節の印ははじめは出さない（v47）。自分で切り替えたときだけ、その選び方を覚える
+      dots: s.dotsUser ? !!s.dots : false,
+      dotsUser: !!s.dotsUser,
     };
   } catch (e) {
     return defaultSettings();
@@ -69,7 +71,7 @@ function loadSettings() {
 function defaultSettings() {
   return { seconds: 30, count: 10, cqCats: [], cqModel: 'skin', cqFrame: 'full', cqWire: false, cqAngle: 'random',
     cqSide: 'random', cqBody: 'keep', cqHandShape: true, lightBall: true, sheetStage: 1,
-    cqBeep: true, cqMirror: false, guideHeads: false, guideCenter: false, guideTilt: false, musclePal: false, rings: true, wireW: 1, wireA: 0.85, shotShadow: false, shotCrop: true, pull: true, wireMode: 'mesh', wireDensity: 1, dots: true };
+    cqBeep: true, cqMirror: false, guideHeads: false, guideCenter: false, guideTilt: false, musclePal: false, rings: true, wireW: 1, wireA: 0.85, shotShadow: false, shotCrop: true, pull: true, wireMode: 'mesh', wireDensity: 1, dots: false, dotsUser: false };
 }
 function saveSettings() {
   try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch (e) { /* 続行 */ }
@@ -110,14 +112,15 @@ syncUndoButtons();
 
 // ---- タブ -----------------------------------------------------------------
 
-function showTab(name) {
+/** タブを切り替える。expand: たたんでいるときにパネルを開くか（関節を選んだときは開かない） */
+function showTab(name, expand = true) {
   for (const b of document.querySelectorAll('#tabbar button')) {
     b.classList.toggle('on', b.dataset.tab === name);
   }
   for (const p of document.querySelectorAll('.page')) {
     p.hidden = p.dataset.page !== name;
   }
-  if (sheetStage === 0) setSheetStage(1);
+  if (expand && sheetStage === 0) setSheetStage(1);
   if (window.__positRelayout) window.__positRelayout();
 }
 for (const b of document.querySelectorAll('#tabbar button')) {
@@ -134,7 +137,8 @@ const stageHeight = k => {
   if (k === 2) return Math.round(H * 0.8);
   return Math.round(Math.min(H * 0.55, Math.max(345, Math.min(450, H * 0.46))));
 };
-let sheetStage = settings.sheetStage;
+// パネルは、開くたびにたたんだ状態から始める（v47。人形の上だけで操作できるので）
+let sheetStage = 0;
 
 function updateInsets() {
   if (typeof placeAnatCard === 'function' && !$('anatCard').hidden) placeAnatCard();
@@ -363,7 +367,8 @@ viewer.onSelect = key => {
   for (const el of document.querySelectorAll('.chip.j')) {
     el.classList.toggle('on', el.dataset.key === key);
   }
-  if (key) { showTab('joint'); focusJointGroup(key); }
+  // 関節を選んでも、たたんだパネルは開かない（人形の上で操作できるので）。開いたときは関節のページになっている
+  if (key) { showTab('joint', false); focusJointGroup(key); }
 };
 
 // 画面の上の、選んだ関節の操作（戻す・左右へ写す・選択を外す）
@@ -421,7 +426,7 @@ document.addEventListener('pointerdown', e => {
 $('dotsOn').checked = settings.dots;
 viewer.setDotsEnabled(settings.dots);
 $('dotsOn').addEventListener('change', e => {
-  settings.dots = e.target.checked; saveSettings();
+  settings.dots = e.target.checked; settings.dotsUser = true; saveSettings();
   viewer.setDotsEnabled(settings.dots);
 });
 $('selBarReset').addEventListener('click', () => {
@@ -1489,6 +1494,8 @@ async function loadSample() {
     mark('サンプル取得完了');
     viewer.resetToDefault();        // はじめのポーズ（両手を広げる）
     syncSliders();
+    // 両手を広げると横に広いので、パネルの高さが決まってから、手の先まで画面に収める
+    setTimeout(() => { updateInsets(); viewer.viewFromAngle(0, 4); }, 350);
   } catch (err) {
     if (window.__positShowError) {
       window.__positShowError('サンプルモデルを取得できませんでした。\n' + SAMPLE_URL
@@ -1996,7 +2003,7 @@ function resetAllSettings() {
   // クロッキーとパネルの設定
   Object.assign(settings, defaultSettings());
   saveSettings();
-  setSheetStage(1);
+  setSheetStage(0);
   setAnatomyMode(false);
   for (const id of ['guideHeads', 'guideCenter', 'guideTilt']) $(id).checked = false;
   // 体つき
@@ -2018,7 +2025,8 @@ function resetAllSettings() {
   setCheck('limitsOn', true);
   setCheck('ringsOn', true);
   setCheck('pullOn', true);
-  setCheck('dotsOn', true);
+  setCheck('dotsOn', false);
+  settings.dotsUser = false; saveSettings();
   setCheck('shotShadow', false);
   setCheck('shotCrop', true);
   // 見る範囲とカメラ（ライトの向きはカメラが基準なので先に戻す）
@@ -2093,7 +2101,7 @@ buildLightPresets();
 buildHistory();
 buildSaved();
 syncSliders();
-setSheetStage(settings.sheetStage, false);
+setSheetStage(0, false);
 updateInsets();
 loadSample();
 
