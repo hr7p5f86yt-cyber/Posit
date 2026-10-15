@@ -134,7 +134,7 @@ class Slot {
 
 export class Viewer {
   /** この viewer.js の版（app.js の BUILD と同じでなければ、古いファイルが混ざっている） */
-  static BUILD = '2026-10-16c';
+  static BUILD = '2026-10-16d';
 
   constructor(canvas) {
     this.canvas = canvas;
@@ -2922,11 +2922,8 @@ export class Viewer {
     this.camera.updateMatrixWorld();
     const n = new THREE.Vector3(); this.camera.getWorldDirection(n);
     const p0 = hips.getWorldPosition(new THREE.Vector3());
-    let plane;
-    if (mode === 'pull') plane = new THREE.Plane().setFromNormalAndCoplanarPoint(n, p0);
-    else if (Math.abs(n.y) > 0.25) plane = new THREE.Plane().setFromNormalAndCoplanarPoint(new THREE.Vector3(0, 1, 0), p0);
-    // 床と平行な面が画面とほぼ平行（真横から見ている）ときは、画面に向いた縦の面で、横にだけ動かす
-    else plane = new THREE.Plane().setFromNormalAndCoplanarPoint(new THREE.Vector3(n.x, 0, n.z).normalize(), p0);
+    // どちらも画面の面の中で動く（上へ引けば持ち上がる。上から見ているときは床の上を前後左右に動く）
+    const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(n, p0);
     const P0 = this.pull._rayPoint(clientX, clientY, plane);
     if (!P0) return false;
     const temp = [];
@@ -2942,11 +2939,14 @@ export class Viewer {
     if (!P) return;
     const d = P.sub(m.P0);
     if (m.mode === 'slide') {
-      d.y = 0;
-      // 体ごと動かすので、固定した手・足の位置も一緒に動かす
+      // 体ごと動かすので、固定した手・足の位置も一緒に動かす（床より下へは行かない）
+      const minY = m.shift0.y > 0 ? -m.shift0.y : 0;
+      if (d.y < minY) d.y = minY;
       for (const [k, p0] of m.locks0) { const L = this.locks.get(k); if (L) L.pos.copy(p0).add(d); }
     }
     this.bodyShift.copy(m.shift0).add(d);
+    // 足を固定していないとき（体全体モードも）は、上へは持ち上がり（跳ぶ・浮く）、下は床で止まる
+    if (m.mode === 'slide' || (!this.locks.has('footL') && !this.locks.has('footR'))) this.bodyShift.y = Math.max(0, this.bodyShift.y);
     this.applyAll();
     this._enforceLocks('hips');
     // 片足だけ固定して腰を下げたとき、固定していない足は床より下へは行かせない（床に着いたところで止める）
@@ -3007,7 +3007,9 @@ export class Viewer {
     guard('接地', () => {
       this.container.position.y = 0;
       this.container.updateWorldMatrix(true, true);
-      this.container.position.y = p.restLowestY - this._lowestBoneY(p);
+      // 体全体を持ち上げた分（腰を引っ張って上げた分。床より下へは行かない）だけ浮かせる（跳ぶ・宙に浮くポーズ）
+      const lift = Math.max(0, this.bodyShift ? this.bodyShift.y : 0);
+      this.container.position.y = p.restLowestY - this._lowestBoneY(p) + lift;
     });
   }
 
