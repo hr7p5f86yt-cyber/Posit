@@ -133,6 +133,9 @@ class Slot {
 }
 
 export class Viewer {
+  /** この viewer.js の版（app.js の BUILD と同じでなければ、古いファイルが混ざっている） */
+  static BUILD = '2026-10-16b';
+
   constructor(canvas) {
     this.canvas = canvas;
     this.slots = {};
@@ -673,7 +676,10 @@ export class Viewer {
     if (!p) { this.onStatus('モデルが読み込まれていません'); return; }
     if (!p.skeleton) { this.onStatus('スキン情報なし（表示のみ・ポーズ不可）'); return; }
     const loaded = SLOTS.filter(s => this.slots[s.key].loaded).map(s => s.name).join('・');
-    this.onStatus(`${loaded}／ボーン ${p.skeleton.bones.length} 本・関節 ${Object.keys(p.boneMap).length}/${JOINTS.length}`);
+    // 見つからなかった関節も出す（サンプルの素体はあごの骨が無いので 19/20 になる。あご以外はすべて動く）
+    const miss = JOINTS.filter(j => !p.boneMap[j.key]).map(j => (j.side ? (j.side === 'L' ? '左' : '右') : '') + j.name);
+    const note = miss.length && miss.length <= 3 ? `（${miss.join('・')}の骨なし）` : '';
+    this.onStatus(`${loaded}／ボーン ${p.skeleton.bones.length} 本・関節 ${Object.keys(p.boneMap).length}/${JOINTS.length}${note}`);
   }
 
   _normalizeScale(root) {

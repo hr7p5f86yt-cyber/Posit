@@ -8,7 +8,7 @@ import { LightBall } from './lightBall.js';
 import { REGIONS } from './anatomy.js';
 import * as THREE from 'three';
 
-export const BUILD = '2026-10-16a';
+export const BUILD = '2026-10-16b';
 
 const SAMPLE_URL = 'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r169/examples/models/gltf/Xbot.glb';
 const SETTINGS_KEY = 'posit.settings.v1';
@@ -2223,6 +2223,23 @@ loadSample();
 
 $('buildTag').textContent = 'バージョン ' + BUILD;
 mark('UI構築');
+// 古いファイルが混ざっていないか（app.js と viewer.js の版が違う）。混ざっていたら、1 度だけキャッシュを消して読み直す
+if (Viewer.BUILD !== BUILD) {
+  let tried = false;
+  try { tried = sessionStorage.getItem('posit.fixBuild') === BUILD; sessionStorage.setItem('posit.fixBuild', BUILD); } catch (e) { tried = true; }
+  if (!tried) {
+    (async () => {
+      try {
+        if ('serviceWorker' in navigator) for (const r of await navigator.serviceWorker.getRegistrations()) await r.unregister();
+        if (window.caches) for (const k of await caches.keys()) await caches.delete(k);
+      } catch (e) { /* 続行 */ }
+      location.replace(location.pathname + '?r=' + Date.now());
+    })();
+  } else if (window.__positShowError) {
+    window.__positShowError(`古いファイルが残っています（app.js ${BUILD} / viewer.js ${Viewer.BUILD || '不明'}）。\n`
+      + 'GitHub に viewer.js も上げたか確かめて、「？」→「キャッシュを消して再読込」を押してください。');
+  }
+}
 window.__booted = true;
 setTimeout(showDiagnostics, 1200);
 $('diag').addEventListener('click', showDiagnostics);

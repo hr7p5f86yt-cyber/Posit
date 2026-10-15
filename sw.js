@@ -1,5 +1,5 @@
 // sw.js — オフライン動作用のキャッシュ
-const CACHE = 'posit-v49';
+const CACHE = 'posit-v50';
 
 const SHELL = [
   './',
@@ -36,7 +36,9 @@ const RUNTIME_HOSTS = ['cdn.jsdelivr.net'];
 self.addEventListener('install', event => {
   event.waitUntil(
     caches.open(CACHE)
-      .then(c => c.addAll(SHELL))
+      // cache: 'reload' … ブラウザの HTTP キャッシュ（GitHub Pages は 10 分残す）を通さず、必ず新しいファイルを取る。
+      // 通すと、新しい app.js と古い viewer.js が混ざることがある（v49 で「setBodyMode がない」と出た原因）
+      .then(c => c.addAll(SHELL.map(u => new Request(u, { cache: 'reload' }))))
       .then(() => self.skipWaiting())
       .catch(() => self.skipWaiting())
   );
@@ -64,7 +66,7 @@ self.addEventListener('fetch', event => {
     const hit = await cache.match(req, { ignoreSearch: false });
     if (hit) {
       // 裏で更新しておく（失敗しても無視）
-      fetch(req).then(res => { if (res && res.ok) cache.put(req, res.clone()); }).catch(() => {});
+      fetch(req, { cache: 'no-cache' }).then(res => { if (res && res.ok) cache.put(req, res.clone()); }).catch(() => {});
       return hit;
     }
     try {
