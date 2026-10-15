@@ -8,7 +8,7 @@ import { LightBall } from './lightBall.js';
 import { REGIONS } from './anatomy.js';
 import * as THREE from 'three';
 
-export const BUILD = '2026-10-15a';
+export const BUILD = '2026-10-15b';
 
 const SAMPLE_URL = 'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r169/examples/models/gltf/Xbot.glb';
 const SETTINGS_KEY = 'posit.settings.v1';
@@ -57,6 +57,8 @@ function loadSettings() {
       shotCrop: s.shotCrop !== false,
       pull: s.pull !== false,
       guideSeen: !!s.guideSeen,
+      wireMode: s.wireMode === 'lattice' ? 'lattice' : 'mesh',
+      wireDensity: [0, 1, 2, 3].includes(s.wireDensity) ? s.wireDensity : 1,
     };
   } catch (e) {
     return defaultSettings();
@@ -66,7 +68,7 @@ function loadSettings() {
 function defaultSettings() {
   return { seconds: 30, count: 10, cqCats: [], cqModel: 'skin', cqFrame: 'full', cqWire: false, cqAngle: 'random',
     cqSide: 'random', cqBody: 'keep', cqHandShape: true, lightBall: true, sheetStage: 1,
-    cqBeep: true, cqMirror: false, guideHeads: false, guideCenter: false, guideTilt: false, musclePal: false, rings: true, wireW: 1, wireA: 0.85, shotShadow: false, shotCrop: true, pull: true };
+    cqBeep: true, cqMirror: false, guideHeads: false, guideCenter: false, guideTilt: false, musclePal: false, rings: true, wireW: 1, wireA: 0.85, shotShadow: false, shotCrop: true, pull: true, wireMode: 'mesh', wireDensity: 1 };
 }
 function saveSettings() {
   try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch (e) { /* 続行 */ }
@@ -937,14 +939,8 @@ $('btnSavePose').addEventListener('click', () => {
 });
 
 /** いまの画面を PNG にして、共有シート（写真に保存など）かダウンロードで渡す */
-async function exportImage(transparent = false) {
-  drawGuides();
-  const g = $('guides');
-  const blob = await viewer.snapshotPNG(g.hidden ? null : g,
-    transparent ? { transparent: true, shadow: settings.shotShadow, crop: settings.shotCrop } : {});
-  if (!blob) { showToast('画像を作れませんでした'); return; }
-  const d = new Date();
-  const name = `posit-${transparent ? 'clear-' : ''}${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}-${String(d.getHours()).padStart(2, '0')}${String(d.getMinutes()).padStart(2, '0')}${String(d.getSeconds()).padStart(2, '0')}.png`;
+/** 画像を共有シートで渡す（できなければダウンロード） */
+async function shareImage(blob, name) {
   const file = new File([blob], name, { type: 'image/png' });
   try {
     if (navigator.canShare && navigator.canShare({ files: [file] })) {
@@ -961,6 +957,34 @@ async function exportImage(transparent = false) {
   setTimeout(() => URL.revokeObjectURL(url), 4000);
   showToast('画像を書き出しました');
 }
+
+let shotBlob = null, shotName = '', shotURL = '';
+async function exportImage(transparent = false) {
+  drawGuides();
+  const g = $('guides');
+  const blob = await viewer.snapshotPNG(g.hidden ? null : g,
+    transparent ? { transparent: true, shadow: settings.shotShadow, crop: settings.shotCrop } : {});
+  if (!blob) { showToast('画像を作れませんでした'); return; }
+  const d = new Date();
+  const name = `posit-${transparent ? 'clear-' : ''}${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}-${String(d.getHours()).padStart(2, '0')}${String(d.getMinutes()).padStart(2, '0')}${String(d.getSeconds()).padStart(2, '0')}.png`;
+  if (!transparent) { await shareImage(blob, name); return; }
+  // 透過の画像は、市松模様の上で抜けているのを確かめてから保存・コピーする
+  if (shotURL) URL.revokeObjectURL(shotURL);
+  shotBlob = blob; shotName = name; shotURL = URL.createObjectURL(blob);
+  $('shotImg').src = shotURL;
+  $('shotBox').hidden = false;
+}
+$('shotShare').addEventListener('click', () => { if (shotBlob) shareImage(shotBlob, shotName); });
+$('shotCopy').addEventListener('click', async () => {
+  if (!shotBlob) return;
+  try {
+    await navigator.clipboard.write([new ClipboardItem({ 'image/png': shotBlob })]);
+    showToast('コピーしました。お絵描きアプリに貼り付けられます');
+  } catch (e) {
+    showToast('この端末ではコピーできませんでした。「保存・共有」を使ってください');
+  }
+});
+$('shotClose').addEventListener('click', () => { $('shotBox').hidden = true; });
 $('btnExportImg').addEventListener('click', () => exportImage(false));
 $('btnExportClear').addEventListener('click', () => exportImage(true));
 $('shotShadow').checked = settings.shotShadow;
@@ -1713,6 +1737,20 @@ bindRange('wireAlpha', 'outWireA', v => {
 for (const id of ['wireWidth', 'wireAlpha']) {
   $(id).addEventListener('pointerdown', () => { if (!$('wireOn').checked) setCheck('wireOn', true); });
 }
+// 面の線の数（少なめ = 四角の面 … とても多め = 三角形を 3 分割）と引き方（面の割れ／等間隔の輪切り）
+const WIRE_DENSITIES = [
+  { value: 0, label: '少なめ' }, { value: 1, label: 'ふつう' }, { value: 2, label: '多め' }, { value: 3, label: 'とても多め' },
+];
+const WIRE_MODES = [
+  { value: 'mesh', label: '面の割れに沿う' }, { value: 'lattice', label: '等間隔の輪切り' },
+];
+function buildWireChips() {
+  viewer.setWireStyle(settings.wireMode, settings.wireDensity);
+  const pick = () => { saveSettings(); buildWireChips(); if (!$('wireOn').checked) setCheck('wireOn', true); };
+  buildChips('wireDensityChips', WIRE_DENSITIES, o => settings.wireDensity === o.value, o => { settings.wireDensity = o.value; pick(); });
+  buildChips('wireModeChips', WIRE_MODES, o => settings.wireMode === o.value, o => { settings.wireMode = o.value; pick(); });
+}
+buildWireChips();
 setRange('wireWidth', settings.wireW);
 setRange('wireAlpha', settings.wireA);
 bindRange('exposure', 'outExp', v => viewer.setExposure(v), v => v.toFixed(2));
@@ -1919,6 +1957,7 @@ function resetAllSettings() {
   viewer.applyMaterialMode('clay');
   setRange('skinOpacity', 1);
   setCheck('wireOn', false);
+  buildWireChips();
   setRange('wireWidth', 1);
   setRange('wireAlpha', 0.85);
   setCheck('headPlanes', false);

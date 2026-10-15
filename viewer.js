@@ -13,7 +13,7 @@ import { buildBreastParts } from './breastParts.js';
 import { buildMuscles, setMusclePalette } from './muscleView.js';
 import { RotateRings } from './rotateRings.js';
 import { LimbPull } from './limbPull.js';
-import { WIRE, makeWireMaterial, makeWireGeometry, setWireOpacity } from './wireLines.js';
+import { WIRE, makeWireMaterial, makeWireGeometry, setWireOpacity, setWireStyle, setWireLatticeHeight } from './wireLines.js';
 import { deformFactors, installSegmentScale, setSegment, clearSegments } from './proportions.js';
 // 不具合を調べるときの入り口（画面には出ない）
 if (typeof window !== 'undefined') window.__positTHREE = THREE;
@@ -168,8 +168,7 @@ export class Viewer {
 
   _initScene() {
     const renderer = new THREE.WebGLRenderer({
-      // alpha: 背景を透過した画像を書き出せるように（ふだんは背景色で塗るので見た目は同じ）
-      canvas: this.canvas, antialias: true, alpha: true, powerPreference: 'high-performance',
+      canvas: this.canvas, antialias: true, alpha: false, powerPreference: 'high-performance',
     });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     renderer.shadowMap.enabled = true;
@@ -1418,8 +1417,16 @@ export class Viewer {
     for (const w of slot.wireMeshes) { if (w.parent) w.parent.remove(w); if (w.geometry) w.geometry.dispose(); }
     slot.wireMeshes = [];
     if (!slot.meshes.length) return;
-    // 面の線は、三角形の縁だけを塗る別の形で描く（太さを変えられるように。wireLines.js）
-    const mat = makeWireMaterial({ opacity: this.wireOpacity });
+    // 面の線は、三角形の縁だけを塗る別の形で描く（線の数・太さを変えられるように。wireLines.js）
+    // 輪切りの線の間隔は、形の座標での体の高さを基準にする（読み込んだモデルの単位が cm でも同じ見え方）
+    let latH = 0;
+    for (const m of slot.meshes) {
+      const g = m.geometry;
+      if (!g.boundingBox) g.computeBoundingBox();
+      if (g.boundingBox) latH = Math.max(latH, g.boundingBox.max.y - g.boundingBox.min.y);
+    }
+    const mat = makeWireMaterial({ opacity: this.wireOpacity, latH: latH || 1.8 });
+    if (slot.breast && this._breastWireMat) setWireLatticeHeight(this._breastWireMat, latH || 1.8);
     for (const m of slot.meshes) {
       let w;
       const wg = makeWireGeometry(m.geometry);
@@ -1463,6 +1470,11 @@ export class Viewer {
 
   /** 面の線の太さ（画面の画素。1 = 前の版までと同じ細さ） */
   setWireWidth(px) { WIRE.width.value = Math.max(0.25, Math.min(8, px)); }
+  /**
+   * 面の線の数と引き方。mode: 'mesh'（面の割れに沿う）/ 'lattice'（等間隔の輪切り）、
+   * density: 0 少なめ / 1 ふつう / 2 多め / 3 とても多め
+   */
+  setWireStyle(mode, density) { this.wireMode = mode; this.wireDensity = density; setWireStyle(mode, density); }
   /** 面の線の濃さ（0〜1） */
   setWireOpacity(v) { this.wireOpacity = Math.max(0.05, Math.min(1, v)); setWireOpacity(this.wireOpacity); }
 
@@ -3198,6 +3210,10 @@ export class Viewer {
    * いまの画面を PNG にする（選択の印・回転の輪・光の矢印は外す）。overlay は重ねる 2D キャンバス（補助線など）
    * opts.transparent … 背景・床の線を抜いて透過にする。opts.shadow … 透過でも床の影は残す。
    * opts.crop … 透過のとき、人形のまわりで切り抜く（少し余白を付ける）
+   *
+   * 透過は「黒い背景」と「白い背景」で 1 回ずつ描き、2 枚の違いから透け具合を出す。
+   * 端末の WebGL が透明な画面を作れるかどうかに頼らないので、iPhone / iPad でも必ず抜ける
+   * （人形は 2 枚で同じ色、背景は黒と白で違う、半透明の影はその間 → 透け具合 = 1 −（白 − 黒））
    * @returns {Promise<Blob|null>}
    */
   snapshotPNG(overlay = null, opts = {}) {
@@ -3207,42 +3223,57 @@ export class Viewer {
       arrow: this.lightArrow ? this.lightArrow.visible : false,
       bg: this.scene.background, grid: this.grid.visible,
       shadow: this.shadowPlane ? this.shadowPlane.visible : false,
-      clear: this.renderer.getClearColor(new THREE.Color()), clearA: this.renderer.getClearAlpha(),
     };
     this.marker.visible = false;
     this.rings.group.visible = false;
     if (this.lightArrow) this.lightArrow.visible = false;
+    const src = this.renderer.domElement;
+    const W = src.width, H = src.height;
+    let c = document.createElement('canvas');
+    c.width = W; c.height = H;
+    let g = c.getContext('2d', { willReadFrequently: tr });
+    // 描いた直後（同じ処理の中）なら、画面の中身をそのまま写せる
+    const shot = () => { this.renderer.render(this.scene, this.camera); g.clearRect(0, 0, W, H); g.drawImage(src, 0, 0); };
     if (tr) {
-      this.scene.background = null;
-      this.renderer.setClearColor(0x000000, 0);
       this.grid.visible = false;
       if (this.shadowPlane) this.shadowPlane.visible = !!opts.shadow;
+      this.scene.background = new THREE.Color(0x000000);
+      shot();
+      const black = g.getImageData(0, 0, W, H);
+      this.scene.background = new THREE.Color(0xffffff);
+      shot();
+      const white = g.getImageData(0, 0, W, H);
+      const bk = black.data, wh = white.data, out = g.createImageData(W, H), od = out.data;
+      for (let i = 0; i < od.length; i += 4) {
+        const diff = ((wh[i] - bk[i]) + (wh[i + 1] - bk[i + 1]) + (wh[i + 2] - bk[i + 2])) / 3;
+        const a = Math.max(0, Math.min(255, 255 - diff));
+        if (a < 2) continue;                       // 背景（透明のまま）
+        const k = 255 / a;
+        od[i] = Math.min(255, bk[i] * k); od[i + 1] = Math.min(255, bk[i + 1] * k); od[i + 2] = Math.min(255, bk[i + 2] * k);
+        od[i + 3] = a;
+      }
+      g.clearRect(0, 0, W, H);
+      g.putImageData(out, 0, 0);
+    } else {
+      shot();
     }
-    // 描いた直後（同じ処理の中）なら、画面の中身をそのまま写せる
-    this.renderer.render(this.scene, this.camera);
-    const src = this.renderer.domElement;
-    let c = document.createElement('canvas');
-    c.width = src.width; c.height = src.height;
-    let g = c.getContext('2d');
-    g.drawImage(src, 0, 0);
-    if (overlay && overlay.width) g.drawImage(overlay, 0, 0, c.width, c.height);
+    if (overlay && overlay.width) g.drawImage(overlay, 0, 0, W, H);
     // 元に戻す
     this.marker.visible = keep.marker;
     this.rings.group.visible = keep.rings;
     if (this.lightArrow) this.lightArrow.visible = keep.arrow;
     if (tr) {
       this.scene.background = keep.bg;
-      this.renderer.setClearColor(keep.clear, keep.clearA);
       this.grid.visible = keep.grid;
       if (this.shadowPlane) this.shadowPlane.visible = keep.shadow;
       this.renderer.render(this.scene, this.camera);
     }
     if (tr && opts.crop) {
-      const box = Viewer._alphaBox(g, c.width, c.height);
+      const box = Viewer._alphaBox(g, W, H);
       if (box) {
         const m = Math.round(Math.max(box.w, box.h) * 0.04) + 2;
         const x0 = Math.max(0, box.x - m), y0 = Math.max(0, box.y - m);
-        const x1 = Math.min(c.width, box.x + box.w + m), y1 = Math.min(c.height, box.y + box.h + m);
+        const x1 = Math.min(W, box.x + box.w + m), y1 = Math.min(H, box.y + box.h + m);
         const cc = document.createElement('canvas');
         cc.width = x1 - x0; cc.height = y1 - y0;
         cc.getContext('2d').drawImage(c, x0, y0, cc.width, cc.height, 0, 0, cc.width, cc.height);
