@@ -153,16 +153,16 @@ export function buildMuscles(slot, extra = {}) {
   // 素体（球体関節の人形）は、胸の殻とお腹の玉のあいだが関節のくびれになっていて、
   // 人の胴よりずっと細い。筋肉をそのまま沿わせるとコルセットで絞ったように見えるので、
   // 胸の下〜骨盤のあいだは、胸の幅と腰の幅をつないだ線から少しだけくびれる幅まで広げる
-  //   （成人のウエストは胸の幅の 8〜9 割。女性はくびれを強めに）
-  const waistSag = extra.waistSag ?? 0.07;
+  //   （人の胴は、肋骨弓の下〜腸骨稜のあいだで腹斜筋の帯がなだらかにすぼまり、いちばん細いのはへその少し上・
+  //     第2〜3腰椎の高さ。胸の幅と腰の幅をつないだ線より 1 割ほど細い）
+  const waistSag = extra.waistSag ?? 0.11;
   // 帯は腸骨稜の少し上から（その下は骨盤の部品の形をそのまま使う。広げると腰の横に羽のように出る）
   const wY0 = yCrest + 0.01 * s, wY1 = ySN - 0.11 * s;
   const halfAt = y => (prof ? prof.half(clamp(y, prof.ymin, prof.ymax)) : 0.13 * s);
   const wH0 = halfAt(wY0), wH1 = halfAt(wY1);
   /** その高さで、胴の横幅の半分がこれより細くならない値（くびれの帯の外では 0） */
-  //   ただし素体のくびれ（関節の玉）の外へ筋肉を浮かせると、腰の横に板のような出っ張りが浮いて見えるので、
-  //   既定では埋めない（extra.waistFill で有効にできる）
-  const fillWaist = extra.waistFill ?? false;
+  //   筋肉と、その下の深い層の両方を同じ線まで広げるので、すき間や浮いた板にはならない（extra.waistFill = false で止める）
+  const fillWaist = extra.waistFill ?? true;
   const waistHalf = y => {
     if (!fillWaist || !prof || y <= wY0 || y >= wY1) return 0;
     const t = (y - wY0) / (wY1 - wY0);

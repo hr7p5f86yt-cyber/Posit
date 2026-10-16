@@ -8,7 +8,7 @@ import { LightBall } from './lightBall.js';
 import { REGIONS } from './anatomy.js';
 import * as THREE from 'three';
 
-export const BUILD = '2026-10-16g';
+export const BUILD = '2026-10-17a';
 
 const SAMPLE_URL = 'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r169/examples/models/gltf/Xbot.glb';
 const SETTINGS_KEY = 'posit.settings.v1';
@@ -806,6 +806,8 @@ function applyPoseHands(pose) {
     const shape = HAND_SHAPES.find(x => x.id === h[i]);
     viewer.applyHandShape(sd, shape ? shape.spec : '');
   });
+  // 体型やモデルによっては手が腿・顔などに入るので、外へ逃がす
+  viewer.resolveContacts();
 }
 function applyPose(pose) {
   snapshot();

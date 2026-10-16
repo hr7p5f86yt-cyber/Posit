@@ -13,6 +13,7 @@ import { buildBreastParts } from './breastParts.js';
 import { buildMuscles, setMusclePalette } from './muscleView.js';
 import { RotateRings } from './rotateRings.js';
 import { LimbPull } from './limbPull.js';
+import { ContactFix } from './contactFix.js';
 import { JointDots } from './jointDots.js';
 import { WIRE, makeWireMaterial, makeWireGeometry, setWireOpacity, setWireStyle, setWireLatticeHeight, addContourAttribute } from './wireLines.js';
 import { deformFactors, installSegmentScale, setSegment, clearSegments } from './proportions.js';
@@ -134,7 +135,7 @@ class Slot {
 
 export class Viewer {
   /** この viewer.js の版（app.js の BUILD と同じでなければ、古いファイルが混ざっている） */
-  static BUILD = '2026-10-16g';
+  static BUILD = '2026-10-17a';
 
   constructor(canvas) {
     this.canvas = canvas;
@@ -175,6 +176,7 @@ export class Viewer {
     this._initMarker();
     this.rings = new RotateRings(this);
     this.pull = new LimbPull(this);
+    this.contactFix = new ContactFix(this);
     this.dots = new JointDots(this, DOT_KEYS);
     this._bindPointer();
     this._loop();
@@ -2062,7 +2064,7 @@ export class Viewer {
       const skull = [];
       if (slot.skullGroup) slot.skullGroup.traverse(o => { if (o.isMesh) skull.push(o); });
       // 腰のくびれの強さ（女性は強め、男性は弱め）
-      const waistSag = { male: 0.05, female: 0.14, neutral: 0.08 }[this.bodyType] ?? 0.08;
+      const waistSag = { male: 0.07, female: 0.15, neutral: 0.10 }[this.bodyType] ?? 0.10;
       slot.muscleParts = buildMuscles(slot, { handFrame, skull, waistSag, bodyType: this.bodyType });
       if (this.musclePalette) setMusclePalette(slot.muscleParts, true);
     } finally {
@@ -2354,6 +2356,13 @@ export class Viewer {
   }
 
   applyPose(spec) { this.clearLocks(); this.setAngles(parseSpec(spec)); }
+
+  /** ポーズの一覧から当てたあと: 手・腕・脚が体の別の部分にめり込んでいたら外へ逃がす（contactFix.js） */
+  resolveContacts() {
+    if (!this.contactFix) return null;
+    const r = this.contactFix.resolve();
+    return r;
+  }
 
   allAngles() {
     const out = {};
