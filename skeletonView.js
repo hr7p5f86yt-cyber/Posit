@@ -265,7 +265,8 @@ export function measureBody(slot) {
     compBase += ids.size;
   };
   for (const m of slot.meshes || []) {
-    if (m.userData.headPlane || m.userData.bonePart || m.userData.wire) continue;
+    // 乳房の部品は胸の殻の上にのせた脂肪なので、骨・筋肉の位置を決める体の外形には入れない
+    if (m.userData.headPlane || m.userData.bonePart || m.userData.wire || m.userData.breastPart) continue;
     if (m.isSkinnedMesh && m.skeleton) addMesh(m, true);
     else if (m.isMesh) addMesh(m, false);
   }
@@ -369,7 +370,8 @@ export function trunkProfile(body, trunkBones, armBones, cx, s) {
   if (!(ymax > ymin)) return null;
   const n = Math.ceil((ymax - ymin) / step) + 1;
   const back = new Array(n).fill(null), front = new Array(n).fill(null), half = new Array(n).fill(null);
-  const band = 0.03 * s;
+  // 正中の前後の面は、正中から 6cm 以内の頂点で測る（頂点の少ない素体では、細い帯だと前の面の頂点を拾えない）
+  const band = 0.06 * s;
   for (let i = 0; i < body.count; i++) {
     const b = body.dom[i];
     if (!trunkBones.has(b) || armBones.has(b)) continue;
@@ -398,6 +400,39 @@ export function trunkProfile(body, trunkBones, armBones, cx, s) {
     }
     return out;
   };
+  // 正中の前・後ろの面は、体の外から正中の線に沿って進み、最初に体幹の皮膚に入った所で測る
+  //   （頂点の受け持ちの骨で分けると、胸の前の面が肩の骨の受け持ちになっていて拾えないことがあるため）
+  if (body.depth && body.nearest) {
+    const q = new THREE.Vector3();
+    const ok = new Set([...trunkBones, ...armBones]);
+    const march = (y, z0, dir) => {
+      let best = null;
+      for (const dx of [0, 0.03 * s]) {
+        let hit = null;
+        for (let z = z0, i = 0; i < 90; i++, z += dir * 0.005 * s) {
+          q.set(cx + dx, y, z);
+          if (body.depth(q) < 0) {
+            const ni = body.nearest();
+            if (ni >= 0 && body.dom[ni] && !ok.has(body.dom[ni])) continue;
+            // 表面の位置を細かく
+            let a = z - dir * 0.005 * s, b = z;
+            for (let k = 0; k < 5; k++) { const m = (a + b) / 2; q.set(cx + dx, y, m); if (body.depth(q) < 0) b = m; else a = m; }
+            hit = b; break;
+          }
+        }
+        if (hit !== null) best = best === null ? hit : (dir < 0 ? Math.max(best, hit) : Math.min(best, hit));
+      }
+      return best;
+    };
+    // 2cm おきに測り、あいだは補う
+    for (let k = 0; k < n; k++) {
+      if (half[k] === null) continue;
+      if (k % 2) { front[k] = back[k] = null; continue; }
+      const y = ymin + k * step;
+      const f = march(y, 0.40 * s, -1), b = march(y, -0.40 * s, 1);
+      if (f !== null && b !== null && f > b) { front[k] = f; back[k] = b; }
+    }
+  }
   const B = fill(back.map(v => (v === null ? null : -v))).map(v => -v);
   const F = fill(front);
   const H = fill(half);
@@ -606,7 +641,11 @@ function build(slot, body, P, ctx) {
   };
 
   // ---- 背骨 ----------------------------------------------------------------
-  const S1top = J.hips.y - 0.006 * s;                         // 仙骨の上面 ≒ 腰のボーン
+  // 股関節（左右の中点）と、骨盤の大きさ（左右の上前腸骨棘の間隔 IAD。Bell の式で股関節の間隔から）
+  const HJm = map.thighL && map.thighR ? W(map.thighL).lerp(W(map.thighR), 0.5) : null;
+  const kP = HJm ? clamp(W(map.thighL).distanceTo(W(map.thighR)) / 0.72 / 0.24, 0.6, 1.5) : s;
+  // 仙骨の上面（岬角の高さ）は股関節の中心より 8〜9cm 上。リグの腰の骨とのあいだを取る
+  const S1top = HJm ? lerp(J.hips.y - 0.006 * s, HJm.y + 0.085 * kP, 0.5) : J.hips.y - 0.006 * s;
   const T1 = (J.neck ? J.neck.y : J.hips.y + 0.46 * s) + 0.020 * s;
   const span = T1 - S1top;
   const L1top = S1top + span * 0.385;                          // 腰椎 : 胸椎 = 17.5 : 28
@@ -618,15 +657,25 @@ function build(slot, body, P, ctx) {
   for (let i = 0; i < 7; i++) levels.push({ name: 'C' + (7 - i), region: 'C', y: lerp(T1 + 0.004 * s, C1, i / 6), k: i / 6 });
   levels.sort((a, b) => a.y - b.y);
 
-  // 椎体の前後の位置: 背中の面から一定の深さ。前の面とのあいだで後ろ寄り 55% に収める
-  const backDepth = { C: 0.040, T: 0.052, L: 0.062 };
-  for (const L of levels) {
-    if (!prof) { L.z = J.hips.z; continue; }
-    const zb = prof.back(L.y), zf = prof.front(L.y);
-    let z = zb + backDepth[L.region] * s;
-    z = Math.min(z, zf - 0.45 * (zf - zb));
-    z = Math.max(z, zb + 0.028 * s);
-    L.z = z;
+  // 椎体の前後の位置: 脊柱の生理的な弯曲（腰椎の前弯・胸椎の後弯・頸椎の前弯）を、
+  //   第1仙椎の椎体の中心（股関節の中心より 2cm ほど後ろ。骨盤の傾き約 12°）からの前後のずれで書く（m, 身長 1.70m）。
+  //   素体の断面は殻の継ぎ目で途切れるので使わず、胸の背中の面だけを目安にする（胸椎が背中から浅すぎないように）。
+  const CURVE = { L5: 0.015, L4: 0.030, L3: 0.038, L2: 0.036, L1: 0.028, T12: 0.018, T11: 0.008, T10: -0.002, T9: -0.010,
+    T8: -0.016, T7: -0.020, T6: -0.022, T5: -0.021, T4: -0.018, T3: -0.013, T2: -0.007, T1: -0.001,
+    C7: 0.006, C6: 0.014, C5: 0.019, C4: 0.021, C3: 0.020, C2: 0.016, C1: 0.012 };
+  const zS1 = HJm ? HJm.z - 0.022 * kP : J.hips.z - 0.03 * s;
+  for (const L of levels) L.z = zS1 + (CURVE[L.name] || 0) * s;
+  {
+    // 胸の背中の面（第4〜第9胸椎の高さの中央値）から、胸椎の椎体の中心は 5cm 以上前
+    const t6 = levels.find(l => l.name === 'T6');
+    if (prof && t6) {
+      const ys = levels.filter(l => /^T[4-9]$/.test(l.name)).map(l => prof.back(l.y)).sort((a, b) => a - b);
+      const chestBack = ys[Math.floor(ys.length / 2)];
+      const want = chestBack + 0.052 * s;
+      const dz = Math.max(0, want - t6.z);
+      const y0 = S1top, y1 = t6.y;
+      for (const L of levels) L.z += dz * clamp((L.y - y0) / Math.max(1e-4, y1 - y0), 0, 1);
+    }
   }
   // 頸椎の上の方は頭の下（環椎は頭の前後の 58% の所）へつなぐ
   if (head) {
@@ -700,203 +749,290 @@ function build(slot, body, P, ctx) {
       const ta = archC.clone().add(V3(sx * canal * 0.9, 0, canal * 0.4));
       const tb = ta.clone().add(V3(sx * dim.trans * s, -0.002 * s, -back * dim.trans * s * 0.6));
       P.add(bone, rod(ta, tb, 0.0035 * s, 0.0025 * s, 8), { center: c.clone(), name: vName, margin: vm });
+      (L.tp = L.tp || {})[sx] = tb;
     }
     L.archC = archC;
     L.h = h; L.w = w; L.d = d;
   }
 
   // ---- 仙骨・尾骨 ------------------------------------------------------------
+  // 仙骨: 第1仙椎の上面（岬角）から下へ。上の方は約 40° 後ろへ傾き、下ほど前へ反って尾骨へ続く（前が凹）。
+  //   上は仙骨翼で幅広く（約 11cm）、下の先はとがる。両わきの耳状面で腸骨とつながる（仙腸関節）。
   {
     const L5 = vert.L5;
-    const pts = [], halfW = [], th = [];
-    const N = 8;
+    const N = 10, len = 0.112 * s;
+    const pts = [];
+    let p = V3(cx, S1top, (L5 ? L5.z : zS1) - 0.002 * s);
     for (let i = 0; i <= N; i++) {
       const t = i / N;
-      const y = S1top - 0.105 * s * t;
-      let z = L5.z - 0.004 * s - 0.030 * s * t - 0.030 * s * t * t;
-      if (prof) z = Math.max(z, prof.back(y) + 0.014 * s);
-      pts.push(V3(cx, y, z));
-      halfW.push(0.054 * s * (1 - 0.78 * t));
-      th.push(0.030 * s * (1 - 0.55 * t));
+      pts.push(p.clone());
+      const ang = (40 - 55 * t) * Math.PI / 180;               // 縦からの後ろへの傾き（下ほど前へ反る）
+      p = p.clone().add(V3(0, -Math.cos(ang), -Math.sin(ang)).multiplyScalar(len / N));
     }
+    const halfW = t => (t < 0.35 ? lerp(0.056, 0.046, t / 0.35) : lerp(0.046, 0.011, (t - 0.35) / 0.65)) * kP;
+    const thick = t => lerp(0.032, 0.010, t) * s;
     const rows = [];
     for (let i = 0; i <= N; i++) {
-      const row = [];
-      for (let j = 0; j <= 6; j++) {
-        const u = j / 6 * 2 - 1;
-        row.push(pts[i].clone().add(V3(u * halfW[i], 0, -Math.abs(u) * 0.006 * s)));
+      const t = i / N, row = [];
+      for (let j = 0; j <= 8; j++) {
+        const u = j / 8 * 2 - 1;
+        // 前の面はわずかに凹、仙骨翼は前へ反る
+        row.push(pts[i].clone().add(V3(u * halfW(t), (t < 0.2 ? 0.006 * s * Math.abs(u) : 0), -Math.abs(u) * 0.008 * s - thick(t) * 0.5 + (t < 0.3 ? 0.008 * s * u * u : 0))));
       }
       rows.push(row);
     }
-    P.add(map.hips, slab(rows, 0.024 * s), { axis: [pts[0], pts[N]], name: NM('sacrum') });
-    // 尾骨
+    P.add(map.hips, slab(rows, 0.022 * s), { axis: [pts[0], pts[N]], minScale: 0.8, name: NM('sacrum') });
+    // 正中仙骨稜（背中側の縦のでこぼこ）
+    P.add(map.hips, tube(pts.slice(0, 8).map((q, i) => q.clone().add(V3(0, 0, -thick(i / N) - 0.006 * s))), 0.0035 * s, { seg: 6 }), { axis: [pts[0], pts[N]], minScale: 0.8, name: NM('sacrum') });
+    // 尾骨（3〜4 個の小さな骨が前下へ）
     const tip = pts[N];
-    const cc = [tip.clone(), tip.clone().add(V3(0, -0.012 * s, 0.002 * s)), tip.clone().add(V3(0, -0.022 * s, 0.008 * s)),
-      tip.clone().add(V3(0, -0.030 * s, 0.015 * s))];
+    const cc = [tip.clone(), tip.clone().add(V3(0, -0.011 * s, 0.004 * s)), tip.clone().add(V3(0, -0.020 * s, 0.010 * s)),
+      tip.clone().add(V3(0, -0.027 * s, 0.017 * s))];
     for (let i = 0; i < 3; i++) P.add(map.hips, ellipsoid(cc[i].clone().lerp(cc[i + 1], 0.5), [0.008 * s * (1 - i * 0.22), 0.006 * s, 0.005 * s]), { center: cc[i].clone(), name: NM('coccyx') });
-    ctx.sacrum = { top: pts[0], pts };
+    ctx.sacrum = { top: pts[0], pts, halfW };
   }
 
-  // ---- 骨盤（寛骨） ----------------------------------------------------------
+  // ---- 骨盤（寛骨 = 腸骨・坐骨・恥骨） ----------------------------------------
+  // 目印の位置は股関節の中心からの外・上・前（m, 左右の上前腸骨棘の間隔 24cm の骨盤）。
+  //   上前腸骨棘は股関節の 3.4cm 外・7.2cm 上・5.3cm 前（Bell）。腸骨稜は上前腸骨棘から外上へ張り出して後ろへ回り、
+  //   いちばん高い所は第4腰椎の高さ。上前腸骨棘と恥骨結節はほぼ同じ前額面。寛骨臼は外・下・前を向く（傾き 45°・前捻 20°）。
+  //   坐骨結節は股関節の下 6cm・後ろ 3〜4cm。恥骨の上枝・下枝と坐骨枝が閉鎖孔を囲む。
   if (map.thighL && map.thighR) {
     const HL = W(map.thighL), HR = W(map.thighR);
-    const IAD = HL.distanceTo(HR) / 0.72;                     // 左右の上前腸骨棘の間隔（Bell）
+    const IAD = HL.distanceTo(HR) / 0.72;
     const k = IAD / 0.24;
     const sacrum = ctx.sacrum;
     for (const [side, sx, H] of [['L', 1, HL], ['R', -1, HR]]) {
-      const at = (x, y, z) => V3(H.x + sx * x * IAD, H.y + y * IAD, H.z + z * IAD);
-      const mid = (x, y, z) => V3(cx + sx * x * IAD, H.y + y * IAD, H.z + z * IAD);
-      // 腸骨稜（前の上前腸骨棘 → 後ろの上後腸骨棘）
-      const crest = curve([
-        at(0.14, 0.30, 0.19),            // 上前腸骨棘
-        at(0.19, 0.38, 0.10),            // 腸骨結節
-        mid(0.47, 0.43, -0.04),          // 腸骨稜のいちばん高い所
-        mid(0.36, 0.40, -0.22),
-        mid(0.22, 0.30, -0.33),          // 上後腸骨棘
-      ], 9);
-      // 翼の下の縁（下前腸骨棘 → 寛骨臼の上 → 大坐骨切痕 → 仙腸関節）
-      const lower = curve([
-        at(0.10, 0.12, 0.14),
-        at(0.11, 0.10, 0.02),
-        at(0.04, 0.08, -0.13),
-        mid(0.24, 0.14, -0.22),
-        mid(0.20, 0.20, -0.30),
-      ], 9);
+      const A = (x, y, z) => V3(H.x + sx * x * k, H.y + y * k, H.z + z * k);          // 股関節から（外 +）
+      const M = (x, y, z) => V3(cx + sx * x * k, H.y + y * k, H.z + z * k);           // 正中から
+      // 腸骨翼: 上の縁（腸骨稜）と下の縁（寛骨臼の上 → 大坐骨切痕 → 下後腸骨棘）
+      const crest = curve([A(0.034, 0.072, 0.053), A(0.058, 0.098, 0.022), A(0.066, 0.112, -0.020), A(0.052, 0.108, -0.058),
+        M(0.052, 0.094, -0.090), M(0.040, 0.072, -0.100)], 14);
+      const lower = curve([A(0.026, 0.035, 0.046), A(0.018, 0.028, 0.014), A(0.006, 0.024, -0.022), M(0.068, 0.030, -0.058),
+        M(0.060, 0.040, -0.082), M(0.042, 0.050, -0.094)], 14);
       const rows = [];
-      for (let i = 0; i < 5; i++) {
-        const t = i / 4;
-        const row = [];
+      for (let i = 0; i <= 6; i++) {
+        const t = i / 6, row = [];
         for (let j = 0; j < crest.length; j++) {
-          const pnt = lower[j].clone().lerp(crest[j], t);
-          // 内側（腸骨窩）へ少しくぼませる
-          pnt.x -= sx * Math.sin(Math.PI * t) * 0.018 * k;
-          row.push(pnt);
+          const q = lower[j].clone().lerp(crest[j], t);
+          q.x -= sx * Math.sin(Math.PI * t) * 0.011 * k * Math.sin(Math.PI * clamp(j / (crest.length - 1) * 1.15, 0, 1));   // 腸骨窩（内側のくぼみ）
+          row.push(q);
         }
         rows.push(row);
       }
-      const ilium = slab(rows, 0.007 * k);
-      P.add(map.hips, ilium, { center: at(0.08, 0.20, -0.05), name: NM('ilium', sx) });
-      P.add(map.hips, tube(crest, 0.0065 * k, { seg: 8 }), { center: at(0.10, 0.28, -0.05), name: NM('iliacCrest', sx) });
-      // 寛骨臼（大腿骨頭を受けるお椀）
+      const ilC = A(0.030, 0.065, -0.020);
+      P.add(map.hips, slab(rows, 0.0065 * k), { center: ilC, minScale: 0.8, name: NM('ilium', sx) });
+      P.add(map.hips, tube(crest, t => (0.0060 + 0.0015 * Math.sin(Math.PI * t)) * k, { seg: 8 }), { center: ilC, minScale: 0.8, name: NM('iliacCrest', sx) });
+      // 前縁（上前腸骨棘 → 下前腸骨棘）と、腸骨の後ろの厚い部分（仙腸関節の耳状面）
+      P.add(map.hips, tube(curve([A(0.034, 0.072, 0.053), A(0.030, 0.052, 0.050), A(0.026, 0.035, 0.046)], 6), 0.0055 * k, { seg: 7 }), { center: ilC, minScale: 0.8, name: NM('ilium', sx) });
+      P.add(map.hips, ellipsoid(M(0.050, 0.068, -0.080), [0.010 * k, 0.026 * k, 0.016 * k]), { center: ilC, minScale: 0.8, name: NM('ilium', sx) });
+      // 寛骨臼（大腿骨頭を受けるお椀）とそのまわりの厚い骨
+      const open = V3(sx * 0.66, -0.71, 0.24).normalize();
       {
-        const cup = new THREE.SphereGeometry(0.029 * k, 16, 8, 0, Math.PI * 2, 0, Math.PI * 0.42);
-        const open = V3(sx * 0.70, -0.50, 0.40).normalize();
+        const cup = new THREE.SphereGeometry(0.028 * k, 18, 8, 0, Math.PI * 2, 0, Math.PI * 0.46);
         cup.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(V3(0, 1, 0), open.clone().negate()));
         cup.translate(H.x, H.y, H.z);
         P.add(map.hips, finish(cup), { center: H.clone(), name: NM('acetabulum', sx) });
+        const rim = new THREE.TorusGeometry(0.028 * k, 0.0035 * k, 6, 20);
+        rim.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(V3(0, 0, 1), open));
+        const rc = H.clone().addScaledVector(open, 0.004 * k);
+        rim.translate(rc.x, rc.y, rc.z);
+        P.add(map.hips, finish(rim), { center: H.clone(), name: NM('acetabulum', sx) });
       }
-      // 坐骨（お尻の下の座る骨）
-      const ischTop = at(0.08, -0.08, -0.10);
-      const ischTub = at(0.04, -0.29, -0.14);
-      P.add(map.hips, rod(ischTop, ischTub, 0.013 * k, 0.011 * k, 10), { axis: [ischTop, ischTub], name: NM('ischium', sx) });
-      P.add(map.hips, ellipsoid(ischTub.clone().add(V3(0, -0.006 * k, 0)), [0.013 * k, 0.019 * k, 0.016 * k]), { center: ischTub.clone(), name: NM('ischium', sx), margin: 0.007 * s });
-      // 恥骨（上枝・下枝）と恥骨結合
-      const pubBody = mid(0.06, -0.11, 0.21);
-      const supA = at(0.04, -0.03, 0.11);
-      P.add(map.hips, tube(curve([supA, at(0.0, -0.07, 0.17), pubBody], 6), 0.009 * k, { seg: 8 }), { axis: [supA, pubBody], name: NM('pubis', sx) });
-      P.add(map.hips, tube(curve([pubBody, mid(0.12, -0.24, 0.12), ischTub], 6), 0.0065 * k, { seg: 8 }), { axis: [pubBody, ischTub], name: NM('pubis', sx) });
-      P.add(map.hips, ellipsoid(pubBody, [0.012 * k, 0.017 * k, 0.010 * k]), { center: pubBody.clone(), name: NM('pubis', sx) });
+      P.add(map.hips, ellipsoid(H.clone().addScaledVector(open, -0.020 * k), [0.024 * k, 0.026 * k, 0.024 * k]), { center: H.clone(), name: NM('acetabulum', sx) });
+      // 坐骨: 寛骨臼の後ろ下から坐骨結節へ。坐骨棘は内側後ろへ
+      const ischTop = A(-0.006, -0.020, -0.020), tub = M(0.058, -0.062, -0.034);
+      P.add(map.hips, rod(ischTop, tub, 0.013 * k, 0.012 * k, 10), { axis: [ischTop, tub], minScale: 0.8, name: NM('ischium', sx) });
+      P.add(map.hips, ellipsoid(tub.clone().add(V3(0, -0.006 * k, 0)), [0.012 * k, 0.020 * k, 0.016 * k]), { center: tub.clone(), name: NM('ischium', sx), margin: 0.006 * s });
+      P.add(map.hips, rod(M(0.064, -0.006, -0.050), M(0.046, -0.014, -0.064), 0.005 * k, 0.003 * k, 7), { center: tub.clone(), name: NM('ischium', sx) });
+      // 恥骨: 上枝（寛骨臼の前 → 恥骨結節）、恥骨体、下枝と坐骨枝（恥骨結合の下 → 坐骨結節）
+      const symT = M(0.004, -0.030, 0.050), symB = M(0.006, -0.066, 0.036);
+      P.add(map.hips, tube(curve([A(-0.010, 0.002, 0.024), A(-0.026, 0.004, 0.040), M(0.024, -0.024, 0.052), symT], 10), 0.0085 * k, { seg: 8 }),
+        { axis: [A(-0.010, 0.0, 0.024), symT], fit: 'axis', minScale: 0.75, name: NM('pubis', sx) });
+      P.add(map.hips, ellipsoid(M(0.014, -0.047, 0.045), [0.012 * k, 0.020 * k, 0.009 * k]), { center: M(0.014, -0.047, 0.045), name: NM('pubis', sx) });
+      P.add(map.hips, tube(curve([symB, M(0.026, -0.082, 0.020), M(0.044, -0.080, -0.006), tub.clone().add(V3(0, -0.012 * k, 0.006 * k))], 10), 0.0062 * k, { seg: 8, ell: { axis: V3(1, 0, 0), ratio: 0.7 } }),
+        { axis: [symB, tub], fit: 'axis', minScale: 0.75, name: NM('pubis', sx) });
       if (sx > 0) {
-        const sym = new THREE.CylinderGeometry(0.008 * k, 0.008 * k, 0.010 * k, 10);
-        sym.rotateZ(Math.PI / 2);
-        sym.translate(cx, pubBody.y, pubBody.z);
-        P.add(map.hips, finish(sym), { mat: 'cart', center: V3(cx, pubBody.y, pubBody.z), name: NM('symphysis') });
+        const c0 = V3(cx, (symT.y + symB.y) / 2, (symT.z + symB.z) / 2);
+        const sym = new THREE.CylinderGeometry(0.0045 * k, 0.0045 * k, 0.036 * k, 10);
+        sym.rotateX(-0.35);
+        sym.translate(c0.x, c0.y, c0.z);
+        P.add(map.hips, finish(sym), { mat: 'cart', center: c0, name: NM('symphysis') });
       }
-      // 仙腸関節（腸骨の後ろと仙骨のわき）をつなぐ
+      // 仙腸関節（仙骨のわきと腸骨の後ろをつなぐ）
       if (sacrum) {
-        const sj = sacrum.pts[2].clone().add(V3(sx * 0.044 * s, 0, 0));
-        const ij = mid(0.21, 0.22, -0.30);
-        P.add(map.hips, rod(sj, ij, 0.010 * k, 0.012 * k, 8), { axis: [sj, ij], name: NM('sacroiliac', sx) });
+        const sj = sacrum.pts[2].clone().add(V3(sx * sacrum.halfW(0.2) * 0.92, 0, -0.008 * s));
+        const ij = M(0.050, 0.066, -0.078);
+        P.add(map.hips, rod(sj, ij, 0.009 * k, 0.011 * k, 8), { axis: [sj, ij], name: NM('sacroiliac', sx) });
       }
     }
     ctx.IAD = IAD;
   }
 
   // ---- 胸郭（肋骨・肋軟骨・胸骨） -------------------------------------------
+  // 形は解剖学の標準的な寸法（身長 1.70m）で作り、素体の胸の幅・奥行きに合わせて左右と前後だけ縮める。
+  //   ・肋骨は肋骨頭（椎体のわき）→ 肋骨結節（横突起の先）→ 肋骨角（背中でいちばん後ろ）→ 側面 → 前の端（肋軟骨との境）。
+  //     後ろの端より前の端がずっと低い（下へ傾いて胸を回る）。断面は縦に長い平たい帯（第1肋骨だけは横に平たい）。
+  //   ・胸郭の断面は腎臓の形: 背骨が胸郭の中へ張り出し、肋骨角は椎体より 4cm ほど後ろ。
+  //   ・胸骨上切痕は第2〜第3胸椎の高さ、胸骨角（第2肋軟骨）は第4〜第5胸椎、剣状突起の付け根は第9胸椎の高さ。
+  //     胸骨は下ほど前へ出る（約 18° 傾く）。
+  //   ・肋軟骨: 1〜7番は胸骨へ（下の番号ほど長く、内側で上へ曲がる）。8〜10番は一つ上の軟骨へ合流して肋骨弓を作る。
+  //     11・12番は前に届かない浮遊肋。
   const ySN = vert.T2 && vert.T3 ? (vert.T2.y + vert.T3.y) / 2 : T1 - 0.035 * s;   // 胸骨上切痕
-  const front = y => (prof ? prof.front(y) : J.hips.z + 0.10 * s);
   const back = y => (prof ? prof.back(y) : J.hips.z - 0.10 * s);
   const halfAt = y => (prof ? prof.half(y) : 0.13 * s);
   const chestBone = map.chest || boneAtY(ySN - 0.06 * s);
-  // 体幹の中心を通る縦の線（肋骨などを、はみ出したら体の中心へ寄せて縮める）
-  const trunkAxis = y => { const zc = (back(y) + front(y)) / 2; return [V3(cx, y - 1, zc), V3(cx, y + 1, zc)]; };
-  // 胸骨
-  const stY = [ySN - 0.004 * s, ySN - 0.048 * s, ySN - 0.150 * s, ySN - 0.178 * s];
-  const stZ = y => front(y) - 0.012 * s;
+  const ribBone = y => { const b = boneAtY(y); return b === map.hips && map.spine ? map.spine : b; };
+  // 胸の幅（皮膚の半幅の中央値）から左右の倍率を、背中の面と椎体の位置から前後の倍率を決める
+  const midYs = [0.25, 0.4, 0.55].map(f => lerp(ySN, vert.T9 ? vert.T9.y : ySN - 0.2 * s, f));
+  const skinHalf = prof ? midYs.map(halfAt).sort((a, b) => a - b)[1] : 0.15 * s;
+  const kxC = clamp(skinHalf / (0.150 * s), 0.72, 1.2);
+  ctx.kxC = kxC;
+  const zV = y => { // その高さの椎体の中心（前後）
+    let a = levels[0], b = levels[levels.length - 1];
+    for (let i = 0; i < levels.length - 1; i++) if (levels[i].y <= y && levels[i + 1].y >= y) { a = levels[i]; b = levels[i + 1]; break; }
+    return a === b ? a.z : lerp(a.z, b.z, clamp((y - a.y) / (b.y - a.y), 0, 1));
+  };
+  const zSN = zV(ySN) + 0.078 * s;                                     // 胸骨上切痕の前の面
+  const STERN_TILT = Math.tan(18 * Math.PI / 180);
+  const stZ = y => zSN + (ySN - y) * STERN_TILT;                       // 胸骨の前の面
+  const front = stZ;
+  const cage = [];   // { bone, geo, mat, name, core }
+  // 胸骨: 胸骨柄（幅広い）・胸骨体（細長く下で少し広い）・剣状突起（細い）
+  const ST = { man: 0.050, body: 0.105, xiph: 0.034 };
+  const stY = [ySN, ySN - ST.man * s, ySN - (ST.man + ST.body) * s, ySN - (ST.man + ST.body + ST.xiph) * s];
   {
-    const ys = [], ws = [];
-    const N = 12;
+    const N = 16, ys = [], ws = [], th = [];
     for (let i = 0; i <= N; i++) {
-      const y = lerp(stY[0], stY[3], i / N);
+      const y = lerp(stY[0] + 0.002 * s, stY[3], i / N);
+      const rel = (ySN - y) / s;
       ys.push(y);
-      const rel = (stY[0] - y) / (stY[0] - stY[3]);
-      // 胸骨柄は幅広く、体は細長く、剣状突起は細い
-      ws.push(rel < 0.25 ? lerp(0.026, 0.016, rel / 0.25) : rel < 0.84 ? lerp(0.015, 0.018, (rel - 0.25) / 0.59) : lerp(0.010, 0.004, (rel - 0.84) / 0.16));
+      // 半幅（m）: 柄は上で 2.6cm（鎖骨切痕）→ 胸骨角で 1.4cm、体は 1.4 → 1.7cm、剣状突起は 0.9 → 0.3cm
+      ws.push(rel < ST.man ? lerp(0.026, 0.014, rel / ST.man)
+        : rel < ST.man + ST.body ? lerp(0.014, 0.017, Math.sin(Math.PI * 0.8 * (rel - ST.man) / ST.body))
+          : lerp(0.009, 0.003, (rel - ST.man - ST.body) / ST.xiph));
+      th.push(rel < ST.man ? 0.012 : rel < ST.man + ST.body ? 0.009 : 0.005);
     }
-    const rows = ys.map((y, i) => [-1, -0.5, 0, 0.5, 1].map(u => V3(cx + u * ws[i] * s, y, stZ(y) - Math.abs(u) * 0.003 * s)));
-    P.add(chestBone, slab(rows, 0.009 * s), { axis: trunkAxis((stY[0] + stY[3]) / 2), fit: 'axis', minScale: 0.8, name: NM('sternum') });
+    const rows = ys.map((y, i) => [-1, -0.5, 0, 0.5, 1].map(u => V3(cx + u * ws[i] * kxC * s, y, stZ(y) - th[i] * s * 0.5 - u * u * 0.004 * s)));
+    cage.push({ bone: chestBone, geo: slab(rows, 0.0085 * s), mat: 'bone', name: NM('sternum'), core: true });
+    // 胸骨角（柄と体のつなぎ目の小さな高まり）
+    const ya = stY[1];
+    cage.push({ bone: chestBone, geo: rod(V3(cx - 0.013 * kxC * s, ya, stZ(ya) - 0.004 * s), V3(cx + 0.013 * kxC * s, ya, stZ(ya) - 0.004 * s), 0.0035 * s, 0.0035 * s, 8), mat: 'bone', name: NM('sternum'), core: true });
   }
-  // 肋骨: 解剖学的な半幅（m, 身長1.70m）と、前の端の高さ（胸骨上切痕から）
-  const RIB_HALF = [0.050, 0.074, 0.090, 0.103, 0.114, 0.122, 0.128, 0.132, 0.133, 0.129, 0.120, 0.106];
-  const RIB_STERN = [0.012, 0.048, 0.070, 0.090, 0.108, 0.124, 0.140];
-  const RIB_DROP = [0.000, 0.005, 0.010, 0.016, 0.022, 0.030, 0.040];
+  // 肋骨の寸法（m, 身長 1.70m。番号 1〜12）
+  const RIB = {
+    xa:   [0.030, 0.045, 0.052, 0.056, 0.058, 0.060, 0.061, 0.062, 0.062, 0.062, 0.060, 0.056],   // 肋骨角の左右の位置
+    half: [0.052, 0.076, 0.092, 0.104, 0.114, 0.122, 0.128, 0.132, 0.133, 0.130, 0.122, 0.108],   // 胸郭の半幅（外側でいちばん広い所）
+    xe:   [0.032, 0.042, 0.052, 0.062, 0.072, 0.082, 0.090, 0.100, 0.110, 0.120, 0.124, 0.108],   // 前の端の左右の位置
+    drop: [0.032, 0.062, 0.080, 0.092, 0.100, 0.106, 0.110, 0.110, 0.106, 0.100, 0.076, 0.050],   // 肋骨頭から前の端までの下がり
+    end:  [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0.70, 0.52],                                             // 回る割合（浮遊肋は側面で終わる）
+  };
+  const STERN_AT = [0.016, 0.050, 0.074, 0.097, 0.120, 0.140, 0.156];   // 肋軟骨が胸骨に付く高さ（切痕から）
   const ribEnds = [];
-  // 前へ深く曲げると胸の皮膚が肋骨に寄るので、肋骨と肋軟骨は少し深めに収める
-  const RIB_MARGIN = 0.005 * s;
   for (let i = 1; i <= 12; i++) {
     const vt = vert['T' + i];
     if (!vt) continue;
+    const k = i - 1;
     for (const sx of [1, -1]) {
-      const yBack = vt.y;
-      let yEnd, thEnd;
-      if (i <= 7) { yEnd = ySN - (RIB_STERN[i - 1] + RIB_DROP[i - 1]) * s; thEnd = 2.55; }
-      else if (i <= 10) { yEnd = yBack - (0.075 - (i - 8) * 0.004) * s; thEnd = 2.35 - (i - 8) * 0.12; }
-      else { yEnd = yBack - (i === 11 ? 0.050 : 0.035) * s; thEnd = i === 11 ? 1.75 : 1.45; }
+      const yh = vt.y;
+      const A = RIB.half[k] * kxC * s;
+      const xa = Math.min(RIB.xa[k] * kxC * s, A * 0.92), xe = Math.min(RIB.xe[k] * kxC * s, A * 0.97);
+      const yE = yh - RIB.drop[k] * s;
+      const zBack = vt.z - 0.040 * s;                                   // 肋骨角
+      const zE = stZ(Math.min(yE, ySN)) - 0.006 * s - 0.30 * (xe - 0.03 * s);   // 前の端（胸骨より少し後ろ）
+      const ca = Math.sqrt(1 - (xa / A) ** 2), ce = Math.sqrt(1 - (xe / A) ** 2);
+      const b = Math.max(0.03 * s, (zE - zBack) / (ca + ce)), zc = zBack + b * ca;
+      const th0 = Math.asin(xa / A), th1 = Math.PI - Math.asin(xe / A);
+      const thE = th0 + (th1 - th0) * RIB.end[k];
       const pts = [];
-      // 肋骨頭（椎体のわき）→ 肋骨結節（横突起の先）→ 肋骨角 → 側面 → 前の端
-      const p0 = V3(cx + sx * (vt.w / 2 + 0.002 * s), yBack, vt.z - vt.d * 0.2);
-      const p1 = V3(cx + sx * (vt.w / 2 + 0.022 * s), yBack - 0.002 * s, vt.z - vt.d / 2 - 0.016 * s);
-      pts.push(p0, p1);
-      const steps = 10;
+      pts.push(V3(cx + sx * (vt.w / 2 + 0.002 * s), yh, vt.z - vt.d * 0.15));   // 肋骨頭
+      const tp = vt.tp && vt.tp[sx];
+      if (tp && i <= 10) pts.push(tp.clone().add(V3(sx * 0.002 * s, -0.002 * s, -0.004 * s)));    // 肋骨結節（横突起の先の前）
+      const steps = 14;
       for (let j = 0; j <= steps; j++) {
-        const th = lerp(0.62, thEnd, j / steps);
-        const y = lerp(yBack - 0.006 * s, yEnd, j / steps);
-        const zb = back(y) + 0.013 * s, zf = front(y) - 0.016 * s;
-        const zc = (zb + zf) / 2, b = Math.max(0.02 * s, (zf - zb) / 2);
-        const a = Math.max(0.03 * s, Math.min(RIB_HALF[i - 1] * s, halfAt(y) - 0.013 * s));
-        pts.push(V3(cx + sx * a * Math.sin(th), y, zc - b * Math.cos(th)));
+        const u = j / steps, th = lerp(th0, thE, u);
+        const y = yh - 0.004 * s - (RIB.drop[k] - 0.004) * s * Math.pow(u, 1.25);
+        pts.push(V3(cx + sx * A * Math.sin(th), y, zc - b * Math.cos(th)));
       }
-      const path = curve(pts, 20);
-      const rr = (0.0052 - 0.0012 * Math.abs(i - 6.5) / 6) * s;
-      P.add(boneAtY(yBack),
-        tube(path, t => rr * (t < 0.1 ? 0.8 : 1) * (1 - 0.25 * t), { seg: 7, ell: { axis: UP, ratio: 0.5 } }),
-        { axis: trunkAxis((yBack + yEnd) / 2), fit: 'axis', minScale: 0.75, name: NM('rib', sx, { n: i }), margin: i <= 2 ? 0.008 * s : RIB_MARGIN });
-      ribEnds[i] = ribEnds[i] || {};
-      ribEnds[i][sx] = path[path.length - 1];
+      const path = curve(pts, 26);
+      const first = i === 1;
+      const r = (first ? 0.0068 : i === 2 ? 0.0042 : 0.0031) * s;
+      const ratio = first ? 0.55 : i === 2 ? 1.35 : 2.0;
+      cage.push({ bone: ribBone(yh), geo: tube(path, t => r * (t < 0.06 ? 0.75 + 4 * t : 1) * (1 - 0.15 * t), { seg: 8, ell: { axis: UP, ratio } }),
+        mat: 'bone', name: NM('rib', sx, { n: i }), core: i <= 8 });
+      (ribEnds[i] = ribEnds[i] || {})[sx] = path[path.length - 1];
     }
   }
-  // 肋軟骨: 1〜7番は胸骨へ、8〜10番は一つ上の軟骨へ合流する（肋骨弓）
+  // 肋軟骨
   for (const sx of [1, -1]) {
     const cart = [];
     for (let i = 1; i <= 10; i++) {
       const e = ribEnds[i] && ribEnds[i][sx];
       if (!e) continue;
-      let to;
+      let pts;
       if (i <= 7) {
-        const y = ySN - RIB_STERN[i - 1] * s;
-        to = V3(cx + sx * 0.014 * s, y, stZ(y) - 0.002 * s);
+        const y = ySN - STERN_AT[i - 1] * s;
+        const to = V3(cx + sx * (i === 1 ? 0.020 : 0.015) * kxC * s, y, stZ(y) - 0.005 * s);
+        // 5〜7番は外へ下がってから内側で上へ曲がる
+        const m1 = e.clone().lerp(to, 0.35); m1.y = lerp(e.y, to.y, i >= 5 ? 0.12 : 0.35); m1.z = Math.max(m1.z, lerp(e.z, to.z, 0.5) + 0.003 * s);
+        const m2 = e.clone().lerp(to, 0.75); m2.y = lerp(e.y, to.y, i >= 5 ? 0.62 : 0.78); m2.z = Math.max(m2.z, lerp(e.z, to.z, 0.8));
+        pts = curve([e, m1, m2, to], 12);
       } else {
         const prev = cart[i - 1];
         if (!prev) continue;
-        to = prev[Math.floor(prev.length * 0.45)].clone();
+        const to = prev[Math.floor(prev.length * (i === 8 ? 0.45 : 0.35))].clone();
+        const m = e.clone().lerp(to, 0.5); m.z = Math.max(m.z, Math.max(e.z, to.z) - 0.004 * s);
+        pts = curve([e, m, to], 10);
       }
-      const mid = e.clone().lerp(to, 0.5);
-      mid.z = Math.max(mid.z, Math.min(e.z, to.z) + 0.004 * s);
-      const path = curve([e, mid, to], 8);
-      cart[i] = path;
-      P.add(chestBone, tube(path, 0.0042 * s, { seg: 7, ell: { axis: UP, ratio: 0.6 } }), { mat: 'cart', axis: trunkAxis((e.y + to.y) / 2), fit: 'axis', minScale: 0.78, name: NM('costalCart', sx, { n: i }), margin: RIB_MARGIN });
+      cart[i] = pts;
+      const rc = (i === 1 ? 0.0055 : 0.0034) * s;
+      cage.push({ bone: chestBone, geo: tube(pts, rc, { seg: 7, ell: { axis: UP, ratio: i === 1 ? 0.7 : 1.6 } }), mat: 'cart', name: NM('costalCart', sx, { n: i }), core: i <= 7 });
     }
   }
+  // 胸郭をひとまとまりで素体に収める: 背骨の線を軸に、左右と前後だけを同じ割合で縮める（肋骨は背骨から離れない）。
+  //   下の肋骨（9〜12番）は素体の腰のくびれの継ぎ目にかかるので、収まり具合の判定には使わない
+  {
+    const zAx = zV(ySN - 0.08 * s);
+    // 素体は殻を組み合わせた作りで、胸の中にも継ぎ目の面があり「内側かどうか」の判定が当てにならない。
+    // そこで高さごとの皮膚の半幅・前・後ろ（いくつかの高さの中央値）と比べて、はみ出さない倍率を決める
+    const med = a => { const b = a.filter(Number.isFinite).sort((x, y) => x - y); return b.length ? b[Math.floor(b.length / 2)] : 1; };
+    // 皮膚の面: 体の外から内へ向かって進み、最初に素体の内側に入った所
+    const surf = (from, dir) => { const q = from.clone(); for (let i = 0; i < 140; i++) { if (body.depth(q) < 0) return q; q.addScaledVector(dir, 0.003 * s); } return null; };
+    const rH = [], rF = [], rB = [];
+    if (body.count) {
+      for (let i = 3; i <= 8; i++) {
+        const vt = vert['T' + i]; if (!vt) continue;
+        const y = vt.y - RIB.drop[i - 1] * s * 0.45;
+        const zm = zV(y) + 0.03 * s;
+        const hl = surf(V3(cx + 0.4 * s, y, zm), V3(-1, 0, 0)), hr = surf(V3(cx - 0.4 * s, y, zm), V3(1, 0, 0));
+        if (hl && hr) rH.push((Math.min(hl.x - cx, cx - hr.x) - 0.012 * s) / (RIB.half[i - 1] * kxC * s));
+        const bk = surf(V3(cx + 0.03 * s, vt.y, zV(vt.y) - 0.4 * s), V3(0, 0, 1));
+        if (bk) rB.push((zAx - (bk.z + 0.010 * s)) / Math.max(1e-4, zAx - (vt.z - 0.040 * s)));
+      }
+      for (let t = 0.1; t <= 0.91; t += 0.1) {
+        const y = lerp(stY[0], stY[2], t);
+        const fr = surf(V3(cx, y, zV(y) + 0.45 * s), V3(0, 0, -1));
+        if (fr) rF.push((fr.z - 0.008 * s - zAx) / Math.max(1e-4, stZ(y) - zAx));
+      }
+    }
+    const sc = clamp(Math.min(1, med(rH), med(rF), med(rB)), 0.75, 1);
+    const best = [sc, 0];
+    ctx.cageFit = best;
+    ctx.cageRatio = [med(rH), med(rF), med(rB)].map(v => +v.toFixed(2));
+    for (const c of cage) {
+      const pos = c.geo.attributes.position;
+      for (let i = 0; i < pos.count; i++) pos.setXYZ(i, cx + (pos.getX(i) - cx) * best[0], pos.getY(i), zAx + (pos.getZ(i) - zAx) * best[0] - best[1]);
+      pos.needsUpdate = true; c.geo.computeVertexNormals();
+      P.add(c.bone, c.geo, { mat: c.mat, fit: 'none', name: c.name });
+    }
+    // 以降（鎖骨・肩甲骨）で使う胸郭の形
+    ctx.cage = { zAx, sc: best[0], sh: best[1] };
+    for (const i in ribEnds) for (const sx in ribEnds[i]) { const e = ribEnds[i][sx]; e.set(cx + (e.x - cx) * best[0], e.y, zAx + (e.z - zAx) * best[0] - best[1]); }
+  }
+  const stZf = y => zAxFix(stZ(y));
+  function zAxFix(z) { const c = ctx.cage; return c ? c.zAx + (z - c.zAx) * c.sc - c.sh : z; }
+  const ribBackZ = (y) => zAxFix(zV(y) - 0.040 * s);    // 肋骨角の面（肩甲骨はこの後ろに乗る）
+
 
   // ---- 頭蓋骨 ----------------------------------------------------------------
   if (map.head && head) {
@@ -904,6 +1040,7 @@ function build(slot, body, P, ctx) {
     // 頭の長さ 0.197m・幅 0.152m）での成人の頭蓋骨を、素体の頭の箱に合わせて伸び縮みさせる。
     // 軟部組織の厚み（頭頂・額で約 6mm）のぶん、骨は皮膚の内側に収める。
     const ky = head.h / 0.232, kx = head.half / 0.076, kz = (head.zFront - head.zBack) / 0.215;
+    ctx.headK = [kx, ky, kz].map(v => +v.toFixed(3));
     const zc0 = (head.zFront + head.zBack) / 2;
     const Hp = (x, y, z) => V3(cx + x * kx, head.top + y * ky, zc0 + z * kz);
     const R = (rx, ry, rz) => [rx * kx, ry * ky, rz * kz];
@@ -937,7 +1074,7 @@ function build(slot, body, P, ctx) {
       add(ellipsoid(oc.clone().add(V3(0, 0, -0.004 * kz)), R(0.018, 0.015, 0.006)), { mat: 'dark', center: C });
       // 頬骨（眼窩の外下のふち〜頬の出っぱり）と頬骨弓（耳の前へ）
       cur = NM('zygomatic', sx);
-      add(ellipsoid(Hp(sx * 0.047, -0.136, 0.054), R(0.013, 0.013, 0.012)), { center: C });
+      add(ellipsoid(Hp(sx * 0.048, -0.134, 0.050), R(0.010, 0.014, 0.012), null, 12), { center: C });
       cur = NM('zygArch', sx);
       add(tube(curve([Hp(sx * 0.052, -0.138, 0.046), Hp(sx * 0.061, -0.138, 0.026), Hp(sx * 0.063, -0.136, 0.002)], 8),
         0.0042 * ky, { seg: 7, ell: { axis: V3(sx, 0, 0), ratio: 0.5 } }), { center: C });
@@ -958,39 +1095,54 @@ function build(slot, body, P, ctx) {
     add(tube(nasal, 0.0028 * ky, { seg: 6, caps: false }), { center: C });
     add(ellipsoid(Hp(0, -0.148, 0.078), R(0.011, 0.015, 0.005)), { mat: 'dark', center: C, name: NM('nasalCavity') });
     // 上顎骨（眼窩の下〜上の歯ぐき）
+    // 上顎骨: 眼窩の下（頬の前の面）から上の歯ぐき（歯槽突起）へ。前の面は平たい
     cur = NM('maxilla');
-    add(ellipsoid(Hp(0, -0.156, 0.062), R(0.034, 0.024, 0.016)), { center: C });
-    add(ellipsoid(Hp(0, -0.174, 0.064), R(0.029, 0.010, 0.016)), { center: C });   // 歯槽（歯ぐきの骨）
-    // 歯の列（上下）
-    for (const [y, w, tn] of [[-0.180, 1.0, 'teethU'], [-0.186, 0.94, 'teethL']]) {
+    for (const sx of [1, -1]) {
+      const rows = [];
+      for (let j = 0; j <= 4; j++) {
+        const y = lerp(-0.174, -0.130, j / 4), row = [];
+        for (let i = 0; i <= 4; i++) {
+          const x = lerp(j >= 2 ? 0.014 : 0.006, 0.047 - 0.004 * (j / 4), i / 4);
+          row.push(Hp(sx * x, y, 0.077 - 0.95 * x * x / 0.046 - (j === 4 ? 0.006 : 0) - 0.004 * Math.sin(Math.PI * i / 4) * Math.sin(Math.PI * j / 4)));
+        }
+        rows.push(row);
+      }
+      add(slab(rows, 0.006 * kz), { center: C });
+    }
+    add(tube(curve([Hp(-0.030, -0.176, 0.046), Hp(-0.018, -0.177, 0.066), Hp(0, -0.177, 0.073), Hp(0.018, -0.177, 0.066), Hp(0.030, -0.176, 0.046)], 12),
+      0.0060 * ky, { seg: 8, ell: { axis: UP, ratio: 1.3 } }), { center: C });   // 歯槽（上の歯ぐきの骨）
+    add(ellipsoid(Hp(0, -0.168, 0.074), R(0.010, 0.008, 0.005)), { center: C });   // 前鼻棘の下
+    // 歯の列（上下）: 前歯は前、奥歯は後ろへ U 字に並ぶ
+    for (const [y, w, tn] of [[-0.183, 1.0, 'teethU'], [-0.191, 0.95, 'teethL']]) {
       cur = NM(tn);
       const arc = [];
-      for (let i = 0; i <= 10; i++) {
-        const a = lerp(-1.25, 1.25, i / 10);
-        arc.push(Hp(Math.sin(a) * 0.027 * w, y, 0.050 + Math.cos(a) * 0.026 * w));
+      for (let i = 0; i <= 12; i++) {
+        const a = lerp(-1.35, 1.35, i / 12);
+        arc.push(Hp(Math.sin(a) * 0.026 * w, y, 0.046 + Math.cos(a) * 0.026 * w - Math.pow(Math.abs(a) / 1.35, 2) * 0.010));
       }
-      add(tube(arc, 0.0030 * ky, { seg: 6, ell: { axis: UP, ratio: 1.4 } }), { mat: 'cart', center: C });
+      add(tube(arc, 0.0034 * ky, { seg: 6, ell: { axis: UP, ratio: 1.5 } }), { mat: 'bone', center: C });
     }
     cur = NM('mandible');
-    // 下顎骨: 下顎体（下の歯ぐき〜あごの下縁の板）と、下顎枝（下顎角 → 関節突起・筋突起）
+    // 下顎骨: 下顎体（おとがい → 下顎角の U 字の帯。縦に高く、厚さ 1cm ほど）と、
+    //   下顎枝（下顎角から上へ。後ろの関節突起は耳の前の関節へ、前の筋突起は頬骨弓の内側へ。あいだに下顎切痕）
     {
-      const TOP = [[0, -0.190, 0.075], [0.020, -0.190, 0.066], [0.034, -0.191, 0.044], [0.043, -0.193, 0.022], [0.047, -0.195, 0.004]];
-      const BOT = [[0, -0.225, 0.071], [0.022, -0.220, 0.062], [0.040, -0.211, 0.036], [0.048, -0.204, 0.012], [0.050, -0.199, -0.004]];
-      const side = (L, sx) => L.map(([x, y, z]) => Hp(sx * x, y, z));
-      const join = L => [...side(L, -1).reverse(), ...side(L, 1).slice(1)];
-      const top = curve(join(TOP), 17), bot = curve(join(BOT), 17);
-      const rows = [top, top.map((p, i) => p.clone().lerp(bot[i], 0.5).add(V3(Math.sign(p.x - cx) * 0.003 * kx, 0, 0.002 * kz))), bot];
-      add(slab(rows, 0.008 * kx), { center: C });
+      const half = [[0.000, -0.208, 0.074], [0.016, -0.207, 0.068], [0.030, -0.204, 0.052], [0.040, -0.201, 0.034], [0.046, -0.198, 0.014], [0.050, -0.195, -0.004]];
+      const line = curve([...half.slice().reverse().map(([x, y, z]) => Hp(-x, y, z)), ...half.slice(1).map(([x, y, z]) => Hp(x, y, z))], 31);
+      add(tube(line, t => (0.0050 + 0.0006 * Math.cos(Math.PI * (t - 0.5) * 2) ** 2) * kx, { seg: 10, ell: { axis: UP, ratio: 2.3 } }), { center: C });
+      add(ellipsoid(Hp(0, -0.214, 0.077), R(0.011, 0.006, 0.004)), { center: C });   // おとがい隆起
     }
     for (const sx of [1, -1]) {
-      const gon = Hp(sx * 0.050, -0.199, -0.004);
-      const cond = Hp(sx * 0.053, -0.142, -0.010), coro = Hp(sx * 0.046, -0.150, 0.020), notch = Hp(sx * 0.050, -0.156, 0.006);
-      const front = Hp(sx * 0.047, -0.194, 0.016);
-      add(slab([[gon, gon.clone().lerp(front, 0.5), front], [gon.clone().lerp(cond, 0.5), notch.clone().lerp(gon, 0.35), front.clone().lerp(coro, 0.5)],
-        [cond, notch, coro]], 0.0035 * kx), { center: C });
-      add(ellipsoid(cond.clone(), R(0.009, 0.005, 0.006)), { center: C });
+      const gB = Hp(sx * 0.050, -0.204, -0.008), gF = Hp(sx * 0.048, -0.192, 0.018);
+      const cond = Hp(sx * 0.054, -0.143, -0.013), notch = Hp(sx * 0.051, -0.160, 0.004), coro = Hp(sx * 0.047, -0.149, 0.022);
+      const rows = [];
+      for (let j = 0; j <= 4; j++) {
+        const t = j / 4;
+        rows.push([gB.clone().lerp(cond, t), gB.clone().lerp(gF, 0.5).lerp(notch, t), gF.clone().lerp(coro, t)]);
+      }
+      add(slab(rows, 0.0045 * kx), { center: C });
+      add(ellipsoid(cond.clone(), R(0.010, 0.005, 0.006)), { center: C });            // 下顎頭
+      add(ellipsoid(gB.clone().lerp(gF, 0.3).add(V3(0, 0.003 * ky, 0)), R(0.006, 0.008, 0.008)), { center: C });   // 下顎角
     }
-    add(ellipsoid(Hp(0, -0.219, 0.074), R(0.014, 0.008, 0.006)), { center: C });   // おとがい隆起
     // 頭蓋骨全体を一つのまとまりとして、形を保ったまま素体の頭に収める
     const all = [];
     for (const mat of Object.keys(pieces)) for (const pc of pieces[mat]) all.push({ ...pc, mat });
@@ -1008,53 +1160,76 @@ function build(slot, body, P, ctx) {
   }
 
   // ---- 肩（鎖骨・肩甲骨） ---------------------------------------------------
+  // 肩甲骨: 胸郭の背中（肋骨角のすぐ後ろ）に乗る三角の板。内側縁は背骨から 6cm ほど外を縦に走り、
+  //   上角は第2胸椎、下角は第7〜第8胸椎の高さ。板の面は前額面から約 35° 前へ回り、外の角の関節窩は前外側を向く。
+  //   背面の肩甲棘は内側縁（第3胸椎の高さ）から外上へ高くなり、肩峰となって上腕骨頭の上にかぶさる。
+  //   烏口突起は関節窩の上から前へ曲がる鉤。
+  // 鎖骨: 胸骨柄の鎖骨切痕（胸鎖関節）→ 肩峰の内側の縁（肩鎖関節）。内側 2/3 は前へ凸、外側 1/3 は前へ凹（S 字）。
   for (const [side, sx] of [['L', 1], ['R', -1]]) {
     const sh = map['shoulder' + side], ua = map['upperArm' + side];
     if (!ua) continue;
     const GH = W(ua);                                   // 肩関節（上腕骨頭の中心）
     const holder = sh || chestBone;
-    // 鎖骨: 胸骨の上（胸鎖関節）→ 肩峰（肩関節の上・少し後ろ）。内側 2/3 は前へ、外側 1/3 は後ろへ反る
-    const SC = V3(cx + sx * 0.022 * s, ySN + 0.004 * s, stZ(ySN) - 0.006 * s);
-    const AC = GH.clone().add(V3(-sx * 0.010 * s, 0.030 * s, -0.012 * s));
-    const clav = curve([SC, SC.clone().lerp(AC, 0.35).add(V3(0, 0.004 * s, 0.012 * s)),
-      SC.clone().lerp(AC, 0.72).add(V3(0, 0.006 * s, -0.004 * s)), AC], 12);
-    P.add(holder, tube(clav, t => (0.0065 - 0.0015 * t) * s, { seg: 9, ell: { axis: UP, ratio: 0.75 } }), { axis: [SC, AC], fit: 'axis', name: NM('clavicle', sx) });
-    // 肩甲骨: 背中の第2〜第7胸椎の高さ。上角・下角・関節窩の三角形の板
-    const yT2 = vert.T2 ? vert.T2.y : GH.y + 0.03 * s, yT7 = vert.T7 ? vert.T7.y : GH.y - 0.12 * s;
-    const zOn = (x, y) => back(y) + 0.013 * s + Math.abs(x - cx) * 0.25;
-    const sup = V3(cx + sx * 0.058 * s, yT2, 0); sup.z = zOn(sup.x, sup.y);
-    const inf = V3(cx + sx * 0.074 * s, yT7, 0); inf.z = zOn(inf.x, inf.y);
-    const glen = GH.clone().add(V3(-sx * 0.026 * s, -0.004 * s, -0.008 * s));
-    const lat = glen.clone().add(V3(-sx * 0.008 * s, -0.030 * s, -0.012 * s));
+    const nSc = NM('scapula', sx);
+    // 内側縁（関節窩の高さ）と、板の水平の向き d（内側縁 → 関節窩。前外側を向く）
+    const Mx = cx + sx * 0.060 * kxC * s;
+    const Mz = ribBackZ(GH.y - 0.04 * s) - 0.010 * s;
+    let d = V3(GH.x - sx * 0.024 * s - Mx, 0, GH.z - Mz);
+    if (d.lengthSq() < 1e-8) d.set(sx, 0, 0.5);
+    d.normalize();
+    // 板の面は前額面から 30〜42° 前へ回る（素体の肩が前にあっても、背中から浮かないように）
+    {
+      const ang = clamp(Math.atan2(d.z, Math.abs(d.x)), 30 * Math.PI / 180, 42 * Math.PI / 180);
+      d.set(sx * Math.cos(ang), 0, Math.sin(ang));
+    }
+    const M0 = V3(Mx, GH.y, Mz);
+    const Wd = Math.max(0.05 * s, (GH.x - sx * 0.024 * s - M0.x) * sx / Math.max(0.3, d.x * sx));
+    const G = M0.clone().addScaledVector(d, Wd);          // 関節窩の中心（板の外の端）
+    const n = V3(-d.z * sx, 0, d.x * sx).multiplyScalar(sx).normalize();   // 板の前（肋骨の方）
+    if (n.z < 0) n.negate();
+    const Q = (u, v, out = 0) => M0.clone().addScaledVector(d, u * Wd).add(V3(0, v * s, 0))
+      .addScaledVector(n, -(0.006 * Math.sin(Math.PI * clamp(u, 0, 1)) + out) * s);   // 背中へ少しふくらむ
+    // 板の輪郭（u: 内側縁 0 → 関節窩 1、v: 関節窩の中心からの高さ m）
+    const U = [-0.01, 0.12, 0.30, 0.55, 0.78, 0.92, 1.0];
+    const VT = [0.036, 0.040, 0.036, 0.030, 0.024, 0.020, 0.017];
+    const VB = [-0.080, -0.128, -0.108, -0.078, -0.046, -0.030, -0.017];
     const rows = [];
-    for (let i = 0; i <= 6; i++) {
-      const t = i / 6;
-      const med = sup.clone().lerp(inf, t);
-      const ext = t < 0.25 ? glen.clone().lerp(lat, t / 0.25) : lat.clone().lerp(inf, (t - 0.25) / 0.75);
+    for (let j = 0; j <= 6; j++) {
       const row = [];
-      for (let j = 0; j <= 5; j++) {
-        const pnt = med.clone().lerp(ext, j / 5);
-        pnt.z = Math.max(pnt.z, zOn(pnt.x, pnt.y) - 0.002 * s);
-        row.push(pnt);
-      }
+      for (let i = 0; i < U.length; i++) row.push(Q(U[i], lerp(VB[i], VT[i], j / 6)));
       rows.push(row);
     }
-    P.add(holder, slab(rows, 0.005 * s), { center: sup.clone().lerp(inf, 0.5).lerp(glen, 0.35), name: NM('scapula', sx) });
-    // 関節窩のふち
-    const gl = new THREE.TorusGeometry(0.014 * s, 0.003 * s, 6, 14);
-    gl.rotateY(Math.PI / 2);
-    gl.scale(1, 1.3, 1);
-    gl.translate(glen.x, glen.y, glen.z);
-    P.add(holder, finish(gl), { center: glen.clone(), name: NM('glenoid', sx) });
-    // 肩甲棘から肩峰（肩の上にかぶさる）
-    const spineA = sup.clone().lerp(inf, 0.30);
-    const acro = AC.clone().add(V3(sx * 0.008 * s, -0.004 * s, -0.004 * s));
-    const spinePts = curve([spineA, spineA.clone().lerp(acro, 0.55).add(V3(0, 0.004 * s, -0.004 * s)), acro], 10);
-    P.add(holder, tube(spinePts, 0.0048 * s, { seg: 8, ell: { axis: V3(0, 0, 1), ratio: 0.55 } }), { axis: [spineA, acro], fit: 'axis', name: NM('acromion', sx) });
-    // 烏口突起（鎖骨の下を前へ曲がる鉤）
-    const cor = curve([glen.clone().add(V3(0, 0.012 * s, 0.004 * s)), glen.clone().add(V3(-sx * 0.004 * s, 0.020 * s, 0.020 * s)),
-      glen.clone().add(V3(sx * 0.004 * s, 0.014 * s, 0.032 * s))], 6);
-    P.add(holder, tube(cor, 0.0040 * s, { seg: 7 }), { center: glen.clone(), name: NM('coracoid', sx) });
+    const plateC = Q(0.45, -0.04);
+    P.add(holder, slab(rows, 0.0045 * s), { center: plateC, name: nSc, minScale: 0.8 });
+    // 外側縁の厚いふち
+    P.add(holder, tube(curve(U.map((u, i) => Q(u, VB[i] + 0.003)).slice(1), 10), 0.0035 * s, { seg: 7 }), { center: plateC, name: nSc, minScale: 0.8 });
+    // 関節窩（前外側を向く縦長の浅いお椀）と頸
+    {
+      const rim = new THREE.TorusGeometry(0.0115 * s, 0.0028 * s, 6, 16);
+      rim.scale(1, 1.45, 1);
+      rim.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(V3(0, 0, 1), d));
+      rim.translate(G.x, G.y, G.z);
+      P.add(holder, finish(rim), { center: G.clone(), name: NM('glenoid', sx) });
+      P.add(holder, ellipsoid(G.clone().addScaledVector(d, -0.006 * s), [0.012 * s, 0.017 * s, 0.006 * s], [V3().crossVectors(UP, d).normalize(), UP, d]), { center: G.clone(), name: NM('glenoid', sx) });
+    }
+    // 肩甲棘（内側縁から外上へ、後ろへ高くなる稜線）→ 肩峰（上腕骨頭の上の平たい板）
+    const spRoot = Q(0.0, 0.004, 0.002), spMid = Q(0.5, 0.016, 0.010), spEnd = Q(0.86, 0.030, 0.016);
+    P.add(holder, tube(curve([spRoot, spMid, spEnd], 10), t => (0.0032 + 0.003 * t) * s, { seg: 8, ell: { axis: UP, ratio: 1.5 } }),
+      { axis: [spRoot, spEnd], fit: 'axis', minScale: 0.7, name: NM('acromion', sx) });
+    const acroTip = GH.clone().add(V3(sx * 0.010 * s, 0.031 * s, 0.010 * s));
+    const acroBack = GH.clone().add(V3(sx * 0.012 * s, 0.030 * s, -0.016 * s));
+    const AC = GH.clone().add(V3(-sx * 0.008 * s, 0.033 * s, 0.006 * s));    // 肩鎖関節
+    P.add(holder, tube(curve([spEnd, acroBack, acroTip], 8), 0.0085 * s, { seg: 8, ell: { axis: UP, ratio: 0.42 } }),
+      { center: GH.clone(), minScale: 0.75, name: NM('acromion', sx) });
+    // 烏口突起
+    const corBase = Q(0.80, 0.022), corTip = GH.clone().add(V3(-sx * 0.020 * s, 0.010 * s, 0.030 * s));
+    P.add(holder, tube(curve([corBase, corBase.clone().add(V3(0, 0.010 * s, 0)).addScaledVector(n, 0.008 * s), corTip], 8),
+      t => (0.0050 - 0.0012 * t) * s, { seg: 7 }), { center: G.clone(), minScale: 0.7, name: NM('coracoid', sx) });
+    // 鎖骨
+    const SC = V3(cx + sx * 0.024 * kxC * s, ySN + 0.006 * s, stZf(ySN) - 0.010 * s);
+    const L2 = (t, dy, dz) => SC.clone().lerp(AC, t).add(V3(0, dy * s, dz * s));
+    const clav = curve([SC, L2(0.30, 0.006, 0.014), L2(0.62, 0.011, 0.010), L2(0.84, 0.010, -0.002), AC], 16);
+    P.add(holder, tube(clav, t => (0.0064 - 0.0010 * t) * s, { seg: 9, ell: { axis: UP, ratio: 0.72 } }), { axis: [SC, AC], fit: 'axis', minScale: 0.7, name: NM('clavicle', sx) });
   }
 
   // ---- 腕（上腕骨・橈骨・尺骨・手） -----------------------------------------
@@ -1390,7 +1565,7 @@ export function buildSkeletonView(slot, extra = {}) {
   P.fit();
   const T3 = performance.now();
   const meshes = P.attach(slot, materials());
-  slot.skelDebug = { skullFit: ctx.skullFit, parts: P.list.length,
+  slot.skelDebug = { skullFit: ctx.skullFit, cageFit: ctx.cageFit, kxC: ctx.kxC, cageRatio: ctx.cageRatio, headK: ctx.headK, parts: P.list.length,
     ms: { measure: Math.round(T1 - T0), build: Math.round(T2 - T1), fit: Math.round(T3 - T2), attach: Math.round(performance.now() - T3) } };
   return meshes;
 }

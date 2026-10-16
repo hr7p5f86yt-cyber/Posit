@@ -281,6 +281,8 @@ export function buildMuscles(slot, extra = {}) {
   const allowOf = reg => {
     if (allowCache[reg]) return allowCache[reg];
     const set = new Set();
+    // 「+」でつないだときは、両方の体の部分の皮膚を受け入れる（胸から腕へ渡る大胸筋・広背筋など）
+    if (reg.includes('+')) { for (const r of reg.split('+')) for (const b of allowOf(r)) set.add(b); return (allowCache[reg] = set); }
     for (const b of (REG[reg] || REG.trunk)) {
       set.add(b);
       if (b.parent && b.parent.isBone) set.add(b.parent);
@@ -372,6 +374,8 @@ export function buildMuscles(slot, extra = {}) {
         // 前・後ろは止めない（胸の殻の付き方によっては、測った断面より前へ大きく張り出しているため）
         const side = Math.abs(Math.sin(a));
         if (side > 0.55) maxR = Math.min(maxR, re * 1.25 + 0.015 * s + (1 - side) * 0.2 * s);
+        // 脇の下より上（肩・首の付け根）は腕が触れないので、肩の上まで届くように遠くから測る（測った断面は首の細さ）
+        if (y > ySN - 0.04 * s) maxR = Math.max(maxR, 0.2 * s);
       }
       return { C: V3(cx, y, zc(y)), d: V3(sx * Math.sin(a), el, Math.cos(a)).normalize(), reg: 'trunk', maxR };
     },
@@ -393,7 +397,7 @@ export function buildMuscles(slot, extra = {}) {
     N: (t, th) => {
       const fr = frameOf(neckA, neckB, sx, 'neck');
       const a = th * DEG;
-      return { C: neckA.clone().lerp(neckB, t), d: fr.f.clone().multiplyScalar(Math.cos(a)).addScaledVector(fr.l, Math.sin(a)).normalize(), reg: 'neck', maxR: 0.12 * s };
+      return { C: neckA.clone().lerp(neckB, t), d: fr.f.clone().multiplyScalar(Math.cos(a)).addScaledVector(fr.l, Math.sin(a)).normalize(), reg: 'neck', maxR: 0.16 * s };
     },
     Hd: (x, y, z) => ({ C: headC.clone(), d: V3(sx * x, y, z).normalize(), reg: 'head', maxR: 0.2 * s }),
   });
@@ -536,8 +540,13 @@ export function buildMuscles(slot, extra = {}) {
         } else {
           c = O.C.clone().lerp(I.C, v); d = slerpDir(O.d, I.d, v); maxR = lerp(O.maxR, I.maxR, v);
         }
+        // 体の部分をまたぐ筋（首 → 肩の僧帽筋など）は、途中の芯が肩や首の玉の中にあるので、遠くから測る
+        //   （脚・前腕へ渡る筋は、反対の脚や体に当たらないよう、近くからのまま）
+        if (O.reg !== I.reg && /^(neck|trunk|ua)/.test(O.reg) && /^(neck|trunk|ua)/.test(I.reg)) maxR = Math.max(maxR, Math.min(0.2 * s, Math.max(O.maxR, I.maxR, M ? M.maxR : 0)));
         C.push(c); D.push(d);
-        let r = cast(c, d, maxR, v < 0.5 ? O.reg : I.reg);
+        // 測る線が当たってよい皮膚: 付け根と付く先の体の部分（途中の点はその両方）
+        const castReg = O.reg === I.reg ? O.reg : (v < 0.15 ? O.reg : v > 0.85 ? I.reg : O.reg + '+' + I.reg);
+        let r = cast(c, d, maxR, castReg);
         // 皮下脂肪の分だけ内側へ
         if (r !== null && !m.noFat) {
           const tt = M ? (v < 0.5 ? lerp(O.t ?? 0.5, M.t ?? 0.5, v * 2) : lerp(M.t ?? 0.5, I.t ?? 0.5, v * 2 - 1)) : lerp(O.t ?? 0.5, I.t ?? 0.5, v);
@@ -788,7 +797,7 @@ export function buildMuscles(slot, extra = {}) {
     // 胸・腹 ----------------------------------------------------------------
     // 大胸筋: 鎖骨の内側半分（鎖骨部）・胸骨（胸肋部）・腹直筋鞘の上（腹部）から、上腕骨へ扇形に集まる
     S('pecMajor', {
-      o: [T(50, ySN + 0.016 * s), T(30, ySN + 0.012 * s), T(8, ySN - 0.004 * s), T(5, ySN - 0.060 * s), T(5, yXiph + 0.004 * s), T(16, yXiph - 0.026 * s), T(30, yXiph - 0.034 * s)],
+      o: [T(50, ySN + 0.016 * s), T(30, ySN + 0.012 * s), T(7, ySN - 0.004 * s), T(5, ySN - 0.060 * s), T(5, yXiph + 0.006 * s), T(14, yXiph - 0.010 * s), T(27, yXiph - 0.016 * s)],
       i: [U('ua', 0.22, 22), U('ua', 0.19, 14), U('ua', 0.16, 6), U('ua', 0.14, 0), U('ua', 0.12, -8), U('ua', 0.10, -16), U('ua', 0.08, -24)],
       nu: 14, nv: 12, thick: 0.014, bulge: 0.004, belly: 0.35, tendons: [0, 0.88],
     });
@@ -800,8 +809,8 @@ export function buildMuscles(slot, extra = {}) {
     // 腹直筋: 恥骨から第5〜7肋軟骨へ。上ほど幅広い（片側 6〜7cm）。正中は白線で 1cm ほど空く
     S('rectusAbd', {
       o: [T(2.5, yPubis + 0.012 * s), T(13, yPubis + 0.016 * s)],
-      i: [T(3, yXiph + 0.006 * s), T(22, yXiph - 0.008 * s)],
-      via: [T(2.5, yNavel), T(17, yNavel)],
+      i: [T(3, yXiph + 0.010 * s), T(27, yXiph - 0.006 * s)],
+      via: [T(2.5, yNavel), T(19, yNavel)],
       nu: 6, nv: 18, thick: 0.010, bulge: 0.003, belly: 0.6, bands: [0.5, 0.71, 0.88], flat: true,
     });
     // 外腹斜筋: 第5〜12肋骨の外側から前下へ。前（腹直筋の手前）と下は白い腱膜になって白線・鼠径靭帯へ
@@ -813,7 +822,7 @@ export function buildMuscles(slot, extra = {}) {
     // 背中 ------------------------------------------------------------------
     S('trapezius', {
       o: [N(0.95, 178), N(0.55, 178), N(0.1, 178), T(179, yC7 - 0.02 * s), T(179, ySN - 0.10 * s), T(179, ySN - 0.24 * s)],
-      i: [U('ua', -0.14, 70), U('ua', -0.14, 110), U('ua', -0.12, 150), T(146, ySN - 0.025 * s), T(150, ySN - 0.05 * s), T(158, ySN - 0.085 * s)],
+      i: [U('ua', -0.14, 70), U('ua', -0.14, 110), U('ua', -0.12, 150), T(122, ySN - 0.008 * s), T(138, ySN - 0.016 * s), T(147, ySN - 0.024 * s), T(152, ySN - 0.034 * s)],
       nu: 12, nv: 10, thick: 0.008, bulge: 0.003, belly: 0.5, flat: true,
     });
     S('latissimus', {
@@ -830,13 +839,13 @@ export function buildMuscles(slot, extra = {}) {
       nu: 4, nv: 14, thick: 0.012, bulge: 0.002, inset: 0.0045, belly: 0.3,
     });
     S('infraspinatus', {
-      o: [T(130, ySN - 0.06 * s), T(134, ySN - 0.12 * s), T(140, ySN - 0.15 * s)],
+      o: [T(150, ySN - 0.036 * s), T(152, ySN - 0.090 * s), T(147, ySN - 0.135 * s)],
       i: [U('ua', 0.02, 150), U('ua', 0.03, 158), U('ua', 0.04, 165)],
       nu: 6, nv: 8, thick: 0.007, inset: 0.0025,
     });
     S('teresMajor', {
-      o: [T(125, ySN - 0.15 * s), T(128, ySN - 0.165 * s)],
-      i: [U('ua', 0.15, -150), U('ua', 0.17, -160)],
+      o: [T(144, ySN - 0.148 * s), T(149, ySN - 0.162 * s)],
+      i: [U('ua', 0.15, -172), U('ua', 0.17, 176)],
       nu: 4, nv: 8, thick: 0.008, inset: 0.002,
     });
     // 肩・腕 ----------------------------------------------------------------
