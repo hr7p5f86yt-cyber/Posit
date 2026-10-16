@@ -160,8 +160,11 @@ export function buildMuscles(slot, extra = {}) {
   const halfAt = y => (prof ? prof.half(clamp(y, prof.ymin, prof.ymax)) : 0.13 * s);
   const wH0 = halfAt(wY0), wH1 = halfAt(wY1);
   /** その高さで、胴の横幅の半分がこれより細くならない値（くびれの帯の外では 0） */
+  //   ただし素体のくびれ（関節の玉）の外へ筋肉を浮かせると、腰の横に板のような出っ張りが浮いて見えるので、
+  //   既定では埋めない（extra.waistFill で有効にできる）
+  const fillWaist = extra.waistFill ?? false;
   const waistHalf = y => {
-    if (!prof || y <= wY0 || y >= wY1) return 0;
+    if (!fillWaist || !prof || y <= wY0 || y >= wY1) return 0;
     const t = (y - wY0) / (wY1 - wY0);
     // 帯の端では元の形になじむよう、つなぎの線との差をなだらかに 0 へ
     const edge = smooth(t / 0.18) * smooth((1 - t) / 0.18);
@@ -491,6 +494,7 @@ export function buildMuscles(slot, extra = {}) {
     if (!found.length) return null;
     found.sort((x, y) => x[0] - y[0]);
     const acc = new Map();
+    acc.d = Math.sqrt(found[0][0]);                 // いちばん近い皮膚までの距離
     for (const [d2, i] of found.slice(0, 6)) {
       const w0 = 1 / (d2 + 1e-5);
       for (const [bi, w] of SV[i][4]) acc.set(bi, (acc.get(bi) || 0) + w * w0);
@@ -542,10 +546,14 @@ export function buildMuscles(slot, extra = {}) {
         }
         // 体の部分をまたぐ筋（首 → 肩の僧帽筋など）は、途中の芯が肩や首の玉の中にあるので、遠くから測る
         //   （脚・前腕へ渡る筋は、反対の脚や体に当たらないよう、近くからのまま）
-        if (O.reg !== I.reg && /^(neck|trunk|ua)/.test(O.reg) && /^(neck|trunk|ua)/.test(I.reg)) maxR = Math.max(maxR, Math.min(0.2 * s, Math.max(O.maxR, I.maxR, M ? M.maxR : 0)));
+        //   脇の下より上だけ（脇腹では、下ろした腕の皮膚まで届いてしまう）
+        if (O.reg !== I.reg && c.y > ySN - 0.06 * s && /^(neck|trunk|ua)/.test(O.reg) && /^(neck|trunk|ua)/.test(I.reg)) maxR = Math.max(maxR, Math.min(0.2 * s, Math.max(O.maxR, I.maxR, M ? M.maxR : 0)));
         C.push(c); D.push(d);
-        // 測る線が当たってよい皮膚: 付け根と付く先の体の部分（途中の点はその両方）
-        const castReg = O.reg === I.reg ? O.reg : (v < 0.15 ? O.reg : v > 0.85 ? I.reg : O.reg + '+' + I.reg);
+        // 測る線が当たってよい皮膚: 線維の 8 割までは付け根の体の部分（首から始まる筋は胴も）、
+        //   付く先の近くはその両方、端は付く先だけ。
+        //   （広背筋の脇腹の部分が、そばに下ろした腕の皮膚に当たって、腕を上げると脇に羽のように残っていた）
+        const baseReg = O.reg === 'neck' ? 'neck+trunk' : O.reg;
+        const castReg = O.reg === I.reg ? O.reg : (v < 0.8 ? baseReg : v > 0.93 ? I.reg : baseReg + '+' + I.reg);
         let r = cast(c, d, maxR, castReg);
         // 皮下脂肪の分だけ内側へ
         if (r !== null && !m.noFat) {
@@ -600,6 +608,18 @@ export function buildMuscles(slot, extra = {}) {
         if (R[idx(a, b)] > med * 1.25) R2[idx(a, b)] = med;
       }
       for (let k = 0; k < R.length; k++) R[k] = R2[k];
+    }
+    // 胴の筋は、細い出っぱり（胸の殻の下のふちなど、殻の継ぎ目で測る線が外側の殻に当たった所）を削る:
+    //   線維の向き・横の向きそれぞれに、いったん両隣の小さい方へ寄せてから、大きい方へ戻す（細い山だけが消える）
+    if (m.o.concat(m.i).some(q => q && q.reg === 'trunk')) {
+      const open1 = (get, set, n) => {
+        const a = [], e = [];
+        for (let k = 0; k <= n; k++) a.push(get(k));
+        for (let k = 0; k <= n; k++) e.push(Math.min(a[Math.max(0, k - 1)], a[k], a[Math.min(n, k + 1)]));
+        for (let k = 0; k <= n; k++) set(k, Math.max(e[Math.max(0, k - 1)], e[k], e[Math.min(n, k + 1)]));
+      };
+      for (let a = 0; a <= nu; a++) open1(b => R[idx(a, b)], (b, v) => { R[idx(a, b)] = v; }, nv);
+      for (let b = 0; b <= nv; b++) open1(a => R[idx(a, b)], (a, v) => { R[idx(a, b)] = v; }, nu);
     }
     for (let it = 0; it < 2; it++) {
       const R2 = R.slice();
@@ -713,6 +733,16 @@ export function buildMuscles(slot, extra = {}) {
       } else t = smooth((v - 0.3) / 0.4);
       const wa = weightsNear(P, rA);
       const wb = rB === rA ? wa : weightsNear(P, rB);
+      // 二つの体の部分をまたぐ所は、その点の真下の皮膚がどちらの部分か（近い方）で決める。
+      //   線維の付け根からの割合だけで混ぜると、胸の上にある大胸筋の中ほどが腕の重みを持ってしまい、
+      //   腕を上げたときに胸の筋肉が腕と一緒に持ち上がって、羽のように突き出していた
+      if (wa && wb && rA !== rB) {
+        const tD = smooth((wa.d - wb.d) / (0.03 * s) + 0.5);
+        // ただし体幹から腕へ渡る筋は、線維の半分より先でだけ腕の重みを持たせる
+        //   （腕を下ろした形で作るので、脇腹の上の広背筋の真下には下ろした腕の皮膚も近くにある）
+        const cap = (rA === 'trunk' && /^ua/.test(rB)) ? smooth((v - 0.55) / 0.35) : 1;
+        t = m.skinFrom && REGO[k] !== REGA[k] && v < 0.3 ? Math.max(t, tD) : Math.min(tD, cap);
+      }
       const ws = (wa || wb) ? mixWeights(wa || wb, wb || wa, t) : null;
       coarseW[k] = ws;
       return ws;
@@ -813,10 +843,11 @@ export function buildMuscles(slot, extra = {}) {
       via: [T(2.5, yNavel), T(19, yNavel)],
       nu: 6, nv: 18, thick: 0.010, bulge: 0.003, belly: 0.6, bands: [0.5, 0.71, 0.88], flat: true,
     });
-    // 外腹斜筋: 第5〜12肋骨の外側から前下へ。前（腹直筋の手前）と下は白い腱膜になって白線・鼠径靭帯へ
+    // 外腹斜筋: 第5〜12肋骨の外側（前の歯のような起始から後ろの広背筋の縁まで）から前下へ。
+    //   前（腹直筋の手前）と下は白い腱膜になって白線・鼠径靭帯へ、後ろの線維は腸骨稜の前半へ
     S('extOblique', {
-      o: [T(60, ySN - 0.125 * s), T(62, yXiph + 0.01 * s), T(80, yXiph - 0.06 * s), T(92, yCrest + 0.05 * s)],
-      i: [T(23, yXiph - 0.030 * s), T(23, yNavel + 0.01 * s), T(30, yPubis + 0.055 * s), T(78, yCrest + 0.004 * s)],
+      o: [T(56, ySN - 0.115 * s), T(68, ySN - 0.140 * s), T(84, yXiph - 0.025 * s), T(100, yXiph - 0.070 * s), T(114, yCrest + 0.055 * s)],
+      i: [T(22, yXiph - 0.030 * s), T(22, yNavel + 0.01 * s), T(28, yPubis + 0.055 * s), T(66, yASIS + 0.012 * s), T(106, yCrest + 0.006 * s)],
       nu: 9, nv: 10, thick: 0.009, bulge: 0.003, belly: 0.55, flat: true, tendons: [0, 0.8],
     });
     // 背中 ------------------------------------------------------------------
@@ -828,7 +859,7 @@ export function buildMuscles(slot, extra = {}) {
     S('latissimus', {
       o: [T(179, ySN - 0.14 * s), T(179, ySN - 0.22 * s), T(179, yCrest + 0.04 * s), T(160, yCrest + 0.004 * s), T(130, yCrest)],
       i: [U('ua', 0.15, -95), U('ua', 0.14, -105), U('ua', 0.13, -115), U('ua', 0.12, -125), U('ua', 0.11, -135)],
-      via: [T(150, ySN - 0.10 * s), T(146, ySN - 0.15 * s), T(128, yXiph - 0.01 * s), T(110, yXiph - 0.04 * s), T(98, yXiph - 0.06 * s)],
+      via: [T(150, ySN - 0.10 * s), T(146, ySN - 0.15 * s), T(128, yXiph - 0.01 * s), T(112, yXiph - 0.04 * s), T(104, yXiph - 0.06 * s)],
       nu: 12, nv: 14, thick: 0.009, bulge: 0.003, belly: 0.45, flat: true, tendons: [0.22, 1.01],
     });
     // 脊柱起立筋は、腰では胸腰筋膜（白いひし形）に覆われているので、腱膜の色で出す
