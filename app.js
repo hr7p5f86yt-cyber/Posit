@@ -8,7 +8,7 @@ import { LightBall } from './lightBall.js';
 import { REGIONS } from './anatomy.js';
 import * as THREE from 'three';
 
-export const BUILD = '2026-10-17c';
+export const BUILD = '2026-10-17d';
 
 const SAMPLE_URL = 'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r169/examples/models/gltf/Xbot.glb';
 const SETTINGS_KEY = 'posit.settings.v1';
@@ -486,7 +486,8 @@ $('selBarClose').addEventListener('click', () => viewer.select(null));
 //   ‹ 前 / 次 › で、いま見ている分類の中を順に送れる（一覧を見ずに次々と確かめられる）
 let popCat = '';
 let popCurrent = null;
-const popList = () => POSE_PRESETS.filter(x => !popCat || x.category === popCat);
+// 分類の順に並べる（「すべて」で同じ分類の見出しが二度出ないように）
+const popList = () => POSE_CATEGORIES.flatMap(c => POSE_PRESETS.filter(x => x.category === c.key && (!popCat || x.category === popCat)));
 function markPosePop(scroll) {
   const grid = $('posePopGrid');
   for (const b of grid.querySelectorAll('button')) {
