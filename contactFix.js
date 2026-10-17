@@ -13,7 +13,9 @@ import * as THREE from 'three';
 const GROUPS = ['trunk', 'head', 'uaL', 'uaR', 'faL', 'faR', 'hdL', 'hdR', 'thL', 'thR', 'shL', 'shR', 'ftL', 'ftR'];
 const GI = Object.fromEntries(GROUPS.map((g, i) => [g, i]));
 const ADJ_PAIRS = [['trunk', 'head'], ['trunk', 'uaL'], ['trunk', 'uaR'], ['trunk', 'thL'], ['trunk', 'thR'],
-  ['uaL', 'faL'], ['uaR', 'faR'], ['faL', 'hdL'], ['faR', 'hdR'], ['thL', 'shL'], ['thR', 'shR'], ['shL', 'ftL'], ['shR', 'ftR']];
+  ['uaL', 'faL'], ['uaR', 'faR'], ['faL', 'hdL'], ['faR', 'hdR'], ['thL', 'shL'], ['thR', 'shR'], ['shL', 'ftL'], ['shR', 'ftR'],
+  // 両手どうしは、合わせる・組む…と触れるのがふつうなので調べない（手は薄く、近い頂点の法線では裏表を取り違える）
+  ['hdL', 'hdR']];
 // 手足ごとに、調べる部分（自分）と、動かす先の骨
 const LIMBS = [
   { key: 'handL', own: ['uaL', 'faL', 'hdL'], probe: ['faL', 'hdL'], arm: true },
@@ -186,7 +188,8 @@ export class ContactFix {
       left = 0;
       let any = false;
       res.forEach((r, li) => {
-        if (r.n < 2 || r.max < 0.004) return;
+        // 浅い触れ合い（手を合わせる・腰に手を当てる）はそのまま。深く入ったときだけ、皮膚が触れる所まで戻す
+        if (r.n < 2 || r.max < 0.006) return;
         left = Math.max(left, r.max);
         const L = LIMBS[li];
         const end = slot.boneMap[L.key];
@@ -198,7 +201,8 @@ export class ContactFix {
         if (dir.lengthSq() < 1e-12) return;
         dir.normalize();
         // 前腕の真ん中が体に入っているときは、手首を動かしても肘の側はあまり動かないので、多めに動かす
-        const dist = Math.min(0.06, (r.max * share + 0.004) * (L.arm && it >= 2 ? 1.6 : 1));
+        const dist = Math.min(0.06, (r.max * share - 0.002) * (L.arm && it >= 2 ? 1.4 : 1));
+        if (dist <= 0.001) return;
         const E = end.getWorldPosition(new THREE.Vector3());
         const q = end.getWorldQuaternion(new THREE.Quaternion());
         if (v.pull.solve(L.key, E.addScaledVector(dir, dist), q)) { moved.add(L.key); any = true; }
