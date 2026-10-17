@@ -149,10 +149,16 @@
 </div>
 <div id="posePop" hidden>
   <div class="ppHead">
-    <div class="scroller" id="posePopCats"></div>
+    <span class="ppTitle">ポーズ</span>
     <button id="posePopRandom" class="qb icon" title="ランダム" aria-label="ランダム"><svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="3.5"/><circle cx="9" cy="9" r="1.1" fill="currentColor"/><circle cx="15" cy="15" r="1.1" fill="currentColor"/><circle cx="15" cy="9" r="1.1" fill="currentColor"/><circle cx="9" cy="15" r="1.1" fill="currentColor"/></svg></button>
+    <button id="posePopClose" class="qb icon" title="閉じる" aria-label="閉じる"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
   </div>
-  <div class="qpGrid" id="posePopGrid"></div>
+  <div class="scroller" id="posePopCats"></div>
+  <div id="posePopGrid"></div>
+  <div class="ppStep">
+    <button id="posePopPrev" class="qb" aria-label="前のポーズ">‹ 前</button>
+    <button id="posePopNext" class="qb" aria-label="次のポーズ">次 ›</button>
+  </div>
 </div>
 <div id="lockBar">
   <span class="lbTitle">固定</span>

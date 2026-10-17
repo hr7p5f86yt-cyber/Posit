@@ -8,7 +8,7 @@ import { LightBall } from './lightBall.js';
 import { REGIONS } from './anatomy.js';
 import * as THREE from 'three';
 
-export const BUILD = '2026-10-17b';
+export const BUILD = '2026-10-17c';
 
 const SAMPLE_URL = 'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r169/examples/models/gltf/Xbot.glb';
 const SETTINGS_KEY = 'posit.settings.v1';
@@ -156,11 +156,15 @@ function updateInsets() {
     else ins = { top, right: Math.round(window.innerWidth - sheet.left), bottom: 0, left: 0 };
   }
   else ins = { top, right: 0, bottom: Math.max(0, Math.round(window.innerHeight - sheet.top)), left: 0 };
+  // 左のポーズ一覧を出しているときは、そのぶん左を空ける（人形は右の残りの真ん中に）
+  document.documentElement.style.setProperty('--top-b', `${top + 4}px`);
+  if (!$('posePop').hidden) ins.left = Math.round($('posePop').getBoundingClientRect().right);
   // 見る向きのボタンは、空いている所の下の端に置く
   document.documentElement.style.setProperty('--view-b', `${ins.bottom}px`);
+  $('viewBar').style.left = `${8 + (ins.left || 0)}px`;
+  $('actBar').style.left = `${8 + (ins.left || 0)}px`;
   $('viewBar').style.right = `${8 + (ins.right || 0)}px`;
   $('actBar').style.right = `${8 + (ins.right || 0)}px`;
-  $('posePop').style.right = `${8 + (ins.right || 0)}px`;
   viewer.setInsets({ ...ins, bottom: ins.bottom + bar });
 }
 let insetTimer = null;
@@ -455,7 +459,6 @@ $('shotPopClear').addEventListener('click', () => { $('shotPop').hidden = true; 
 document.addEventListener('pointerdown', e => {
   if (!$('shotPop').hidden && !e.target.closest('#shotPop, #btnShot')) $('shotPop').hidden = true;
   if (!$('quickPop').hidden && !e.target.closest('#quickPop, #selBar')) $('quickPop').hidden = true;
-  if (!$('posePop').hidden && !e.target.closest('#posePop, #actPose')) $('posePop').hidden = true;
 }, { capture: true });
 // 関節の印
 $('dotsOn').checked = settings.dots;
@@ -478,27 +481,66 @@ $('selBarCopy').addEventListener('click', () => {
 });
 $('selBarClose').addEventListener('click', () => viewer.select(null));
 
-// ---- 画面の上のポーズ一覧・体全体・キープ ----------------------------------------
+// ---- 画面の左のポーズ一覧・体全体・キープ ----------------------------------------
+//   一覧は画面の左に縦 1 列で出す。出したままでも右側で人形を回す・拡大縮小・関節を動かせる。
+//   ‹ 前 / 次 › で、いま見ている分類の中を順に送れる（一覧を見ずに次々と確かめられる）
 let popCat = '';
+let popCurrent = null;
+const popList = () => POSE_PRESETS.filter(x => !popCat || x.category === popCat);
+function markPosePop(scroll) {
+  const grid = $('posePopGrid');
+  for (const b of grid.querySelectorAll('button')) {
+    const on = b.dataset.id === popCurrent;
+    b.classList.toggle('on', on);
+    if (on && scroll) b.scrollIntoView({ block: 'nearest' });
+  }
+}
 function buildPosePop() {
   buildChips('posePopCats', [{ key: '', label: 'すべて' }, ...POSE_CATEGORIES.map(c => ({ key: c.key, label: c.name }))],
     o => popCat === o.key, o => { popCat = o.key; buildPosePop(); });
   const grid = $('posePopGrid');
   grid.innerHTML = '';
-  for (const p of POSE_PRESETS.filter(x => !popCat || x.category === popCat)) {
+  let lastCat = null;
+  for (const p of popList()) {
+    if (!popCat && p.category !== lastCat) {
+      const h = document.createElement('div');
+      h.className = 'ppCat';
+      h.textContent = (POSE_CATEGORIES.find(c => c.key === p.category) || {}).name || '';
+      grid.appendChild(h);
+      lastCat = p.category;
+    }
     const b = document.createElement('button');
     b.textContent = p.name;
-    b.addEventListener('click', () => { applyPose(p); for (const x of grid.children) x.classList.toggle('on', x === b); });
+    b.dataset.id = p.id;
+    b.addEventListener('click', () => { popCurrent = p.id; applyPose(p); markPosePop(false); });
     grid.appendChild(b);
   }
+  markPosePop(true);
 }
-$('actPose').addEventListener('click', () => {
-  if ($('posePop').hidden) { buildPosePop(); $('posePop').hidden = false; } else $('posePop').hidden = true;
-});
+function setPosePanel(on) {
+  $('posePop').hidden = !on;
+  document.body.classList.toggle('posePanel', on);
+  $('actPose').classList.toggle('on', on);
+  if (on) buildPosePop();
+  queueInsets(0);
+}
+$('actPose').addEventListener('click', () => setPosePanel($('posePop').hidden));
+$('posePopClose').addEventListener('click', () => setPosePanel(false));
 $('posePopRandom').addEventListener('click', () => {
-  const pool = POSE_PRESETS.filter(x => !popCat || x.category === popCat);
-  applyPose(pool[Math.floor(Math.random() * pool.length)]);
+  const pool = popList().filter(p => p.id !== popCurrent);
+  const p = pool[Math.floor(Math.random() * pool.length)];
+  if (!p) return;
+  popCurrent = p.id; applyPose(p); markPosePop(true);
 });
+function stepPose(d) {
+  const list = popList();
+  if (!list.length) return;
+  let i = list.findIndex(p => p.id === popCurrent);
+  i = i < 0 ? (d > 0 ? 0 : list.length - 1) : (i + d + list.length) % list.length;
+  popCurrent = list[i].id; applyPose(list[i]); markPosePop(true);
+}
+$('posePopPrev').addEventListener('click', () => stepPose(-1));
+$('posePopNext').addEventListener('click', () => stepPose(1));
 // 体全体: オンの間は、人形のどこを押して動かしても体全体が床の上を滑る。腰を選ぶので、緑の輪で向きが変わる
 function setBodyMode(on) {
   viewer.setBodyMode(on);
