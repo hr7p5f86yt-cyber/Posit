@@ -7,6 +7,7 @@ import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { JOINTS, JOINT_BY_KEY, JOINT_GROUPS, mapBones, mapBonesByStructure, mapFingers, fingerCount, clampAngles, limitExcess, wrapDeg, normalizeName } from './bones.js';
 import { parseSpec, parseFingerSpec, POSE_PRESETS } from './poses.js';
 import { buildSkeletonView } from './skeletonView.js';
+import { buildBlockModel } from './blockModel.js';
 import { buildHeadPlanes, FIG_HEADS, HEADH_MIN, HEADH_MAX } from './headPlanes.js';
 import { buildBodyMorphs } from './bodyShape.js';
 import { buildBreastParts } from './breastParts.js';
@@ -91,6 +92,7 @@ export const VIEW_MODES = [
   { key: 'muscle',  name: '筋肉',   show: ['muscle'] },
   { key: 'bone',    name: '骨格',   show: ['bone'] },
   { key: 'overlay', name: '重ねて', show: ['skin', 'muscle', 'bone'] },
+  { key: 'block',   name: '単純化', show: [] },
 ];
 
 export const MATERIAL_MODES = [
@@ -115,6 +117,7 @@ class Slot {
     this.originalMaterials = new Map();
     this.restLowestY = 0;
     this.boneParts = [];
+    this.blockParts = [];
     this.muscleParts = [];    // 組み立てた筋肉（名前付き）
     this.muscleDirty = false;
     this.muscleCache = {};
@@ -135,7 +138,7 @@ class Slot {
 
 export class Viewer {
   /** この viewer.js の版（app.js の BUILD と同じでなければ、古いファイルが混ざっている） */
-  static BUILD = '2026-10-17d';
+  static BUILD = '2026-10-18a';
 
   constructor(canvas) {
     this.canvas = canvas;
@@ -1214,6 +1217,7 @@ export class Viewer {
     this._applyProportions();
     this._refreshBoneView();
     this._refreshMuscleView();
+    this._refreshBlocks();
   }
 
   /**
@@ -2239,6 +2243,50 @@ export class Viewer {
     }
   }
 
+  // ---- 単純化したブロック人形（blockModel.js） ----------------------------
+  _dropBlocks(slot) {
+    for (const o of slot.blockParts || []) { if (o.parent) o.parent.remove(o); o.geometry.dispose(); }
+    slot.blockParts = [];
+  }
+
+  _assembleBlocks(slot) {
+    this._dropBlocks(slot);
+    if (!slot.skeleton || !slot.neutralWorld) return;
+    const bones = slot.skeleton.bones;
+    const saved = bones.map(b => [b.position.clone(), b.quaternion.clone(), b.scale.clone()]);
+    for (const b of bones) {
+      const nb = slot.neutralWorld.get(b), np = slot.neutralParent.get(b);
+      if (nb && np) b.quaternion.copy(np.clone().invert().multiply(nb));
+      const rp = slot.restPos && slot.restPos.get(b);
+      if (rp) b.position.copy(rp);
+      b.scale.setScalar(1);
+    }
+    const savedSeg = bones.map(b => b.userData.seg || null);
+    clearSegments(bones);
+    this.scene.updateMatrixWorld(true);
+    try {
+      const handFrame = { L: this._handFrame(slot, 'L'), R: this._handFrame(slot, 'R') };
+      slot.blockParts = buildBlockModel(slot, { handFrame });
+    } finally {
+      bones.forEach((b, i) => { b.position.copy(saved[i][0]); b.quaternion.copy(saved[i][1]); b.scale.copy(saved[i][2]); b.userData.seg = savedSeg[i]; });
+      slot.pivot.updateWorldMatrix(true, true);
+    }
+    this._applyProportions();
+  }
+
+  _refreshBlocks() {
+    const on = this.viewMode === 'block';
+    for (const s of SLOTS) {
+      const slot = this.slots[s.key];
+      const show = on && slot === this.primarySlot;
+      if (show && (!slot.blockParts || !slot.blockParts.length || slot.blockType !== this.bodyType)) {
+        guard('単純化した人形', () => this._assembleBlocks(slot));
+        slot.blockType = this.bodyType;
+      }
+      for (const o of slot.blockParts || []) o.visible = show && (!o.userData.blockEdge || this.blockEdges !== false);
+    }
+  }
+
   setBoneViewOn(on) {
     this.boneViewOn = on;
     this._refreshBoneView();
@@ -2280,6 +2328,7 @@ export class Viewer {
     }
     this._refreshBoneView();
     this._refreshMuscleView();
+    this._refreshBlocks();
     this._refreshWire();
     this._refreshHeadPlanes();
     this._applyClipping();
@@ -3273,6 +3322,7 @@ export class Viewer {
       for (const m of slot.meshes) if (m.visible) out.push(m);
       for (const p of slot.boneParts) if (p.visible) out.push(p);
       for (const p of slot.muscleParts) if (p.visible) out.push(p);
+      for (const p of slot.blockParts || []) if (p.visible && p.isMesh) out.push(p);
     }
     return out;
   }

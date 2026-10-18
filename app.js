@@ -8,7 +8,7 @@ import { LightBall } from './lightBall.js';
 import { REGIONS } from './anatomy.js';
 import * as THREE from 'three';
 
-export const BUILD = '2026-10-17d';
+export const BUILD = '2026-10-18a';
 
 const SAMPLE_URL = 'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r169/examples/models/gltf/Xbot.glb';
 const SETTINGS_KEY = 'posit.settings.v1';
@@ -1419,6 +1419,8 @@ async function startCroquis() {
     viewer.setBodyType(settings.cqBody);
   }
   viewer.setPartView(settings.cqFrame, settings.cqSide === 'L' || settings.cqSide === 'R' ? settings.cqSide : viewer.partSide);
+  // クロッキーの面の線は少なめ（短い時間で大きな面の向きをつかむため）。終わったらいつもの数に戻す
+  viewer.setWireStyle(settings.wireMode, 0);
   viewer.setWireframe(settings.cqWire);
   try {
     if (navigator.wakeLock && navigator.wakeLock.request) {
@@ -1444,6 +1446,7 @@ function stopCroquis() {
       if (viewer.handShape[sd] !== beforeCroquis.hands[sd]) viewer.applyHandShape(sd, beforeCroquis.hands[sd] || '');
     }
     viewer.setPartView(beforeCroquis.part, beforeCroquis.side);
+    viewer.setWireStyle(settings.wireMode, settings.wireDensity);
     viewer.setWireframe(beforeCroquis.wire);
     $('wireOn').checked = beforeCroquis.wire;
     // 画角とレンズも出題前に戻す
