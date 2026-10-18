@@ -138,7 +138,7 @@ class Slot {
 
 export class Viewer {
   /** この viewer.js の版（app.js の BUILD と同じでなければ、古いファイルが混ざっている） */
-  static BUILD = '2026-10-18a';
+  static BUILD = '2026-10-18b';
 
   constructor(canvas) {
     this.canvas = canvas;
@@ -1492,6 +1492,7 @@ export class Viewer {
         slot.wireMeshes[i].visible = this.wireOn && !!src && src.visible;
       }
     }
+    if (this.viewMode === 'block') this._refreshBlocks();
   }
 
   setWireframe(on) {
@@ -2267,6 +2268,16 @@ export class Viewer {
     try {
       const handFrame = { L: this._handFrame(slot, 'L'), R: this._handFrame(slot, 'R') };
       slot.blockParts = buildBlockModel(slot, { handFrame });
+      // 面の線（素体と同じ描き方・同じ線の数の設定）
+      if (!this._blockWireMat) this._blockWireMat = makeWireMaterial({ opacity: this.wireOpacity, latH: 1.8 });
+      for (const m of slot.blockParts.filter(o => o.isMesh)) {
+        const wg = makeWireGeometry(m.geometry);
+        wg.setAttribute('cont', new THREE.BufferAttribute(new Float32Array(wg.attributes.position.count * 3), 3));
+        const w = new THREE.Mesh(wg, this._blockWireMat);
+        w.raycast = () => {}; w.frustumCulled = false; w.renderOrder = 5; w.visible = false;
+        w.userData.blockPart = true; w.userData.blockWire = true;
+        m.parent.add(w); slot.blockParts.push(w);
+      }
     } finally {
       bones.forEach((b, i) => { b.position.copy(saved[i][0]); b.quaternion.copy(saved[i][1]); b.scale.copy(saved[i][2]); b.userData.seg = savedSeg[i]; });
       slot.pivot.updateWorldMatrix(true, true);
@@ -2283,7 +2294,10 @@ export class Viewer {
         guard('単純化した人形', () => this._assembleBlocks(slot));
         slot.blockType = this.bodyType;
       }
-      for (const o of slot.blockParts || []) o.visible = show && (!o.userData.blockEdge || this.blockEdges !== false);
+      // 面の線を出しているときは、面の境目の線は重なるので出さない
+      for (const o of slot.blockParts || []) {
+        o.visible = show && (o.userData.blockWire ? !!this.wireOn : o.userData.blockEdge ? !this.wireOn : true);
+      }
     }
   }
 

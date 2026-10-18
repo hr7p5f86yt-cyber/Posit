@@ -40,7 +40,7 @@ function axes(ey, fwdHint) {
 
 /** 上下で幅の違う箱（top/bot は [幅, 奥行き]）。中心から上下に h/2 */
 function taperBox(h, top, bot) {
-  const g = new THREE.BoxGeometry(1, h, 1);
+  const g = new THREE.BoxGeometry(1, h, 1, 3, 3, 2);
   const p = g.attributes.position;
   for (let i = 0; i < p.count; i++) {
     const up = p.getY(i) > 0;
@@ -55,7 +55,7 @@ function taperBox(h, top, bot) {
 /** a → b の円錐台（rA, rB は半径。ratio で断面を楕円に） */
 function frustum(a, b, rA, rB, fwd, ratio = 1, seg = 12) {
   const L = a.distanceTo(b);
-  const g = new THREE.CylinderGeometry(rB, rA, L, seg, 1);
+  const g = new THREE.CylinderGeometry(rB, rA, L, seg, 4);
   g.scale(1, 1, ratio);
   const [x, y, z] = axes(b.clone().sub(a), fwd);
   g.applyMatrix4(frameMatrix(a.clone().lerp(b, 0.5), x, y, z));
@@ -156,12 +156,13 @@ export function buildBlockModel(slot, extra = {}) {
   const hipW = hipL && hipR ? hipL.distanceTo(hipR) : 0.17 * s;
   const chestB = map.chest ? 'chest' : 'spine';
   const yNeck = neck ? neck.y : hips.y + 0.44 * s;
-  const yChestTop = yNeck - 0.035 * s, yChestBot = yChestTop - 0.30 * s;
+  // 胸部の上の面は首の付け根（僧帽筋の高さ）まで。肩の球と同じくらいの高さにして、首が長く見えないように
+  const yChestTop = yNeck + 0.012 * s, yChestBot = yChestTop - 0.36 * s;
   const yPelvTop = hips.y + 0.05 * s, yPelvBot = (hipL ? hipL.y : hips.y - 0.06 * s) - 0.07 * s;
   const zc = hips.z;
   // 胸部: 胸郭の箱（上が広く、少し前へ傾く）
   {
-    const g = taperBox(yChestTop - yChestBot, [shoulderW * 1.0, 0.21 * s], [shoulderW * 0.86, 0.19 * s]);
+    const g = taperBox(yChestTop - yChestBot, [shoulderW * 1.08, 0.22 * s], [shoulderW * 0.90, 0.20 * s]);
     g.translate(0, 0, 0);
     g.applyMatrix4(frameMatrix(V3(hips.x, (yChestTop + yChestBot) / 2, zc + 0.005 * s), V3(1, 0, 0), UP, FWD));
     add(chestB, g);
@@ -179,16 +180,16 @@ export function buildBlockModel(slot, extra = {}) {
   }
   // 首: 円柱（胸の上 → 頭の下）
   if (neck && head) {
-    add('neck', frustum(V3(neck.x, yChestTop - 0.01 * s, neck.z), head.clone().add(V3(0, 0.01 * s, 0)), 0.055 * s, 0.050 * s, FWD, 1, 14), 'round');
+    add('neck', frustum(V3(neck.x, yChestTop - 0.03 * s, neck.z - 0.01 * s), head.clone().add(V3(0, 0.02 * s, 0)), 0.058 * s, 0.052 * s, FWD, 1, 14), 'round');
   }
   // 頭部: 頭蓋の卵形＋あご（顔の向き）
   if (head) {
     const g = new THREE.SphereGeometry(1, 14, 10);
-    g.scale(0.090 * s, 0.112 * s, 0.103 * s);
-    g.translate(head.x, head.y + 0.11 * s, head.z - 0.005 * s);
+    g.scale(0.092 * s, 0.115 * s, 0.105 * s);
+    g.translate(head.x, head.y + 0.095 * s, head.z - 0.005 * s);
     add('head', g);
     const jaw = taperBox(0.07 * s, [0.11 * s, 0.10 * s], [0.07 * s, 0.07 * s]);
-    jaw.applyMatrix4(frameMatrix(V3(head.x, head.y + 0.035 * s, head.z + 0.035 * s), V3(1, 0, 0), UP, FWD));
+    jaw.applyMatrix4(frameMatrix(V3(head.x, head.y + 0.02 * s, head.z + 0.04 * s), V3(1, 0, 0), UP, FWD));
     add('head', jaw, 'face');
   }
 
@@ -210,7 +211,7 @@ export function buildBlockModel(slot, extra = {}) {
       const m1 = fg && fg.middle && fg.middle[1] ? fg.middle[1].getWorldPosition(V3()) : Wr.clone().addScaledVector(along, 0.09 * s);
       const palmL = Wr.distanceTo(m1);
       const pc = Wr.clone().addScaledVector(along, palmL * 0.55);
-      const palm = new THREE.BoxGeometry(0.088 * s, palmL * 0.95, 0.032 * s);
+      const palm = new THREE.BoxGeometry(0.088 * s, palmL * 0.95, 0.032 * s, 2, 2, 1);
       palm.applyMatrix4(frameMatrix(pc, V3().crossVectors(along, pal).normalize(), along, pal));
       add('hand' + sd, palm);
       // 指: 中指の付け根の骨に付ける（指を曲げると箱も曲がる）
@@ -219,7 +220,7 @@ export function buildBlockModel(slot, extra = {}) {
         let tip = bone; while (tip.children.find(c => c.isBone)) tip = tip.children.find(c => c.isBone);
         const T = tip.getWorldPosition(V3()).addScaledVector(along, 0.012 * s);
         const fl = m1.distanceTo(T);
-        const fing = new THREE.BoxGeometry(0.084 * s, fl, 0.024 * s);
+        const fing = new THREE.BoxGeometry(0.084 * s, fl, 0.024 * s, 2, 2, 1);
         fing.applyMatrix4(frameMatrix(m1.clone().lerp(T, 0.5), V3().crossVectors(along, pal).normalize(), along, pal));
         bone.updateWorldMatrix(true, false);
         const m = new THREE.Mesh(fing.applyMatrix4(bone.matrixWorld.clone().invert()), mats.body);
