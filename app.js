@@ -8,7 +8,7 @@ import { LightBall } from './lightBall.js';
 import { REGIONS } from './anatomy.js';
 import * as THREE from 'three';
 
-export const BUILD = '2026-10-18b';
+export const BUILD = '2026-11-01a';
 
 const SAMPLE_URL = 'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r169/examples/models/gltf/Xbot.glb';
 const SETTINGS_KEY = 'posit.settings.v1';
@@ -1427,15 +1427,52 @@ async function startCroquis() {
       wakeLock = await navigator.wakeLock.request('screen');
     }
   } catch (e) { /* 画面が消えても進行は続く */ }
-  croquis.start({
+  $('cqPause').textContent = '一時停止';
+  // 始める前に 5 秒数える（紙と鉛筆を構える間）。「次へ」ですぐ始め、「一時停止」で止め、「終了」でやめる
+  cqCountdown(5, () => croquis.start({
     seconds: settings.seconds,
     count: settings.count,
     categories: settings.cqCats.length ? new Set(settings.cqCats) : null,
-  });
-  $('cqPause').textContent = '一時停止';
+  }));
+}
+
+let cqCount = null;   // { left, timer, paused, go }
+function cqCountdown(sec, go) {
+  cqCancelCount();
+  cqCount = { left: sec, timer: null, paused: false, go };
+  $('cqName').textContent = 'まもなく始まります';
+  $('cqAngleText').textContent = '';
+  $('cqIndex').textContent = '';
+  $('cqFill').style.width = '0%';
+  const show = () => {
+    $('cqTime').textContent = String(cqCount.left);
+    $('cqTime').classList.add('count');
+  };
+  const tick = () => {
+    if (!cqCount || cqCount.paused) return;
+    cqCount.left--;
+    if (cqCount.left <= 0) { cqBeginNow(); return; }
+    show();
+    if (settings.cqBeep && cqCount.left <= 3) beep(false);
+  };
+  show();
+  cqCount.timer = setInterval(tick, 1000);
+}
+function cqCancelCount() {
+  if (cqCount && cqCount.timer) clearInterval(cqCount.timer);
+  cqCount = null;
+  $('cqTime').classList.remove('count');
+}
+function cqBeginNow() {
+  if (!cqCount) return;
+  const go = cqCount.go;
+  cqCancelCount();
+  if (settings.cqBeep) beep(true);
+  go();
 }
 
 function stopCroquis() {
+  cqCancelCount();
   document.body.classList.remove('croquis');
   updateInsets();
   $('croquis').hidden = true;
@@ -1467,9 +1504,10 @@ function stopCroquis() {
 }
 
 $('btnCroquis').addEventListener('click', () => startCroquis());
-$('cqSkip').addEventListener('click', () => croquis.skip());
-$('cqStop').addEventListener('click', () => croquis.finish());
+$('cqSkip').addEventListener('click', () => { if (cqCount) cqBeginNow(); else croquis.skip(); });
+$('cqStop').addEventListener('click', () => { if (cqCount) { cqCancelCount(); stopCroquis(); } else croquis.finish(); });
 $('cqPause').addEventListener('click', () => {
+  if (cqCount) { cqCount.paused = !cqCount.paused; $('cqPause').textContent = cqCount.paused ? '再開' : '一時停止'; return; }
   croquis.togglePause();
   $('cqPause').textContent = croquis.paused ? '再開' : '一時停止';
 });
