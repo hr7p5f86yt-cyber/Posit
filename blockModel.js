@@ -56,6 +56,7 @@ function taperBox(h, top, bot) {
 function frustum(a, b, rA, rB, fwd, ratio = 1, seg = 12) {
   const L = a.distanceTo(b);
   const g = new THREE.CylinderGeometry(rB, rA, L, seg, 4);
+  if (seg === 4) g.rotateY(Math.PI / 4);            // 四角柱は面を前・横へ向ける
   g.scale(1, 1, ratio);
   const [x, y, z] = axes(b.clone().sub(a), fwd);
   g.applyMatrix4(frameMatrix(a.clone().lerp(b, 0.5), x, y, z));
@@ -130,6 +131,13 @@ export function buildBlockModel(slot, extra = {}) {
   const s = H0 / 1.40;                                  // 身長 1.70m の人で 足首〜頭の骨 ≒ 1.40m
   const floor = extra.floor ?? footY - 0.078 * s;
   const FWD = V3(0, 0, 1), UP = V3(0, 1, 0);
+  // 形の組み合わせ: std = 箱と円柱、egg = 胸・腰を卵形に（ルーミス風）、box = すべて箱（箱人形）
+  const style = extra.style || 'std';
+  const BOX = style === 'box', EGG = style === 'egg';
+  const egg = (c, rx, ry, rz) => { const g = new THREE.SphereGeometry(1, 16, 12); g.scale(rx, ry, rz); g.translate(c.x, c.y, c.z); return g; };
+  const limb = (a, b, rA, rB, fwd, ratio) => (BOX ? frustum(a, b, rA * 0.92, rB * 0.92, fwd, ratio, 4) : frustum(a, b, rA, rB, fwd, ratio));
+  const limbKind = BOX ? 'body' : 'round';
+  const jointGeo = (c, r) => { if (!BOX) return ball(c, r); const g = new THREE.BoxGeometry(r * 1.5, r * 1.5, r * 1.5); g.translate(c.x, c.y, c.z); return g; };
   // 箱・くさびは面の境目に線を引く（丸い形は輪郭だけで十分なので引かない）
   const add = (boneKey, geo, kind = 'body', edges = kind === 'body' || kind === 'face') => {
     const bone = map[boneKey];
@@ -162,30 +170,37 @@ export function buildBlockModel(slot, extra = {}) {
   const zc = hips.z;
   // 胸部: 胸郭の箱（上が広く、少し前へ傾く）
   {
-    const g = taperBox(yChestTop - yChestBot, [shoulderW * 1.08, 0.22 * s], [shoulderW * 0.90, 0.20 * s]);
-    g.translate(0, 0, 0);
-    g.applyMatrix4(frameMatrix(V3(hips.x, (yChestTop + yChestBot) / 2, zc + 0.005 * s), V3(1, 0, 0), UP, FWD));
-    add(chestB, g);
+    const c = V3(hips.x, (yChestTop + yChestBot) / 2, zc + 0.005 * s);
+    if (EGG) add(chestB, egg(c.clone().add(V3(0, -0.01 * s, 0)), shoulderW * 0.52, (yChestTop - yChestBot) * 0.56, 0.115 * s), 'round');
+    else {
+      const g = taperBox(yChestTop - yChestBot, [shoulderW * 1.08, 0.22 * s], [shoulderW * 0.90, 0.20 * s]);
+      g.applyMatrix4(frameMatrix(c, V3(1, 0, 0), UP, FWD));
+      add(chestB, g);
+    }
   }
   // 腹部: 楕円柱（胸と骨盤のあいだ）
   {
     const a = V3(hips.x, yPelvTop - 0.01 * s, zc), b = V3(hips.x, yChestBot + 0.01 * s, zc);
-    add(map.spine ? 'spine' : 'hips', frustum(a, b, shoulderW * 0.40, shoulderW * 0.42, FWD, 0.66, 16), 'round');
+    add(map.spine ? 'spine' : 'hips', BOX ? frustum(a, b, shoulderW * 0.42, shoulderW * 0.44, FWD, 0.62, 4) : frustum(a, b, shoulderW * 0.40, shoulderW * 0.42, FWD, 0.66, 16), BOX ? 'body' : 'round');
   }
   // 腰部: 骨盤の箱（下がすぼまる）
   {
-    const g = taperBox(yPelvTop - yPelvBot, [hipW * 2.05, 0.20 * s], [hipW * 1.55, 0.17 * s]);
-    g.applyMatrix4(frameMatrix(V3(hips.x, (yPelvTop + yPelvBot) / 2, zc - 0.005 * s), V3(1, 0, 0), UP, FWD));
-    add('hips', g);
+    const c = V3(hips.x, (yPelvTop + yPelvBot) / 2, zc - 0.005 * s);
+    if (EGG) add('hips', egg(c, hipW * 0.98, (yPelvTop - yPelvBot) * 0.62, 0.10 * s), 'round');
+    else {
+      const g = taperBox(yPelvTop - yPelvBot, [hipW * 2.05, 0.20 * s], [hipW * 1.55, 0.17 * s]);
+      g.applyMatrix4(frameMatrix(c, V3(1, 0, 0), UP, FWD));
+      add('hips', g);
+    }
   }
   // 首: 円柱（胸の上 → 頭の下）
   if (neck && head) {
-    add('neck', frustum(V3(neck.x, yChestTop - 0.03 * s, neck.z - 0.01 * s), head.clone().add(V3(0, 0.02 * s, 0)), 0.058 * s, 0.052 * s, FWD, 1, 14), 'round');
+    add('neck', frustum(V3(neck.x, yChestTop - 0.03 * s, neck.z - 0.01 * s), head.clone().add(V3(0, 0.02 * s, 0)), 0.058 * s, 0.052 * s, FWD, 1, BOX ? 4 : 14), BOX ? 'body' : 'round');
   }
   // 頭部: 頭蓋の卵形＋あご（顔の向き）
   if (head) {
-    const g = new THREE.SphereGeometry(1, 14, 10);
-    g.scale(0.092 * s, 0.115 * s, 0.105 * s);
+    const g = BOX ? new THREE.BoxGeometry(2, 2, 2, 2, 2, 2) : new THREE.SphereGeometry(1, 14, 10);
+    if (BOX) g.scale(0.082 * s, 0.10 * s, 0.095 * s); else g.scale(0.092 * s, 0.115 * s, 0.105 * s);
     g.translate(head.x, head.y + 0.095 * s, head.z - 0.005 * s);
     add('head', g);
     const jaw = taperBox(0.07 * s, [0.11 * s, 0.10 * s], [0.07 * s, 0.07 * s]);
@@ -198,11 +213,11 @@ export function buildBlockModel(slot, extra = {}) {
     const sx = sd === 'L' ? 1 : -1;
     const S = W('upperArm' + sd), E = W('forearm' + sd), Wr = W('hand' + sd);
     if (!S || !E || !Wr) continue;
-    add('upperArm' + sd, ball(S, 0.056 * s), 'joint');                            // 肩
-    add('upperArm' + sd, frustum(S, E, 0.050 * s, 0.040 * s, FWD, 0.95), 'round');          // 上腕
-    add('forearm' + sd, ball(E, 0.045 * s), 'joint');                              // 肘
-    add('forearm' + sd, frustum(E, Wr, 0.040 * s, 0.028 * s, FWD, 0.8), 'round');           // 前腕
-    add('hand' + sd, ball(Wr, 0.031 * s), 'joint');                                // 手首
+    add('upperArm' + sd, jointGeo(S, 0.056 * s), 'joint');                            // 肩
+    add('upperArm' + sd, limb(S, E, 0.050 * s, 0.040 * s, FWD, 0.95), limbKind);          // 上腕
+    add('forearm' + sd, jointGeo(E, 0.045 * s), 'joint');                              // 肘
+    add('forearm' + sd, limb(E, Wr, 0.040 * s, 0.028 * s, FWD, 0.8), limbKind);           // 前腕
+    add('hand' + sd, jointGeo(Wr, 0.031 * s), 'joint');                                // 手首
     // 手: 手のひらの箱＋指の箱＋親指
     const hf = extra.handFrame && extra.handFrame[sd];
     const fg = slot.fingers && slot.fingers[sd];
@@ -249,11 +264,11 @@ export function buildBlockModel(slot, extra = {}) {
   for (const sd of ['L', 'R']) {
     const Hj = W('thigh' + sd), K = W('shin' + sd), A = W('foot' + sd);
     if (!Hj || !K || !A) continue;
-    add('thigh' + sd, ball(Hj, 0.072 * s), 'joint');                               // 股関節
-    add('thigh' + sd, frustum(Hj, K, 0.082 * s, 0.056 * s, FWD, 0.95), 'round');            // 大腿
-    add('shin' + sd, ball(K, 0.060 * s), 'joint');                                 // 膝
-    add('shin' + sd, frustum(K, A, 0.055 * s, 0.034 * s, FWD, 0.9), 'round');               // 下腿
-    add('foot' + sd, ball(A, 0.040 * s), 'joint');                                 // 足首
+    add('thigh' + sd, jointGeo(Hj, 0.072 * s), 'joint');                               // 股関節
+    add('thigh' + sd, limb(Hj, K, 0.082 * s, 0.056 * s, FWD, 0.95), limbKind);            // 大腿
+    add('shin' + sd, jointGeo(K, 0.060 * s), 'joint');                                 // 膝
+    add('shin' + sd, limb(K, A, 0.055 * s, 0.034 * s, FWD, 0.9), limbKind);               // 下腿
+    add('foot' + sd, jointGeo(A, 0.040 * s), 'joint');                                 // 足首
     // 足: かかと〜つま先のくさび
     const toeB = map['foot' + sd].children.find(c => c.isBone);
     const Tb = toeB ? toeB.getWorldPosition(V3()) : A.clone().add(V3(0, -0.06 * s, 0.13 * s));

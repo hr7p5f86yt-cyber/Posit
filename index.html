@@ -170,6 +170,8 @@
 <div id="actBar">
   <button class="qb accent" id="actPose">ポーズ</button>
   <button class="qb" id="actBody" title="腰を選んで、体全体を動かす・回す">体全体</button>
+  <button class="qb" id="actDuo" title="人形をもう1体出す">＋2体目</button>
+  <button class="qb" id="actSwap" hidden title="もう1体の人形を動かす">入れ替え</button>
   <div class="spacer"></div>
   <button class="qb" id="actKeep" title="いまのポーズをキープ">キープ</button>
   <button class="qb icon" id="actKeepClear" hidden aria-label="キープを消す"><svg viewBox="0 0 24 24"><path d="M7 7l10 10M17 7L7 17"/></svg></button>
@@ -181,6 +183,12 @@
   <button class="qb" data-az="180" data-el="6">後ろ</button>
   <button class="qb" data-az="0" data-el="68">上</button>
   <button class="qb" id="viewBarFit" title="全体を画面に収める">全体</button>
+  <button class="qb" id="viewBarSaved" title="保存した角度">★角度</button>
+</div>
+<div id="camPop" hidden>
+  <div class="cpHead"><span>保存した角度</span><button id="camSave" class="qb">＋今の角度を保存</button></div>
+  <div id="camList"></div>
+  <p class="hint tiny">タップでその角度へ。× で消します。</p>
 </div>
 
 
@@ -356,6 +364,10 @@
       <div class="scroller" id="sideChips" hidden></div>
       <div class="sub">表示するモデル</div>
       <div class="scroller" id="viewChips"></div>
+      <div id="blockStyleRow" hidden>
+        <div class="sub">単純化の形</div>
+        <div class="scroller" id="blockStyleChips"></div>
+      </div>
       <div class="sub">素体の質感</div>
       <div class="scroller" id="matChips"></div>
       <label class="row"><span class="lbl">素体の透明</span>
@@ -581,6 +593,9 @@
 <div id="cqDone" hidden>
   <div class="card">
     <strong id="cqDoneText"></strong>
+    <p class="hint tiny">描いたポーズ（タップでそのポーズに。☆でお気に入り）</p>
+    <div id="cqLog"></div>
+    <button id="cqAgain" class="ghost wide">同じ順番でもう一度</button>
     <button id="cqDoneClose" class="primary wide">閉じる</button>
   </div>
 </div>

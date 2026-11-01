@@ -747,6 +747,36 @@ body.posePanel #viewBar { justify-content: flex-start; overflow-x: auto; pointer
 body.posePanel #viewBar::-webkit-scrollbar { display: none; }
 body.posePanel #viewBar .qb { flex: 0 0 auto; }
 
+/* ポーズ一覧の行: 小さな絵・名前・お気に入りの星 */
+#posePopGrid .ppRow { display: flex; gap: 4px; align-items: stretch; flex: 0 0 auto; }
+#posePopGrid .ppRow .ppPick { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; }
+#posePopGrid .ppRow .ppPick span { overflow: hidden; text-overflow: ellipsis; }
+#posePopGrid .ppStar { flex: 0 0 34px; padding: 0; font-size: 16px; color: var(--muted); }
+#posePopGrid .ppStar.fav { color: #ffc94d; }
+.pthumb { flex: 0 0 auto; width: 26px; height: 31px; }
+.pthumb path { fill: none; stroke: currentColor; stroke-width: 2.6; stroke-linecap: round; stroke-linejoin: round; opacity: 0.9; }
+.pthumb circle { fill: currentColor; }
+/* クロッキーの記録 */
+#cqLog { max-height: 42vh; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; margin: 6px 0 10px; }
+#cqLog .clRow { display: flex; gap: 4px; }
+#cqLog .clRow .clPick { flex: 1; text-align: left; display: flex; align-items: center; gap: 8px; padding: 6px 10px; }
+#cqLog .clRow .ppStar { flex: 0 0 38px; padding: 0; font-size: 16px; color: var(--muted); }
+#cqLog .clRow .ppStar.fav { color: #ffc94d; }
+#cqAgain { margin-bottom: 8px; }
+/* 保存した角度 */
+#camPop { position: fixed; z-index: 37; right: 8px; bottom: calc(var(--view-b, 0px) + 56px); width: min(300px, calc(100vw - 16px));
+  padding: 10px; border-radius: 16px; background: rgba(24, 28, 35, 0.95); border: 1px solid var(--line);
+  -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); display: flex; flex-direction: column; gap: 8px; }
+#camPop[hidden] { display: none; }
+#camPop .cpHead { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; }
+#camPop .cpHead span { flex: 1; }
+#camList { display: flex; flex-direction: column; gap: 4px; max-height: 40vh; overflow-y: auto; }
+#camList .cmRow { display: flex; gap: 4px; }
+#camList .cmRow .cmGo { flex: 1; text-align: left; padding: 8px 10px; }
+#camList .cmRow .cmDel { flex: 0 0 36px; padding: 0; }
+#camList:empty::after { content: 'まだありません'; font-size: 12px; color: var(--muted); padding: 4px; }
+#actBar .qb.duoOn { background: #8fd3a8; color: #0f2a19; border-color: #8fd3a8; }
+
 /* 手・足の固定ボタン（右下に縦に並べる。左右は人形から見た左右） */
 #lockBar { position: fixed; z-index: 30; right: 8px; bottom: calc(var(--view-b, 0px) + 100px);
   display: flex; flex-direction: column; gap: 6px; align-items: stretch; }

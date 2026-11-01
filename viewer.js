@@ -4,6 +4,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { clone as cloneSkinned } from 'three/addons/utils/SkeletonUtils.js';
 import { JOINTS, JOINT_BY_KEY, JOINT_GROUPS, mapBones, mapBonesByStructure, mapFingers, fingerCount, clampAngles, limitExcess, wrapDeg, normalizeName } from './bones.js';
 import { parseSpec, parseFingerSpec, POSE_PRESETS } from './poses.js';
 import { buildSkeletonView } from './skeletonView.js';
@@ -138,7 +139,7 @@ class Slot {
 
 export class Viewer {
   /** この viewer.js の版（app.js の BUILD と同じでなければ、古いファイルが混ざっている） */
-  static BUILD = '2026-11-01a';
+  static BUILD = '2026-11-01b';
 
   constructor(canvas) {
     this.canvas = canvas;
@@ -2267,7 +2268,7 @@ export class Viewer {
     this.scene.updateMatrixWorld(true);
     try {
       const handFrame = { L: this._handFrame(slot, 'L'), R: this._handFrame(slot, 'R') };
-      slot.blockParts = buildBlockModel(slot, { handFrame });
+      slot.blockParts = buildBlockModel(slot, { handFrame, style: this.blockStyle || 'std' });
       // 面の線（素体と同じ描き方・同じ線の数の設定）
       if (!this._blockWireMat) this._blockWireMat = makeWireMaterial({ opacity: this.wireOpacity, latH: 1.8 });
       for (const m of slot.blockParts.filter(o => o.isMesh)) {
@@ -2285,14 +2286,18 @@ export class Viewer {
     this._applyProportions();
   }
 
+  /** 単純化した人形の形の組み合わせ: std（箱と円柱）・egg（卵と円柱）・box（すべて箱） */
+  setBlockStyle(style) { this.blockStyle = style; this._refreshBlocks(); }
+
   _refreshBlocks() {
     const on = this.viewMode === 'block';
     for (const s of SLOTS) {
       const slot = this.slots[s.key];
       const show = on && slot === this.primarySlot;
-      if (show && (!slot.blockParts || !slot.blockParts.length || slot.blockType !== this.bodyType)) {
+      const bkey = this.bodyType + '|' + (this.blockStyle || 'std');
+      if (show && (!slot.blockParts || !slot.blockParts.length || slot.blockType !== bkey)) {
         guard('単純化した人形', () => this._assembleBlocks(slot));
-        slot.blockType = this.bodyType;
+        slot.blockType = bkey;
       }
       // 面の線を出しているときは、面の境目の線は重なるので出さない
       for (const o of slot.blockParts || []) {
@@ -2418,7 +2423,95 @@ export class Viewer {
     this.applyAll();
   }
 
-  applyPose(spec) { this.clearLocks(); this.setAngles(parseSpec(spec)); }
+  applyPose(spec) {
+    this.clearLocks();
+    const m = parseSpec(spec);
+    // 2 体目を出しているときは、いま動かしている人形の立ち位置（水平）はそのまま
+    if (this.second) {
+      const b = this.bodyShift, bp = m.bodyPos || { x: 0, y: 0, z: 0 };
+      m.bodyPos = { x: b.x * 100, y: bp.y || 0, z: b.z * 100 };
+    }
+    this.setAngles(m);
+  }
+
+  // ---- 2 体目の人形 ---------------------------------------------------------
+  //   もう 1 体は「動かしていない方の人形」の写し（形だけ）。入れ替えると、写しと動かす人形の中身を交換する。
+  //   どちらも同じ素体なので、体型・質感・ライトは共通
+
+  /** いまの人形の形を写しに写す */
+  _snapSecond() {
+    const sd = this.second; if (!sd) return;
+    this.container.updateWorldMatrix(true, true);
+    sd.holder.matrix.copy(this.container.matrixWorld);
+    sd.holder.matrixWorldNeedsUpdate = true;
+    for (const [a, b] of sd.pairs) { b.position.copy(a.position); b.quaternion.copy(a.quaternion); b.scale.copy(a.scale); b.visible = a.visible; }
+    sd.holder.updateMatrixWorld(true);
+  }
+
+  hasSecond() { return !!this.second; }
+
+  /** 2 体目を出す。いまの人形はその場に写しとして残り、動かす人形は横（70cm）へずれる */
+  addSecond(dx = 0.7) {
+    const slot = this.primarySlot;
+    if (this.second || !slot || !slot.pivot) return false;
+    // 写すのは骨と素体の面だけ（骨格・筋肉・面の線・印などは写さない）
+    const keep = new Set([...slot.meshes, ...((slot.breast && slot.breast.parts) || [])]);
+    const anc = new Set();
+    for (const k of keep) for (let p = k.parent; p && p !== slot.pivot; p = p.parent) anc.add(p);
+    const detached = [];
+    slot.pivot.traverse(o => {
+      if (o === slot.pivot || o.isBone || keep.has(o) || anc.has(o)) return;
+      if (o.parent && (o.parent.isBone || anc.has(o.parent) || o.parent === slot.pivot)) detached.push([o, o.parent]);
+    });
+    for (const [o, p] of detached) p.remove(o);
+    const uds = [];
+    slot.pivot.traverse(o => { uds.push([o, o.userData]); o.userData = {}; });
+    let copy;
+    const src = [], dst = [];
+    try {
+      copy = cloneSkinned(slot.pivot);
+      // 写しと元の対応（写さない部品を外している間に、同じ順でたどる）
+      slot.pivot.traverse(o => src.push(o));
+    } finally {
+      for (const [o, u] of uds) o.userData = u;
+      for (const [o, p] of detached) p.add(o);
+    }
+    copy.traverse(o => dst.push(o));
+    const pairs = [];
+    for (let i = 0; i < Math.min(src.length, dst.length); i++) pairs.push([src[i], dst[i]]);
+    copy.traverse(o => { o.userData.secondDoll = true; if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; o.frustumCulled = false; o.raycast = () => {}; } });
+    const holder = new THREE.Group();
+    holder.matrixAutoUpdate = false;
+    holder.add(copy);
+    this.scene.add(holder);
+    this.second = { holder, copy, pairs, stored: null, hands: null };
+    this._snapSecond();
+    this.second.stored = this.allAngles();
+    this.second.hands = { ...this.handShape };
+    this.bodyShift.x += dx;
+    this.applyAll();
+    return true;
+  }
+
+  /** 動かす人形と写しを入れ替える */
+  swapSecond() {
+    const sd = this.second; if (!sd) return false;
+    const st = sd.stored, hs = sd.hands;
+    sd.stored = this.allAngles();
+    sd.hands = { ...this.handShape };
+    this._snapSecond();
+    this.clearLocks();
+    this.setAngles(st);
+    for (const k of ['L', 'R']) if (hs && hs[k] !== undefined && hs[k] !== this.handShape[k]) this.applyHandShape(k, hs[k] || '');
+    return true;
+  }
+
+  removeSecond() {
+    const sd = this.second; if (!sd) return;
+    sd.holder.parent && sd.holder.parent.remove(sd.holder);
+    sd.copy.traverse(o => { if (o.isSkinnedMesh && o.skeleton) o.skeleton.dispose && o.skeleton.dispose(); });
+    this.second = null;
+  }
 
   /** ポーズの一覧から当てたあと: 手・腕・脚が体の別の部分にめり込んでいたら外へ逃がす（contactFix.js） */
   resolveContacts() {

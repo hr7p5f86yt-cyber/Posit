@@ -5,10 +5,11 @@ import { POSE_CATEGORIES, POSE_PRESETS, POSE_HANDS, HAND_SHAPES, FACE_PRESETS, t
 import { PoseHistory, relativeTime, HISTORY_LIMIT } from './history.js';
 import { CroquisSession, CROQUIS_SECONDS, CROQUIS_COUNTS } from './croquis.js';
 import { LightBall } from './lightBall.js';
+import { poseThumbSVG } from './poseThumbs.js';
 import { REGIONS } from './anatomy.js';
 import * as THREE from 'three';
 
-export const BUILD = '2026-11-01a';
+export const BUILD = '2026-11-01b';
 
 const SAMPLE_URL = 'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r169/examples/models/gltf/Xbot.glb';
 const SETTINGS_KEY = 'posit.settings.v1';
@@ -486,23 +487,61 @@ $('selBarClose').addEventListener('click', () => viewer.select(null));
 //   ‹ 前 / 次 › で、いま見ている分類の中を順に送れる（一覧を見ずに次々と確かめられる）
 let popCat = '';
 let popCurrent = null;
-// 分類の順に並べる（「すべて」で同じ分類の見出しが二度出ないように）
-const popList = () => POSE_CATEGORIES.flatMap(c => POSE_PRESETS.filter(x => x.category === c.key && (!popCat || x.category === popCat)));
+// お気に入り（この端末に残す）
+const FAV_KEY = 'posit.favs';
+let favs = new Set();
+try { favs = new Set(JSON.parse(localStorage.getItem(FAV_KEY) || '[]')); } catch (e) { /* 使えなくても続行 */ }
+function toggleFav(id) {
+  if (favs.has(id)) favs.delete(id); else favs.add(id);
+  try { localStorage.setItem(FAV_KEY, JSON.stringify([...favs])); } catch (e) { /* 続行 */ }
+}
+// 分類の順に並べる（「すべて」で同じ分類の見出しが二度出ないように）。★ はお気に入りだけ
+const popList = () => (popCat === 'fav'
+  ? POSE_PRESETS.filter(p => favs.has(p.id))
+  : POSE_CATEGORIES.flatMap(c => POSE_PRESETS.filter(x => x.category === c.key && (!popCat || x.category === popCat))));
 function markPosePop(scroll) {
   const grid = $('posePopGrid');
-  for (const b of grid.querySelectorAll('button')) {
+  for (const b of grid.querySelectorAll('.ppPick')) {
     const on = b.dataset.id === popCurrent;
     b.classList.toggle('on', on);
     if (on && scroll) b.scrollIntoView({ block: 'nearest' });
   }
 }
+/** 小さな絵・名前・星の 1 行 */
+function poseRow(p, onPick, cls = 'ppRow', pickCls = 'ppPick') {
+  const row = document.createElement('div');
+  row.className = cls;
+  const b = document.createElement('button');
+  b.className = pickCls;
+  b.dataset.id = p.id;
+  b.innerHTML = poseThumbSVG(p.id) + '<span></span>';
+  b.querySelector('span').textContent = p.name;
+  b.addEventListener('click', onPick);
+  const st = document.createElement('button');
+  st.className = 'ppStar' + (favs.has(p.id) ? ' fav' : '');
+  st.textContent = favs.has(p.id) ? '★' : '☆';
+  st.setAttribute('aria-label', 'お気に入り');
+  st.addEventListener('click', e => {
+    e.stopPropagation(); toggleFav(p.id);
+    st.classList.toggle('fav', favs.has(p.id)); st.textContent = favs.has(p.id) ? '★' : '☆';
+    if (popCat === 'fav' && !$('posePop').hidden) buildPosePop();
+  });
+  row.append(b, st);
+  return row;
+}
 function buildPosePop() {
-  buildChips('posePopCats', [{ key: '', label: 'すべて' }, ...POSE_CATEGORIES.map(c => ({ key: c.key, label: c.name }))],
+  buildChips('posePopCats', [{ key: 'fav', label: '★' }, { key: '', label: 'すべて' }, ...POSE_CATEGORIES.map(c => ({ key: c.key, label: c.name }))],
     o => popCat === o.key, o => { popCat = o.key; buildPosePop(); });
   const grid = $('posePopGrid');
   grid.innerHTML = '';
   let lastCat = null;
-  for (const p of popList()) {
+  const list = popList();
+  if (popCat === 'fav' && !list.length) {
+    const h = document.createElement('div');
+    h.className = 'ppCat'; h.textContent = '☆ を押したポーズがここに並びます';
+    grid.appendChild(h);
+  }
+  for (const p of list) {
     if (!popCat && p.category !== lastCat) {
       const h = document.createElement('div');
       h.className = 'ppCat';
@@ -510,11 +549,7 @@ function buildPosePop() {
       grid.appendChild(h);
       lastCat = p.category;
     }
-    const b = document.createElement('button');
-    b.textContent = p.name;
-    b.dataset.id = p.id;
-    b.addEventListener('click', () => { popCurrent = p.id; applyPose(p); markPosePop(false); });
-    grid.appendChild(b);
+    grid.appendChild(poseRow(p, () => { popCurrent = p.id; applyPose(p); markPosePop(false); }));
   }
   markPosePop(true);
 }
@@ -616,6 +651,68 @@ for (const b of document.querySelectorAll('#viewBar .qb[data-az]')) {
   b.addEventListener('click', () => viewer.viewFromAngle(+b.dataset.az, +b.dataset.el));
 }
 $('viewBarFit').addEventListener('click', () => viewer.fitView());
+
+// ---- 保存した角度（カメラの位置・向き・レンズ。この端末に残す） -------------------------
+const CAM_KEY = 'posit.cams';
+let camSaves = [];
+try { camSaves = JSON.parse(localStorage.getItem(CAM_KEY) || '[]'); } catch (e) { camSaves = []; }
+const saveCams = () => { try { localStorage.setItem(CAM_KEY, JSON.stringify(camSaves)); } catch (e) { /* 続行 */ } };
+function buildCamList() {
+  const el = $('camList');
+  el.innerHTML = '';
+  camSaves.forEach((c, i) => {
+    const row = document.createElement('div'); row.className = 'cmRow';
+    const go = document.createElement('button'); go.className = 'cmGo ghost'; go.textContent = c.name;
+    go.addEventListener('click', () => {
+      if (c.lens) { viewer.setLens(c.lens); setRange('lens', c.lens); }
+      viewer.camera.position.fromArray(c.pos); viewer.controls.target.fromArray(c.target); viewer.controls.update();
+      showToast('角度: ' + c.name);
+    });
+    const del = document.createElement('button'); del.className = 'cmDel ghost'; del.textContent = '×'; del.setAttribute('aria-label', '消す');
+    del.addEventListener('click', () => { camSaves.splice(i, 1); saveCams(); buildCamList(); });
+    row.append(go, del); el.appendChild(row);
+  });
+}
+$('viewBarSaved').addEventListener('click', e => { e.stopPropagation(); $('camPop').hidden = !$('camPop').hidden; if (!$('camPop').hidden) buildCamList(); });
+$('camSave').addEventListener('click', () => {
+  const name = `角度 ${camSaves.length + 1}`;
+  camSaves.push({ name, pos: viewer.camera.position.toArray(), target: viewer.controls.target.toArray(), lens: +$('lens').value });
+  if (camSaves.length > 24) camSaves.shift();
+  saveCams(); buildCamList(); showToast(name + ' を保存しました');
+});
+document.addEventListener('pointerdown', e => {
+  if (!$('camPop').hidden && !e.target.closest('#camPop, #viewBarSaved')) $('camPop').hidden = true;
+}, { capture: true });
+
+// ---- 2 体目の人形 --------------------------------------------------------
+//   「＋2体目」で、いまの人形をその場に残し、もう 1 体を横に出して動かす。「入れ替え」で動かす人形を替える
+function syncDuo() {
+  const on = viewer.hasSecond();
+  $('actDuo').textContent = on ? '2体目を消す' : '＋2体目';
+  $('actDuo').classList.toggle('duoOn', on);
+  $('actSwap').hidden = !on;
+}
+$('actDuo').addEventListener('click', () => {
+  if (viewer.hasSecond()) { viewer.removeSecond(); showToast('2体目を消しました'); }
+  else if (viewer.addSecond()) { snapshot(); showToast('2体目を出しました（いま動かすのは右の人形）'); }
+  syncDuo(); syncSliders();
+});
+$('actSwap').addEventListener('click', () => { snapshot(); viewer.swapSecond(); syncSliders(); showToast('動かす人形を入れ替えました'); });
+syncDuo();
+
+// ---- 単純化の形 -----------------------------------------------------------
+const BLOCK_STYLES = [{ value: 'std', label: '箱と円柱' }, { value: 'egg', label: '卵と円柱（ルーミス風）' }, { value: 'box', label: 'すべて箱' }];
+let blockStyle = 'std';
+try { blockStyle = localStorage.getItem('posit.blockStyle') || 'std'; } catch (e) { /* 続行 */ }
+viewer.blockStyle = blockStyle;
+
+function buildBlockStyleChips() {
+  $('blockStyleRow').hidden = viewer.viewMode !== 'block';
+  buildChips('blockStyleChips', BLOCK_STYLES, o => blockStyle === o.value, o => {
+    blockStyle = o.value; try { localStorage.setItem('posit.blockStyle', blockStyle); } catch (e) { /* 続行 */ }
+    viewer.setBlockStyle(blockStyle); buildBlockStyleChips();
+  });
+}
 
 // 人形の上で関節を押したまま動かす
 let jdFrame = 0;
@@ -1366,6 +1463,7 @@ let lastBeepSec = null;
 const croquis = new CroquisSession({
   history,
   onPose: (pose, index) => {
+    cqLog.push(pose.id);
     croquisSetup();
     viewer.applyPose(pose.spec);
     applyPoseHands(pose);
@@ -1393,11 +1491,28 @@ const croquis = new CroquisSession({
   onFinish: (done) => {
     stopCroquis();
     $('cqDoneText').textContent = `${done} 枚おつかれさまでした`;
+    lastCqLog = cqLog.slice(0, done);
+    buildCqLog();
     $('cqDone').hidden = false;
   },
 });
 
 let wakeLock = null;
+// クロッキーで出たポーズの記録（終わったあとに一覧で見る・同じ順番でもう一度）
+let cqLog = [], lastCqLog = [], cqReplay = null;
+function buildCqLog() {
+  const el = $('cqLog');
+  el.innerHTML = '';
+  lastCqLog.forEach((id, i) => {
+    const p = POSE_PRESETS.find(x => x.id === id);
+    if (!p) return;
+    const row = poseRow(p, () => { $('cqDone').hidden = true; applyPose(p); }, 'clRow', 'clPick ghost');
+    row.querySelector('span').textContent = `${i + 1}. ${p.name}`;
+    el.appendChild(row);
+  });
+  $('cqAgain').hidden = !lastCqLog.length;
+}
+$('cqAgain').addEventListener('click', () => { $('cqDone').hidden = true; cqReplay = lastCqLog.slice(); startCroquis(); });
 
 let beforeCroquis = null;
 
@@ -1429,10 +1544,13 @@ async function startCroquis() {
   } catch (e) { /* 画面が消えても進行は続く */ }
   $('cqPause').textContent = '一時停止';
   // 始める前に 5 秒数える（紙と鉛筆を構える間）。「次へ」ですぐ始め、「一時停止」で止め、「終了」でやめる
+  cqLog = [];
+  const sequence = cqReplay; cqReplay = null;
   cqCountdown(5, () => croquis.start({
     seconds: settings.seconds,
     count: settings.count,
     categories: settings.cqCats.length ? new Set(settings.cqCats) : null,
+    sequence,
   }));
 }
 
@@ -1642,6 +1760,7 @@ function buildViewChips() {
     VIEW_MODES.map(m => ({ ...m, label: m.name })),
     m => m.key === viewer.viewMode,
     m => { if (viewer.applyViewMode(m.key)) buildViewChips(); });
+  try { buildBlockStyleChips(); } catch (e) { /* 起動の途中 */ }
   for (const [i, m] of VIEW_MODES.entries()) {
     // 骨格・筋肉のモデルが無くても、モデルのボーンから組み立てて出せるものは使える
     const ok = viewer.viewModeAvailable ? viewer.viewModeAvailable(m.key) : !m.show.every(k => !viewer.slots[k].loaded);
@@ -2064,6 +2183,9 @@ const LIGHT_PRESETS = [
   { key: 'rim',    label: '逆光',     az: 145, el: 18,  int: 15,  fill: 0.1,  env: 0.18, soft: 2,   exp: 1.15 },
   { key: 'under',  label: '下から',   az: 12,  el: -40, int: 5,   fill: 0.03, env: 0.08, soft: 1.5, exp: 1 },
   { key: 'bright', label: 'まぶしく', az: 40,  el: 40,  int: 16,  fill: 0.2,  env: 0.3,  soft: 2,   exp: 1 },
+  { key: 'window', label: '窓辺',     az: 80,  el: 25,  int: 4,   fill: 0.55, env: 0.6,  soft: 8,   exp: 1 },
+  { key: 'spot',   label: 'スポット', az: 10,  el: 70,  int: 12,  fill: 0,    env: 0.03, soft: 0.6, exp: 1 },
+  { key: 'rembr',  label: '斜め45°',  az: 45,  el: 45,  int: 6,   fill: 0.08, env: 0.12, soft: 1.5, exp: 1 },
 ];
 let lightPreset = 'std';
 
