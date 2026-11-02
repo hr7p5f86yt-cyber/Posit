@@ -139,7 +139,7 @@ class Slot {
 
 export class Viewer {
   /** この viewer.js の版（app.js の BUILD と同じでなければ、古いファイルが混ざっている） */
-  static BUILD = '2026-11-01c';
+  static BUILD = '2026-11-02a';
 
   constructor(canvas) {
     this.canvas = canvas;
@@ -2484,7 +2484,8 @@ export class Viewer {
     holder.matrixAutoUpdate = false;
     holder.add(copy);
     this.scene.add(holder);
-    this.second = { holder, copy, pairs, stored: null, hands: null };
+    // firstActive: いま動かしているのが 1 体目（最初からいた人形）か。出した直後は 2 体目を動かす
+    this.second = { holder, copy, pairs, stored: null, hands: null, firstActive: false };
     this._snapSecond();
     this.second.stored = this.allAngles();
     this.second.hands = { ...this.handShape };
@@ -2503,11 +2504,25 @@ export class Viewer {
     this.clearLocks();
     this.setAngles(st);
     for (const k of ['L', 'R']) if (hs && hs[k] !== undefined && hs[k] !== this.handShape[k]) this.applyHandShape(k, hs[k] || '');
+    sd.firstActive = !sd.firstActive;
     return true;
   }
 
+  /** いま動かしているのが 2 体目か */
+  secondActive() { return !!(this.second && !this.second.firstActive); }
+
+  /**
+   * 2 体目を消す。残すのはいつも 1 体目（最初からいた人形）で、その形と立ち位置のまま。
+   * 2 体目を動かしている間に消したときは、写しになっている 1 体目の形を、動かす人形へ戻してから写しを片付ける
+   */
   removeSecond() {
     const sd = this.second; if (!sd) return;
+    if (!sd.firstActive) {
+      const st = sd.stored, hs = sd.hands;
+      this.clearLocks();
+      this.setAngles(st);
+      for (const k of ['L', 'R']) if (hs && hs[k] !== undefined && hs[k] !== this.handShape[k]) this.applyHandShape(k, hs[k] || '');
+    }
     sd.holder.parent && sd.holder.parent.remove(sd.holder);
     sd.copy.traverse(o => { if (o.isSkinnedMesh && o.skeleton) o.skeleton.dispose && o.skeleton.dispose(); });
     this.second = null;

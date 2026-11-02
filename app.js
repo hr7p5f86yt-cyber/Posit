@@ -9,7 +9,7 @@ import { poseThumbSVG } from './poseThumbs.js';
 import { REGIONS } from './anatomy.js';
 import * as THREE from 'three';
 
-export const BUILD = '2026-11-01c';
+export const BUILD = '2026-11-02a';
 
 const SAMPLE_URL = 'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r169/examples/models/gltf/Xbot.glb';
 const SETTINGS_KEY = 'posit.settings.v1';
@@ -693,11 +693,11 @@ function syncDuo() {
   $('actSwap').hidden = !on;
 }
 $('actDuo').addEventListener('click', () => {
-  if (viewer.hasSecond()) { viewer.removeSecond(); showToast('2体目を消しました'); }
+  if (viewer.hasSecond()) { snapshot(); viewer.removeSecond(); showToast('2体目を消しました（1体目は残ります）'); }
   else if (viewer.addSecond()) { snapshot(); showToast('2体目を出しました（いま動かすのは右の人形）'); }
   syncDuo(); syncSliders();
 });
-$('actSwap').addEventListener('click', () => { snapshot(); viewer.swapSecond(); syncSliders(); showToast('動かす人形を入れ替えました'); });
+$('actSwap').addEventListener('click', () => { snapshot(); viewer.swapSecond(); syncSliders(); showToast(viewer.secondActive() ? '2体目を動かします' : '1体目を動かします'); });
 syncDuo();
 
 // ---- 単純化の形 -----------------------------------------------------------
