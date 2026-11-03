@@ -16,6 +16,7 @@ import { buildMuscles, setMusclePalette } from './muscleView.js';
 import { RotateRings } from './rotateRings.js';
 import { LimbPull } from './limbPull.js';
 import { ContactFix } from './contactFix.js';
+import { Props } from './props.js';
 import { JointDots } from './jointDots.js';
 import { WIRE, makeWireMaterial, makeWireGeometry, setWireOpacity, setWireStyle, setWireLatticeHeight, addContourAttribute } from './wireLines.js';
 import { deformFactors, installSegmentScale, setSegment, clearSegments } from './proportions.js';
@@ -139,7 +140,7 @@ class Slot {
 
 export class Viewer {
   /** この viewer.js の版（app.js の BUILD と同じでなければ、古いファイルが混ざっている） */
-  static BUILD = '2026-11-03a';
+  static BUILD = '2026-11-03b';
 
   constructor(canvas) {
     this.canvas = canvas;
@@ -181,6 +182,7 @@ export class Viewer {
     this.rings = new RotateRings(this);
     this.pull = new LimbPull(this);
     this.contactFix = new ContactFix(this);
+    this.props = new Props(this);
     this.dots = new JointDots(this, DOT_KEYS);
     this._bindPointer();
     this._loop();
@@ -350,6 +352,7 @@ export class Viewer {
         this._updateClipPlane();
         const bone = this.selected ? this._boneForJoint(this.selected) : null;
         if (bone) bone.getWorldPosition(this.marker.position);
+        this.props.update();
         this.rings.update();
         this.dots.update();
         this.renderer.render(this.scene, this.camera);
@@ -3227,6 +3230,21 @@ export class Viewer {
     el.addEventListener('pointerdown', e => {
       if (!this.jointDragEnabled || this._jd || !e.isPrimary || this.pickMode === 'anatomy') return;
       if (e.pointerType === 'mouse' && e.button !== 0) return;
+      // 小物（とその回す輪）: 人形より手前の小物を押したら小物を動かす（関節の印を押したときは印を優先）
+      if (this.props.items.length && !this.bodyMode) {
+        const dh0 = guard('関節の印', () => this.dots.hit(e.clientX, e.clientY, e.pointerType));
+        if (!(dh0 && dh0.d <= 10)) {
+          const dd = guard('人形の面', () => this._dollDistance(e.clientX, e.clientY));
+          if (guard('小物', () => this.props.pointerDown(e, dd))) {
+            e.stopImmediatePropagation();
+            e.preventDefault();
+            try { el.setPointerCapture(e.pointerId); } catch (err) { /* 続行 */ }
+            this._jd = { id: e.pointerId, key: null, x: e.clientX, y: e.clientY, moved: false, prop: true };
+            this._jdTapped = true;
+            return;
+          }
+        }
+      }
       // 回転の輪を押したら、その軸だけで回す（関節の部分を押すより先に見る）
       let rh = this.selected ? guard('回転の輪', () => this.rings.hit(e.clientX, e.clientY, e.pointerType)) : null;
       // 関節の印: 輪より近ければ印を優先する（輪の上に別の関節の印があることがある）
@@ -3284,6 +3302,12 @@ export class Viewer {
     el.addEventListener('pointermove', e => {
       const jd = this._jd;
       if (!jd || e.pointerId !== jd.id) return;
+      if (jd.prop) {
+        if (!jd.moved && Math.hypot(e.clientX - jd.x, e.clientY - jd.y) < 5) return;
+        jd.moved = true;
+        guard('小物', () => this.props.pointerMove(e));
+        return;
+      }
       if (!jd.moved) {
         if (Math.hypot(e.clientX - jd.x, e.clientY - jd.y) < 5) return;
         jd.moved = true;
@@ -3307,8 +3331,9 @@ export class Viewer {
       if (!jd || (e && e.pointerId !== jd.id)) return;
       this._jd = null;
       try { el.releasePointerCapture(jd.id); } catch (err) { /* 続行 */ }
+      if (jd.prop) { guard('小物', () => this.props.pointerUp(e)); this._jdTapped = true; return; }
       if (jd.ring) this.rings.end();
-      if (jd.pull) this.pull.end();
+      if (jd.pull) { this.pull.end(); if (jd.moved) guard('小物', () => this.props.handDragEnd(jd.key)); }
       if (jd.body) this.endBodyMove();
       // 腰をタップしただけ（動かさない）なら、ふつうのタップとして腰を選ぶ
       if (jd.body && !jd.moved && !jd.dot && e && e.type === 'pointerup') this._jdTapped = false;
@@ -3317,6 +3342,19 @@ export class Viewer {
     };
     el.addEventListener('pointerup', end, { capture: true });
     el.addEventListener('pointercancel', end, { capture: true });
+  }
+
+  /** 画面の点で、人形の面までの距離（当たらなければ null） */
+  _dollDistance(clientX, clientY) {
+    const targets = this._visibleTargets();
+    if (!targets.length) return null;
+    const rect = this.canvas.getBoundingClientRect();
+    const ndc = new THREE.Vector2(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1);
+    const ray = new THREE.Raycaster();
+    ray.setFromCamera(ndc, this.camera);
+    let hits = [];
+    try { hits = ray.intersectObjects(targets, false); } catch (err) { hits = []; }
+    return hits.length ? hits[0].distance : null;
   }
 
   /** 画面の点にある関節（なければ null） */
@@ -3524,6 +3562,8 @@ export class Viewer {
   }
 
   select(jointKey) {
+    // 関節を選ぶ・何もない所を押したら、小物の選択は外す
+    if (this.props && !this.props._selecting && this.props.selected) this.props.select(null);
     this.selected = jointKey;
     this.marker.visible = !!(jointKey && this._boneForJoint(jointKey));
     this.onSelect(jointKey);
@@ -3610,6 +3650,50 @@ export class Viewer {
    * （人形は 2 枚で同じ色、背景は黒と白で違う、半透明の影はその間 → 透け具合 = 1 −（白 − 黒））
    * @returns {Promise<Blob|null>}
    */
+  /** いまの画面を小さな絵にする（クロッキーの記録用）。w: 幅（px）。印・輪は入れない */
+  captureThumb(w = 360) {
+    const keep = { marker: this.marker.visible, rings: this.rings.group.visible, prings: this.props.ringGroup.visible, arrow: this.lightArrow ? this.lightArrow.visible : false };
+    this.marker.visible = false; this.rings.group.visible = false; this.props.ringGroup.visible = false;
+    if (this.lightArrow) this.lightArrow.visible = false;
+    const src = this.renderer.domElement;
+    // 人形のまわり（骨の点を画面に写した範囲に余白を足す）を、縦長（3:4）で切り出す
+    const SW = src.width, SH = src.height;
+    let x0 = 0, y0 = 0, W = SW, H = SH;
+    const slot = this.primarySlot;
+    if (slot && slot.skeleton) {
+      slot.pivot.updateWorldMatrix(true, true);
+      this.camera.updateMatrixWorld();
+      let a = Infinity, b = Infinity, c2 = -Infinity, d = -Infinity;
+      const p = new THREE.Vector3();
+      for (const bn of slot.skeleton.bones) {
+        bn.getWorldPosition(p).project(this.camera);
+        const x = (p.x + 1) / 2 * SW, y = (1 - p.y) / 2 * SH;
+        a = Math.min(a, x); c2 = Math.max(c2, x); b = Math.min(b, y); d = Math.max(d, y);
+      }
+      if (isFinite(a)) {
+        const cx = (a + c2) / 2, cy = (b + d) / 2;
+        let h = (d - b) * 1.3 + SH * 0.04, ww = (c2 - a) * 1.3 + SH * 0.04;
+        if (ww > h * 0.75) h = ww / 0.75; else ww = h * 0.75;
+        h = Math.min(h, SH); ww = Math.min(ww, SW, h * 0.75 + 1); h = ww / 0.75;
+        W = Math.round(ww); H = Math.round(Math.min(h, SH));
+        x0 = Math.round(Math.max(0, Math.min(SW - W, cx - W / 2)));
+        y0 = Math.round(Math.max(0, Math.min(SH - H, cy - H / 2)));
+      }
+    }
+    const c = document.createElement('canvas');
+    c.width = w; c.height = Math.round(w * 4 / 3);
+    try {
+      this.renderer.render(this.scene, this.camera);
+      const g = c.getContext('2d');
+      g.fillStyle = '#15181d'; g.fillRect(0, 0, c.width, c.height);
+      const k = Math.min(c.width / W, c.height / H), dw = W * k, dh = H * k;
+      g.drawImage(src, x0, y0, W, H, (c.width - dw) / 2, (c.height - dh) / 2, dw, dh);
+    } catch (e) { /* 続行 */ }
+    this.marker.visible = keep.marker; this.rings.group.visible = keep.rings; this.props.ringGroup.visible = keep.prings;
+    if (this.lightArrow) this.lightArrow.visible = keep.arrow;
+    return c;
+  }
+
   snapshotPNG(overlay = null, opts = {}) {
     const tr = !!opts.transparent;
     const keep = {

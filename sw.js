@@ -1,5 +1,5 @@
 // sw.js — オフライン動作用のキャッシュ
-const CACHE = 'posit-v66';
+const CACHE = 'posit-v67';
 
 const SHELL = [
   './',
@@ -20,6 +20,7 @@ const SHELL = [
   './lightBall.js',
   './limbPull.js',
   './contactFix.js',
+  './props.js',
   './blockModel.js',
   './poseThumbs.js',
   './jointDots.js',

@@ -32,12 +32,13 @@ export class CroquisSession {
   /** 候補のうち、履歴と今回で未使用のものから選ぶ。尽きたら今回分だけ除外して選び直す */
   _pick() {
     // 決まった順番（前回と同じ出題）
-    if (this.sequence) return POSE_PRESETS.find(p => p.id === this.sequence[this.index]) || null;
-    let pool = POSE_PRESETS;
+    const all = this.extra && this.extra.length ? [...POSE_PRESETS, ...this.extra] : POSE_PRESETS;
+    if (this.sequence) return all.find(p => p.id === this.sequence[this.index]) || null;
+    let pool = all;
     if (this.categories && this.categories.size) {
       pool = pool.filter(p => this.categories.has(p.category));
     }
-    if (!pool.length) pool = POSE_PRESETS;
+    if (!pool.length) pool = all;
 
     const recent = this.history ? this.history.recentIds() : new Set();
     let candidates = pool.filter(p => !this.used.has(p.id) && !recent.has(p.id));
@@ -51,6 +52,7 @@ export class CroquisSession {
     this.seconds = config.seconds || this.seconds;
     this.count = config.count === undefined ? this.count : config.count;
     this.categories = config.categories || null;
+    this.extra = config.extra || null;   // マイポーズ（分類は 'mine'）
     this.sequence = config.sequence && config.sequence.length ? config.sequence.slice() : null;
     if (this.sequence) this.count = this.sequence.length;
     this.index = 0;

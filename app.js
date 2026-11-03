@@ -4,12 +4,13 @@ import { JOINTS, JOINT_BY_KEY, JOINT_GROUPS, jointLabel } from './bones.js';
 import { POSE_CATEGORIES, POSE_PRESETS, POSE_HANDS, HAND_SHAPES, FACE_PRESETS, toSpec } from './poses.js';
 import { PoseHistory, relativeTime, HISTORY_LIMIT } from './history.js';
 import { CroquisSession, CROQUIS_SECONDS, CROQUIS_COUNTS } from './croquis.js';
+import { PROP_TYPES } from './props.js';
 import { LightBall } from './lightBall.js';
-import { poseThumbSVG } from './poseThumbs.js';
+import { poseThumbSVG, thumbFromViewer } from './poseThumbs.js';
 import { REGIONS } from './anatomy.js';
 import * as THREE from 'three';
 
-export const BUILD = '2026-11-03a';
+export const BUILD = '2026-11-03b';
 
 const SAMPLE_URL = 'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r169/examples/models/gltf/Xbot.glb';
 const SETTINGS_KEY = 'posit.settings.v1';
@@ -499,8 +500,95 @@ function toggleFav(id) {
 }
 // 分類の順に並べる（「すべて」で同じ分類の見出しが二度出ないように）。★ はお気に入りだけ
 const popList = () => (popCat === 'fav'
-  ? POSE_PRESETS.filter(p => favs.has(p.id))
+  ? [...POSE_PRESETS, ...myPoses].filter(p => favs.has(p.id))
+  : popCat === 'mine' ? myPoses.slice()
   : POSE_CATEGORIES.flatMap(c => POSE_PRESETS.filter(x => x.category === c.key && (!popCat || x.category === popCat))));
+
+// ---- マイポーズ（自分で作ったポーズに名前を付けて残す。この端末に残し、ファイル・URL で別の端末へ移せる） ----
+const MY_KEY = 'posit.myPoses';
+let myPoses = [];
+function cleanMyPose(o) {
+  if (!o || typeof o.spec !== 'string') return null;
+  const hands = o.hands && typeof o.hands === 'object' ? { L: String(o.hands.L || ''), R: String(o.hands.R || '') } : { L: '', R: '' };
+  return { id: typeof o.id === 'string' && /^my/.test(o.id) ? o.id : 'my' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+    name: String(o.name || 'マイポーズ').slice(0, 40), spec: o.spec, hands, thumb: typeof o.thumb === 'string' ? o.thumb : '', category: 'mine', created: o.created || Date.now() };
+}
+try { myPoses = (JSON.parse(localStorage.getItem(MY_KEY) || '[]') || []).map(cleanMyPose).filter(Boolean); } catch (e) { myPoses = []; }
+function saveMyPoses() {
+  setTimeout(() => { if (typeof buildSaved === 'function') buildSaved(); }, 0);
+  try { localStorage.setItem(MY_KEY, JSON.stringify(myPoses)); return true; } catch (e) { showToast('この端末に保存できませんでした（空き容量・プライベートブラウズを確かめてください）'); return false; }
+}
+function addMyPose(name) {
+  const p = cleanMyPose({ name: name || `マイポーズ ${myPoses.length + 1}`, spec: toSpec(viewer.allAngles()), hands: { ...viewer.handShape }, thumb: thumbFromViewer(viewer, THREE) });
+  myPoses.unshift(p);
+  saveMyPoses();
+  return p;
+}
+/** 取り込む（同じ名前・同じ形は二重に入れない） */
+function importMyPoses(list) {
+  let n = 0;
+  for (const o of list) {
+    const p = cleanMyPose({ ...o, id: undefined });
+    if (!p || myPoses.some(q => q.spec === p.spec && q.name === p.name)) continue;
+    myPoses.unshift(p); n++;
+  }
+  if (n) saveMyPoses();
+  return n;
+}
+const b64e = str => btoa(unescape(encodeURIComponent(str))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+const b64d = str => decodeURIComponent(escape(atob(str.replace(/-/g, '+').replace(/_/g, '/'))));
+function poseURL(p) {
+  const data = b64e(JSON.stringify({ n: p.name, s: p.spec, h: p.hands, t: p.thumb }));
+  return location.origin + location.pathname + '#pose=' + data;
+}
+async function shareMyPose(p) {
+  const url = poseURL(p);
+  try {
+    if (navigator.share) { await navigator.share({ title: 'Posit: ' + p.name, url }); return; }
+  } catch (e) { if (e && e.name === 'AbortError') return; }
+  try { await navigator.clipboard.writeText(url); showToast('ポーズの URL をコピーしました。別の端末で開くと、マイポーズに入ります'); }
+  catch (e) { window.__positLastURL = url; showToast('URL をコピーできませんでした'); }
+}
+async function exportMyPoses() {
+  if (!myPoses.length) { showToast('マイポーズがまだありません'); return; }
+  const json = JSON.stringify({ app: 'Posit', kind: 'myPoses', version: 1, poses: myPoses.map(({ name, spec, hands, thumb, created }) => ({ name, spec, hands, thumb, created })) }, null, 1);
+  const d = new Date(), pad = x => String(x).padStart(2, '0');
+  const fname = `posit-poses-${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}.json`;
+  const blob = new Blob([json], { type: 'application/json' });
+  try {
+    const file = new File([blob], fname, { type: 'application/json' });
+    if (navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file], title: 'Posit マイポーズ' }); return; }
+  } catch (e) { if (e && e.name === 'AbortError') return; }
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = fname;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+}
+function readPoseFile(file) {
+  const r = new FileReader();
+  r.onload = () => {
+    try {
+      const o = JSON.parse(String(r.result));
+      const list = Array.isArray(o) ? o : Array.isArray(o.poses) ? o.poses : [];
+      const n = importMyPoses(list);
+      showToast(n ? `${n} 個のポーズをマイポーズに入れました` : '新しいポーズはありませんでした');
+      popCat = 'mine'; if (!$('posePop').hidden) buildPosePop();
+    } catch (e) { showToast('ファイルを読めませんでした（Posit で書き出した .json を選んでください）'); }
+  };
+  r.readAsText(file);
+}
+// URL の #pose=… で開いたら、そのポーズをマイポーズに入れて当てる
+function takePoseFromURL() {
+  const m = location.hash.match(/^#pose=([A-Za-z0-9_-]+)/);
+  if (!m) return;
+  try {
+    const o = JSON.parse(b64d(m[1]));
+    const n = importMyPoses([{ name: o.n, spec: o.s, hands: o.h, thumb: o.t }]);
+    const p = myPoses.find(q => q.spec === o.s && q.name === String(o.n || 'マイポーズ').slice(0, 40));
+    if (p) { applyPose(p); showToast(`「${p.name}」を${n ? 'マイポーズに入れました' : '開きました（もうマイポーズにあります）'}`); }
+  } catch (e) { showToast('URL のポーズを読めませんでした'); }
+  try { window.history.replaceState(null, '', location.pathname + location.search); } catch (e) { /* 続行 */ }
+}
 function markPosePop(scroll) {
   const grid = $('posePopGrid');
   for (const b of grid.querySelectorAll('.ppPick')) {
@@ -516,7 +604,7 @@ function poseRow(p, onPick, cls = 'ppRow', pickCls = 'ppPick') {
   const b = document.createElement('button');
   b.className = pickCls;
   b.dataset.id = p.id;
-  b.innerHTML = poseThumbSVG(p.id) + '<span></span>';
+  b.innerHTML = poseThumbSVG(p.thumb || p.id) + '<span></span>';
   b.querySelector('span').textContent = p.name;
   b.addEventListener('click', onPick);
   const st = document.createElement('button');
@@ -532,12 +620,13 @@ function poseRow(p, onPick, cls = 'ppRow', pickCls = 'ppPick') {
   return row;
 }
 function buildPosePop() {
-  buildChips('posePopCats', [{ key: 'fav', label: '★' }, { key: '', label: 'すべて' }, ...POSE_CATEGORIES.map(c => ({ key: c.key, label: c.name }))],
+  buildChips('posePopCats', [{ key: 'fav', label: '★' }, { key: 'mine', label: 'マイ' }, { key: '', label: 'すべて' }, ...POSE_CATEGORIES.map(c => ({ key: c.key, label: c.name }))],
     o => popCat === o.key, o => { popCat = o.key; buildPosePop(); });
   const grid = $('posePopGrid');
   grid.innerHTML = '';
   let lastCat = null;
   const list = popList();
+  if (popCat === 'mine') { buildMinePop(grid, list); markPosePop(true); return; }
   if (popCat === 'fav' && !list.length) {
     const h = document.createElement('div');
     h.className = 'ppCat'; h.textContent = '☆ を押したポーズがここに並びます';
@@ -555,6 +644,54 @@ function buildPosePop() {
   }
   markPosePop(true);
 }
+/** マイ: 名前を付けて保存・一覧（共有・消す）・書き出し・読み込み */
+function buildMinePop(grid, list) {
+  const form = document.createElement('div');
+  form.className = 'mySave';
+  const inp = document.createElement('input');
+  inp.type = 'text'; inp.maxLength = 40; inp.placeholder = `マイポーズ ${myPoses.length + 1}`; inp.setAttribute('aria-label', 'ポーズの名前');
+  const sv = document.createElement('button');
+  sv.className = 'qb accent'; sv.textContent = '保存';
+  const doSave = () => {
+    const p = addMyPose(inp.value.trim());
+    popCurrent = p.id;
+    showToast(`「${p.name}」を保存しました`);
+    buildPosePop();
+  };
+  sv.addEventListener('click', doSave);
+  inp.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); doSave(); } });
+  form.append(inp, sv);
+  grid.appendChild(form);
+  const hint = document.createElement('div');
+  hint.className = 'ppCat';
+  hint.textContent = list.length ? 'いまの形を名前を付けて保存します（手の形も）' : 'いまの人形の形を、名前を付けて保存できます';
+  grid.appendChild(hint);
+  for (const p of list) {
+    const row = poseRow(p, () => { popCurrent = p.id; applyPose(p); markPosePop(false); });
+    const sh = document.createElement('button');
+    sh.className = 'ppStar myShare'; sh.textContent = '⇪'; sh.setAttribute('aria-label', 'URL で送る');
+    sh.addEventListener('click', e => { e.stopPropagation(); shareMyPose(p); });
+    const del = document.createElement('button');
+    del.className = 'ppStar myDel'; del.textContent = '×'; del.setAttribute('aria-label', '消す');
+    del.addEventListener('click', e => {
+      e.stopPropagation();
+      if (del.dataset.armed !== '1') { del.dataset.armed = '1'; del.textContent = '消す'; del.classList.add('armed'); setTimeout(() => { if (del.isConnected) { del.dataset.armed = ''; del.textContent = '×'; del.classList.remove('armed'); } }, 2500); return; }
+      myPoses = myPoses.filter(q => q.id !== p.id); saveMyPoses(); favs.delete(p.id);
+      showToast(`「${p.name}」を消しました`); buildPosePop();
+    });
+    row.append(sh, del);
+    grid.appendChild(row);
+  }
+  const io = document.createElement('div');
+  io.className = 'myIO';
+  const ex = document.createElement('button'); ex.className = 'qb'; ex.textContent = '書き出し'; ex.addEventListener('click', exportMyPoses);
+  const im = document.createElement('button'); im.className = 'qb'; im.textContent = '読み込み'; im.addEventListener('click', () => $('myPoseFile').click());
+  io.append(ex, im);
+  grid.appendChild(io);
+}
+window.addEventListener('hashchange', () => { if (viewer.primarySlot && viewer.primarySlot.skeleton) takePoseFromURL(); });
+$('myPoseFile').addEventListener('change', e => { const f = e.target.files && e.target.files[0]; if (f) readPoseFile(f); e.target.value = ''; });
+
 function setPosePanel(on) {
   $('posePop').hidden = !on;
   document.body.classList.toggle('posePanel', on);
@@ -699,6 +836,60 @@ $('actDuo').addEventListener('click', () => {
   else if (viewer.addSecond()) { snapshot(); showToast('2体目を出しました（いま動かすのは右の人形）'); }
   syncDuo(); syncSliders();
 });
+// ---- 小物 --------------------------------------------------------------------
+//   「小物」で種類を選んで置く。小物を押したまま動かし、輪で回す。選ぶと上の帯で大きさ・手で持つ・消すを操作する
+const props = viewer.props;
+props.onHandShape = (sd, id) => {
+  const sh = HAND_SHAPES.find(x => x.id === id);
+  viewer.applyHandShape(sd, sh ? sh.spec : '');
+};
+for (const t of PROP_TYPES) {
+  const b = document.createElement('button');
+  b.className = 'ghost';
+  b.textContent = t.name;
+  b.addEventListener('click', () => {
+    $('propPop').hidden = true;
+    const it = props.add(t.key);
+    if (it) showToast(`${t.name}を置きました（押したまま動かす・輪で回す）`);
+  });
+  $('propPopGrid').appendChild(b);
+}
+function syncPropBar() {
+  const it = props.selected;
+  $('propBar').hidden = !it;
+  $('actProp').classList.toggle('propOn', props.items.length > 0);
+  $('propPopClear').hidden = !props.items.length;
+  if (!it) return;
+  $('selBar').hidden = true;
+  $('propBarName').textContent = it.name;
+  $('propBarSize').textContent = props.sizeLabel(it);
+  for (const sd of ['R', 'L']) {
+    const on = it.grips.some(g => g.side === sd);
+    const b = $('propBarGrip' + sd);
+    b.classList.toggle('on', on);
+    b.textContent = (sd === 'R' ? '右手' : '左手') + (on ? 'を離す' : (it.type === 'stick' ? 'で持つ' : it.type === 'ball' ? 'で持つ' : 'を置く'));
+  }
+}
+props.onSelect = () => syncPropBar();
+props.onChange = () => syncPropBar();
+$('actProp').addEventListener('click', e => { e.stopPropagation(); $('propPop').hidden = !$('propPop').hidden; });
+document.addEventListener('pointerdown', e => {
+  if (!$('propPop').hidden && !e.target.closest('#propPop, #actProp')) $('propPop').hidden = true;
+}, { capture: true });
+$('propPopClear').addEventListener('click', () => { props.clear(); $('propPop').hidden = true; showToast('小物をすべて消しました'); });
+$('propBarSmaller').addEventListener('click', () => props.resize(-1));
+$('propBarBigger').addEventListener('click', () => props.resize(1));
+for (const sd of ['R', 'L']) $('propBarGrip' + sd).addEventListener('click', () => {
+  const it = props.selected; if (!it) return;
+  if (it.grips.some(g => g.side === sd)) { props.release(it, sd); showToast((sd === 'R' ? '右手' : '左手') + 'を離しました'); return; }
+  snapshot();
+  const r = props.grip(sd, it);
+  if (r === 'far') { showToast('手が届きません。小物を手の近くへ動かしてから押してください'); return; }
+  if (r) { syncSliders(); showToast((sd === 'R' ? '右手' : '左手') + 'を' + it.name + (it.grounded ? 'に置きました（小物を動かすと手がついてきます）' : 'に付けました（手を動かすと一緒に動きます）')); }
+});
+$('propBarDel').addEventListener('click', () => props.remove());
+$('propBarClose').addEventListener('click', () => props.select(null));
+
 $('actSwap').addEventListener('click', () => { snapshot(); viewer.swapSecond(); syncSliders(); showToast(viewer.secondActive() ? '2体目を動かします' : '1体目を動かします'); });
 syncDuo();
 
@@ -943,13 +1134,17 @@ if (window.ResizeObserver) {
 
 /** ポーズに合う手の形を当てる（グー・握る・平ら…。決めていないポーズは平ら） */
 function applyPoseHands(pose) {
+  // マイポーズは、保存したときの手の形（指の角度）をそのまま
+  if (pose.hands && typeof pose.hands === 'object' && !Array.isArray(pose.hands)) {
+    for (const sd of ['L', 'R']) viewer.applyHandShape(sd, pose.hands[sd] || '');
+    return;
+  }
   const h = POSE_HANDS[pose.id] || ['', ''];
   ['L', 'R'].forEach((sd, i) => {
     const shape = HAND_SHAPES.find(x => x.id === h[i]);
     viewer.applyHandShape(sd, shape ? shape.spec : '');
   });
-  // 体型やモデルによっては手が腿・顔などに入るので、外へ逃がす
-  viewer.resolveContacts();
+  // v67: 体の重なりは直さない（押し出すと形がくずれるため。実際の体も柔らかく沈み込む）。ポーズは作った形のまま出す
 }
 function applyPose(pose) {
   snapshot();
@@ -1209,59 +1404,60 @@ window.addEventListener('resize', () => setTimeout(alignPhotoOverlay, 350));
 
 // ---- 保存したポーズ・画像の書き出し ------------------------------------------
 
+// v67: 前の「保存したポーズ」は、マイポーズ（左のポーズ一覧の「マイ」と同じもの）にまとめた。前に保存した分は一度だけ移す
 const SAVED_KEY = 'posit.saved.v1';
-function loadSaved() {
-  try { const a = JSON.parse(localStorage.getItem(SAVED_KEY) || '[]'); return Array.isArray(a) ? a : []; }
-  catch (e) { return []; }
-}
-let savedPoses = loadSaved();
-const storeSaved = () => { try { localStorage.setItem(SAVED_KEY, JSON.stringify(savedPoses)); } catch (e) { showToast('保存できませんでした（端末の空きを確認してください）'); } };
+try {
+  const old = JSON.parse(localStorage.getItem(SAVED_KEY) || '[]');
+  if (Array.isArray(old) && old.length && !localStorage.getItem('posit.savedMoved')) {
+    importMyPoses(old.slice().reverse().map(o => ({ name: o.name, spec: o.spec, hands: o.hands, created: o.at })));
+    localStorage.setItem('posit.savedMoved', '1');
+  }
+} catch (e) { /* 続行 */ }
 
 function buildSaved() {
   const wrap = $('savedList');
   wrap.innerHTML = '';
-  if (!savedPoses.length) {
+  if (!myPoses.length) {
     const p = document.createElement('p');
     p.className = 'hint';
-    p.textContent = 'まだありません。「いまのポーズを保存」で名前を付けて残せます。';
+    p.textContent = 'まだありません。「いまのポーズを保存」で名前を付けて残せます（左のポーズ一覧の「マイ」にも出ます）。';
     wrap.appendChild(p);
     return;
   }
-  savedPoses.forEach((it, i) => {
+  for (const it of myPoses) {
     const row = document.createElement('div');
     row.className = 'saved';
     const nm = document.createElement('button');
-    nm.className = 'nm'; nm.textContent = it.name;
-    nm.addEventListener('click', () => {
-      snapshot();
-      viewer.applyPose(it.spec);
-      if (it.hands) for (const sd of ['L', 'R']) if (it.hands[sd] != null) viewer.applyHandShape(sd, it.hands[sd]);
-      history.add({ name: it.name, spec: it.spec });
-      syncSliders();
-      showToast(it.name);
-    });
+    nm.className = 'nm'; nm.innerHTML = poseThumbSVG(it.thumb) + '<span></span>';
+    nm.querySelector('span').textContent = it.name;
+    nm.addEventListener('click', () => { applyPose(it); showToast(it.name); });
     const tm = document.createElement('span');
-    tm.className = 'tm'; tm.textContent = relativeTime(it.at);
+    tm.className = 'tm'; tm.textContent = relativeTime(it.created);
+    const sh = document.createElement('button');
+    sh.className = 'ghost del'; sh.textContent = '送る';
+    sh.addEventListener('click', () => shareMyPose(it));
     const del = document.createElement('button');
     del.className = 'ghost del'; del.textContent = '削除';
     del.addEventListener('click', () => {
       if (!window.confirm(`「${it.name}」を削除しますか？`)) return;
-      savedPoses.splice(i, 1); storeSaved(); buildSaved();
+      myPoses = myPoses.filter(q => q.id !== it.id); saveMyPoses(); buildSaved();
     });
-    row.append(nm, tm, del);
+    row.append(nm, tm, sh, del);
     wrap.appendChild(row);
-  });
+  }
 }
 
 $('btnSavePose').addEventListener('click', () => {
-  const def = `ポーズ ${savedPoses.length + 1}`;
+  const def = `マイポーズ ${myPoses.length + 1}`;
   const name = window.prompt('保存する名前', def);
   if (name === null) return;
-  savedPoses.unshift({ name: name.trim() || def, spec: toSpec(viewer.allAngles()), hands: { ...viewer.handShape }, at: Date.now() });
-  storeSaved();
+  addMyPose(name.trim() || def);
   buildSaved();
-  showToast('保存しました');
+  if (!$('posePop').hidden && popCat === 'mine') buildPosePop();
+  showToast('保存しました（ポーズ一覧の「マイ」にも出ます）');
 });
+$('btnExportPoses').addEventListener('click', exportMyPoses);
+$('btnImportPoses').addEventListener('click', () => $('myPoseFile').click());
 
 /** いまの画面を PNG にして、共有シート（写真に保存など）かダウンロードで渡す */
 /** 画像を共有シートで渡す（できなければダウンロード） */
@@ -1479,6 +1675,10 @@ const croquis = new CroquisSession({
     history.add({ poseId: pose.id, name: pose.name + (cqMeta.mirror ? '（反転）' : ''), spec: cqMeta.mirror ? toSpec(viewer.allAngles()) : pose.spec });
     $('cqName').textContent = (hs ? hs.name : pose.name) + (cqMeta.mirror ? '（反転）' : '');
     $('cqIndex').textContent = croquis.count > 0 ? `${index} / ${croquis.count}` : `${index} 枚目`;
+    // 記録の画像用に、出したときの見え方を小さく残す（画面の向き・反転も込み）
+    const k = cqLog.length - 1, nm = $('cqName').textContent;
+    cqShots[k] = { name: nm, canvas: null };
+    setTimeout(() => { if (cqShots[k] && croquis.running) cqShots[k].canvas = viewer.captureThumb(360); }, 120);
   },
   onTick: (remain, total) => {
     const sec = Math.max(0, Math.ceil(remain / 1000));
@@ -1494,6 +1694,8 @@ const croquis = new CroquisSession({
     stopCroquis();
     $('cqDoneText').textContent = `${done} 枚おつかれさまでした`;
     lastCqLog = cqLog.slice(0, done);
+    lastCqShots = cqShots.slice(0, done);
+    lastCqInfo = { at: new Date(), seconds: settings.seconds, done };
     buildCqLog();
     $('cqDone').hidden = false;
   },
@@ -1501,25 +1703,66 @@ const croquis = new CroquisSession({
 
 let wakeLock = null;
 // クロッキーで出たポーズの記録（終わったあとに一覧で見る・同じ順番でもう一度）
-let cqLog = [], lastCqLog = [], cqReplay = null;
+let cqLog = [], lastCqLog = [], cqReplay = null, cqShots = [], lastCqShots = [], lastCqInfo = null;
 function buildCqLog() {
   const el = $('cqLog');
   el.innerHTML = '';
   lastCqLog.forEach((id, i) => {
-    const p = POSE_PRESETS.find(x => x.id === id);
+    const p = POSE_PRESETS.find(x => x.id === id) || myPoses.find(x => x.id === id);
     if (!p) return;
     const row = poseRow(p, () => { $('cqDone').hidden = true; applyPose(p); }, 'clRow', 'clPick ghost');
     row.querySelector('span').textContent = `${i + 1}. ${p.name}`;
     el.appendChild(row);
   });
   $('cqAgain').hidden = !lastCqLog.length;
+  $('cqSaveImg').hidden = !lastCqShots.some(x => x && x.canvas);
 }
+/** 描いたポーズを並べた 1 枚の画像（日付・秒数・枚数の見出し付き） */
+function cqLogImage() {
+  const shots = lastCqShots.filter(x => x && x.canvas);
+  if (!shots.length) return null;
+  const n = shots.length, cols = n <= 4 ? n : n <= 9 ? 3 : n <= 16 ? 4 : 5;
+  const rows = Math.ceil(n / cols);
+  const cw = 300, ch = Math.round(cw * shots[0].canvas.height / shots[0].canvas.width), cap = 34, pad = 14, head = 64;
+  const c = document.createElement('canvas');
+  c.width = pad + cols * (cw + pad);
+  c.height = head + rows * (ch + cap + pad) + pad;
+  const g = c.getContext('2d');
+  g.fillStyle = '#15181d'; g.fillRect(0, 0, c.width, c.height);
+  const d = lastCqInfo ? lastCqInfo.at : new Date(), pad2 = x => String(x).padStart(2, '0');
+  g.fillStyle = '#e8eaee'; g.font = 'bold 24px -apple-system, "Hiragino Sans", sans-serif'; g.textBaseline = 'middle';
+  g.fillText(`Posit クロッキー  ${d.getFullYear()}/${pad2(d.getMonth() + 1)}/${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`, pad, head / 2);
+  g.fillStyle = '#9aa3b2'; g.font = '18px -apple-system, "Hiragino Sans", sans-serif'; g.textAlign = 'right';
+  if (lastCqInfo) g.fillText(`${lastCqInfo.seconds} 秒 × ${n} 枚`, c.width - pad, head / 2);
+  g.textAlign = 'left';
+  shots.forEach((s, i) => {
+    const x = pad + (i % cols) * (cw + pad), y = head + Math.floor(i / cols) * (ch + cap + pad);
+    g.drawImage(s.canvas, x, y, cw, ch);
+    g.strokeStyle = 'rgba(255,255,255,0.12)'; g.lineWidth = 1; g.strokeRect(x + 0.5, y + 0.5, cw - 1, ch - 1);
+    g.fillStyle = '#e8eaee'; g.font = '17px -apple-system, "Hiragino Sans", sans-serif';
+    let t = `${i + 1}. ${s.name}`;
+    while (g.measureText(t).width > cw - 4 && t.length > 4) t = t.slice(0, -2) + '…';
+    g.fillText(t, x + 2, y + ch + cap / 2);
+  });
+  return c;
+}
+$('cqSaveImg').addEventListener('click', () => {
+  const c = cqLogImage();
+  if (!c) { showToast('画像を作れませんでした'); return; }
+  c.toBlob(b => {
+    if (!b) { showToast('画像を作れませんでした'); return; }
+    const d = lastCqInfo ? lastCqInfo.at : new Date(), p2 = x => String(x).padStart(2, '0');
+    shareImage(b, `posit-croquis-${d.getFullYear()}${p2(d.getMonth() + 1)}${p2(d.getDate())}-${p2(d.getHours())}${p2(d.getMinutes())}.png`);
+  }, 'image/png');
+});
 $('cqAgain').addEventListener('click', () => { $('cqDone').hidden = true; cqReplay = lastCqLog.slice(); startCroquis(); });
 
 let beforeCroquis = null;
 
 async function startCroquis() {
   if (settings.cqBeep) unlockAudio();
+  // クロッキーの間は小物を隠す（ポーズが毎回変わるので、手でつないだ小物が飛び回らないように）
+  viewer.props.setHidden(true);
   document.body.classList.add('croquis');
   updateInsets();
   $('croquis').hidden = false;
@@ -1546,12 +1789,13 @@ async function startCroquis() {
   } catch (e) { /* 画面が消えても進行は続く */ }
   $('cqPause').textContent = '一時停止';
   // 始める前に 5 秒数える（紙と鉛筆を構える間）。「次へ」ですぐ始め、「一時停止」で止め、「終了」でやめる
-  cqLog = [];
+  cqLog = []; cqShots = [];
   const sequence = cqReplay; cqReplay = null;
   cqCountdown(5, () => croquis.start({
     seconds: settings.seconds,
     count: settings.count,
     categories: settings.cqCats.length ? new Set(settings.cqCats) : null,
+    extra: myPoses,
     sequence,
   }));
 }
@@ -1593,6 +1837,7 @@ function cqBeginNow() {
 
 function stopCroquis() {
   cqCancelCount();
+  viewer.props.setHidden(false);
   document.body.classList.remove('croquis');
   updateInsets();
   $('croquis').hidden = true;
@@ -1693,7 +1938,7 @@ function buildCroquisChips() {
     o => { settings.cqAngle = o.value; saveSettings(); buildCroquisChips(); });
 
   buildChips('cqCats',
-    POSE_CATEGORIES.map(c => ({ value: c.key, label: c.name })),
+    [...POSE_CATEGORIES.map(c => ({ value: c.key, label: c.name })), ...(myPoses.length ? [{ value: 'mine', label: 'マイポーズ' }] : [])],
     o => settings.cqCats.includes(o.value),
     o => {
       const i = settings.cqCats.indexOf(o.value);
@@ -1830,6 +2075,7 @@ async function loadSample() {
     mark('サンプル取得完了');
     viewer.resetToDefault();        // はじめのポーズ（両手を広げる）
     syncSliders();
+    takePoseFromURL();              // 送られたポーズの URL で開いたとき
     // 両手を広げると横に広いので、パネルの高さが決まってから、手の先まで画面に収める
     setTimeout(() => { updateInsets(); viewer.viewFromAngle(0, 4); }, 350);
   } catch (err) {

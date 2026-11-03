@@ -172,9 +172,28 @@
   <button class="qb" id="actBody" title="腰を選んで、体全体を動かす・回す">体全体</button>
   <button class="qb" id="actDuo" title="人形をもう1体出す">＋2体目</button>
   <button class="qb" id="actSwap" hidden title="もう1体の人形を動かす">入れ替え</button>
+  <button class="qb" id="actProp" title="椅子・台・棒などの小物を置く">小物</button>
   <div class="spacer"></div>
   <button class="qb" id="actKeep" title="いまのポーズをキープ">キープ</button>
   <button class="qb icon" id="actKeepClear" hidden aria-label="キープを消す"><svg viewBox="0 0 24 24"><path d="M7 7l10 10M17 7L7 17"/></svg></button>
+</div>
+<!-- 小物: 置く種類（下の「小物」から）と、選んだ小物の操作（画面の上） -->
+<input type="file" id="myPoseFile" accept=".json,application/json" hidden>
+<div id="propPop" hidden>
+  <div class="qpTitle">小物を置く</div>
+  <div class="qpGrid" id="propPopGrid"></div>
+  <button id="propPopClear" class="ghost small" hidden>小物をすべて消す</button>
+  <p class="hint tiny">小物を押したまま動かします。選ぶと出る輪で回します。座っているときの椅子・スツールは、お尻の下に置きます</p>
+</div>
+<div id="propBar" hidden>
+  <span id="propBarName"></span>
+  <button id="propBarSmaller" class="qb" aria-label="小さく・低く">−</button>
+  <span id="propBarSize"></span>
+  <button id="propBarBigger" class="qb" aria-label="大きく・高く">＋</button>
+  <button id="propBarGripR" class="qb">右手で持つ</button>
+  <button id="propBarGripL" class="qb">左手で持つ</button>
+  <button id="propBarDel" class="qb">消す</button>
+  <button id="propBarClose" class="qb icon" aria-label="選択を外す"><svg viewBox="0 0 24 24"><path d="M7 7l10 10M17 7L7 17"/></svg></button>
 </div>
 <div id="viewBar">
   <button class="qb" data-az="0" data-el="4">正面</button>
@@ -277,7 +296,11 @@
         <label class="row toggle"><span class="lbl">透過のとき人形のまわりで切り抜く</span>
           <input type="checkbox" id="shotCrop" checked></label>
         <div id="savedList"></div>
-        <p class="hint tiny">保存したポーズはこの端末の中に残ります（名前・関節の角度・手の形）。画像は補助線も入れて書き出します。
+        <div class="twoBtn">
+          <button id="btnExportPoses" class="ghost">マイポーズを書き出す</button>
+          <button id="btnImportPoses" class="ghost">ファイルから読み込む</button>
+        </div>
+        <p class="hint tiny">保存したポーズ（マイポーズ）はこの端末の中に残ります（名前・関節の角度・手の形）。「書き出す」でファイルに、「送る」で URL にして、別の端末へ移せます。画像は補助線も入れて書き出します。
           透過の画像は、背景と床の線を抜いた PNG です（お絵描きアプリに読み込んで、下絵や参考に重ねられます）。</p>
       </section>
     </div>
@@ -595,6 +618,7 @@
     <strong id="cqDoneText"></strong>
     <p class="hint tiny">描いたポーズ（タップでそのポーズに。☆でお気に入り）</p>
     <div id="cqLog"></div>
+    <button id="cqSaveImg" class="ghost wide" hidden>記録を画像で保存</button>
     <button id="cqAgain" class="ghost wide">同じ順番でもう一度</button>
     <button id="cqDoneClose" class="primary wide">閉じる</button>
   </div>

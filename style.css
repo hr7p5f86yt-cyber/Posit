@@ -787,4 +787,46 @@ body.posePanel #viewBar .qb { flex: 0 0 auto; }
 #actBar .qb.on { background: #ffb547; color: #2a1a00; border-color: #ffb547; }
 body.croquis #lockBar { display: none; }
 
+/* 小物（v67） */
+#propPop { position: fixed; z-index: 36; left: 8px; bottom: calc(var(--view-b, 0px) + 100px); width: min(340px, calc(100vw - 16px));
+  padding: 10px; border-radius: 16px; background: rgba(24, 28, 35, 0.94); border: 1px solid var(--line);
+  -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); }
+#propPop[hidden] { display: none; }
+#propPop .qpTitle { font-size: 12px; color: var(--muted); margin: 0 2px 8px; }
+#propPop .qpGrid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+#propPop .qpGrid button { padding: 9px 4px; font-size: 13px; border-radius: 10px; }
+#propPop #propPopClear { margin-top: 8px; width: 100%; }
+#propPop #propPopClear[hidden] { display: none; }
+#propPop .hint { margin: 8px 2px 0; }
+#propBar { position: fixed; z-index: 34; left: 8px; top: calc(var(--safe-t) + 62px);
+  display: flex; gap: 4px; align-items: center; padding: 4px; border-radius: 999px;
+  background: rgba(24, 28, 35, 0.86); border: 1px solid rgba(143, 212, 74, 0.55);
+  -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); max-width: calc(100vw - 16px);
+  overflow-x: auto; scrollbar-width: none; }
+#propBar::-webkit-scrollbar { display: none; }
+#propBar[hidden] { display: none; }
+#propBar .qb { flex: none; background: transparent; border-color: transparent; height: 32px; padding: 0 8px; }
+#propBar .qb:active { background: var(--fill-hi); }
+#propBar .qb.on { background: #8fd44a; color: #14240a; }
+#propBarName { flex: none; font-size: 13px; font-weight: 700; color: #8fd44a; padding: 0 4px 0 10px; white-space: nowrap; }
+#propBarSize { flex: none; font-size: 12px; color: var(--muted); min-width: 52px; text-align: center; white-space: nowrap; }
+#actBar .qb.propOn { border-color: #8fd44a; color: #8fd44a; }
+body.croquis #propPop, body.croquis #propBar { display: none; }
+body.posePanel #propBar { left: calc(clamp(150px, 34vw, 300px) + 8px); max-width: calc(100vw - clamp(150px, 34vw, 300px) - 16px); }
+@media (max-width: 400px) { #propBar .qb { padding: 0 6px; font-size: 12.5px; } }
+
+/* マイポーズ（v67） */
+#posePopGrid .mySave { display: flex; gap: 6px; flex: 0 0 auto; padding: 2px 0 4px; }
+#posePopGrid .mySave input { flex: 1; min-width: 0; height: 36px; border-radius: 10px; border: 1px solid var(--line);
+  background: var(--fill); color: var(--text); padding: 0 10px; font-size: 14px; }
+#posePopGrid .mySave .qb { flex: none; height: 36px; padding: 0 12px; }
+#posePopGrid .mySave .qb.accent { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+#posePopGrid .ppStar.myShare, #posePopGrid .ppStar.myDel { flex: 0 0 30px; font-size: 15px; }
+#posePopGrid .ppStar.myDel.armed { flex: 0 0 44px; font-size: 12px; color: #ff6b6b; }
+#posePopGrid .myIO { display: flex; gap: 6px; flex: 0 0 auto; padding-top: 6px; }
+#posePopGrid .myIO .qb { flex: 1; height: 36px; }
+
+.saved .nm { display: flex; align-items: center; gap: 8px; }
+.saved .nm span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
 /* ===== style.css ここまで ===== */
