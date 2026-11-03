@@ -9,7 +9,7 @@ import { poseThumbSVG } from './poseThumbs.js';
 import { REGIONS } from './anatomy.js';
 import * as THREE from 'three';
 
-export const BUILD = '2026-11-02a';
+export const BUILD = '2026-11-03a';
 
 const SAMPLE_URL = 'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r169/examples/models/gltf/Xbot.glb';
 const SETTINGS_KEY = 'posit.settings.v1';
@@ -38,7 +38,8 @@ function loadSettings() {
       cqCats: Array.isArray(s.cqCats) ? s.cqCats : [],
       cqModel: s.cqModel || 'skin',
       cqFrame: s.cqFrame || 'full',
-      cqWire: !!s.cqWire,
+      // 面の線・左右のランダム反転ははじめから入れる（v66）。v66 より前に保存した設定も、一度だけ入にそろえる
+      cqWire: s.cqDefV66 ? s.cqWire !== false : true,
       cqAngle: s.cqAngle || 'random',
       cqSide: s.cqSide || 'random',
       cqBody: s.cqBody || 'keep',
@@ -46,7 +47,8 @@ function loadSettings() {
       lightBall: s.lightBall !== false,
       sheetStage: [0, 1, 2].includes(s.sheetStage) ? s.sheetStage : 1,
       cqBeep: s.cqBeep !== false,
-      cqMirror: !!s.cqMirror,
+      cqMirror: s.cqDefV66 ? s.cqMirror !== false : true,
+      cqDefV66: true,
       guideHeads: !!s.guideHeads,
       guideCenter: !!s.guideCenter,
       guideTilt: !!s.guideTilt,
@@ -70,9 +72,9 @@ function loadSettings() {
 }
 
 function defaultSettings() {
-  return { seconds: 30, count: 10, cqCats: [], cqModel: 'skin', cqFrame: 'full', cqWire: false, cqAngle: 'random',
+  return { seconds: 30, count: 10, cqCats: [], cqModel: 'skin', cqFrame: 'full', cqWire: true, cqAngle: 'random',
     cqSide: 'random', cqBody: 'keep', cqHandShape: true, lightBall: true, sheetStage: 1,
-    cqBeep: true, cqMirror: false, guideHeads: false, guideCenter: false, guideTilt: false, musclePal: false, rings: true, wireW: 1, wireA: 0.85, shotShadow: false, shotCrop: true, pull: true, wireMode: 'mesh', wireDensity: 1, dots: false, dotsUser: false };
+    cqBeep: true, cqMirror: true, cqDefV66: true, guideHeads: false, guideCenter: false, guideTilt: false, musclePal: false, rings: true, wireW: 1, wireA: 0.85, shotShadow: false, shotCrop: true, pull: true, wireMode: 'mesh', wireDensity: 1, dots: false, dotsUser: false };
 }
 function saveSettings() {
   try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch (e) { /* 続行 */ }
