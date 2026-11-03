@@ -140,7 +140,7 @@ class Slot {
 
 export class Viewer {
   /** この viewer.js の版（app.js の BUILD と同じでなければ、古いファイルが混ざっている） */
-  static BUILD = '2026-11-03b';
+  static BUILD = '2026-11-03c';
 
   constructor(canvas) {
     this.canvas = canvas;

@@ -829,4 +829,7 @@ body.posePanel #propBar { left: calc(clamp(150px, 34vw, 300px) + 8px); max-width
 .saved .nm { display: flex; align-items: center; gap: 8px; }
 .saved .nm span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
+#propBar .pbSep { flex: none; font-size: 11px; color: var(--muted); padding: 0 2px 0 6px; white-space: nowrap; }
+#propBar .qb[hidden] { display: none; }
+
 /* ===== style.css ここまで ===== */

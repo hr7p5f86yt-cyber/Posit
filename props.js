@@ -122,7 +122,7 @@ export class Props {
   }
 
   // ---- 置く・消す ---------------------------------------------------------
-  add(type) {
+  add(type, opts = {}) {
     const T = TYPE[type];
     if (!T) return null;
     const slot = this.v.primarySlot;
@@ -157,13 +157,13 @@ export class Props {
     this.items.push(it);
     this._build(it);
     group.visible = !this.hidden;
-    this.select(it);
+    if (opts.select !== false) this.select(it);
     this.onChange();
     return it;
   }
 
   /** 座っている人形のお尻の下（座面の高さ・場所）。座っていなければ null */
-  _seatUnderBody() {
+  _seatUnderBody(force = false) {
     const v = this.v, slot = v.primarySlot, cf = v.contactFix;
     if (!slot || !cf) return null;
     const hips = slot.boneMap.hips, tL = slot.boneMap.thighL, tR = slot.boneMap.thighR, kL = slot.boneMap.shinL, kR = slot.boneMap.shinR;
@@ -173,9 +173,9 @@ export class Props {
     // 腿がほぼ水平（座っている）か
     const dL = P(kL).sub(P(tL)), dR = P(kR).sub(P(tR));
     const flat = d => Math.abs(d.y) / d.length() < 0.5;
-    if (!flat(dL) || !flat(dR) || hp.y > 1.0 || hp.y < 0.3) return null;
+    if (!force && (!flat(dL) || !flat(dR) || hp.y > 1.0 || hp.y < 0.3)) return null;
     let c;
-    try { c = cf._prep(slot); slot.pivot.updateWorldMatrix(true, true); cf._read(c); } catch (e) { return null; }
+    try { c = cf._prep(slot); v.scene.updateMatrixWorld(true); cf._read(c); } catch (e) { return null; }
     let minY = Infinity;
     const knee = P(kL).add(P(kR)).multiplyScalar(0.5);
     const fwd = knee.clone().sub(hp); fwd.y = 0; const fl = fwd.length(); if (fl < 1e-4) return null; fwd.divideScalar(fl);
@@ -205,10 +205,120 @@ export class Props {
 
   clear() { for (const it of [...this.items]) this.remove(it); }
 
+  /** 自分で置いた小物を隠す（クロッキーの間）。ポーズに付いた小物（auto）はそのまま */
   setHidden(on) {
     this.hidden = !!on;
-    for (const it of this.items) it.group.visible = !on;
+    for (const it of this.items) it.group.visible = !on || it.auto;
     if (on) this.select(null);
+  }
+
+  // ---- ポーズに付いた小物 ---------------------------------------------------
+  //   def = { type, h, size, carry, grips: ['handR', …], holdAt,
+  //           seat: true（お尻の下）| under: ['footL'] / ['handL','handR']（その手足の下に上の面）, shift: [dx, dz]
+  //           | back: true（背中の後ろの壁）| side: 'handR'（手のひらが当たる壁）| near: 'footR', off: [x, y, z]（その近くに置く） }
+  //   置き場所は、ポーズを当てたあとの体から決める（体型・頭身が変わっても合うように）。mirror: 左右を入れ替えたポーズ
+  _contactOf(key) {
+    const v = this.v, slot = v.primarySlot;
+    if (/^elbow/.test(key)) {
+      // 肘の下の面（台に肘をつく）
+      const p = slot.boneMap['forearm' + key.slice(-1)].getWorldPosition(V()); p.y -= 0.035;
+      return { p, n: V(0, -1, 0), along: V(0, 0, 1) };
+    }
+    if (/^hand/.test(key)) {
+      const sd = key.slice(-1), f = v._handFrame(slot, sd);
+      const fg = slot.fingers && slot.fingers[sd], mid = fg && fg.middle && fg.middle[1];
+      const L = mid ? mid.getWorldPosition(V()).distanceTo(f.origin) : 0.09;
+      return { p: f.origin.clone().addScaledVector(f.along, L * 0.9).addScaledVector(f.palmar, 0.028), n: f.palmar.clone(), along: f.along.clone() };
+    }
+    const fb = slot.boneMap[key], A = fb.getWorldPosition(V());
+    const tb = fb.children.find(c => c.isBone);
+    const fwd = (tb ? tb.getWorldPosition(V()) : A.clone().add(V(0, 0, 0.1))).sub(A); fwd.y = 0; fwd.normalize();
+    const p = A.clone().addScaledVector(fwd, 0.06); p.y -= 0.08;
+    return { p, n: V(0, -1, 0), along: fwd };
+  }
+
+  clearAuto() { for (const it of this.items.filter(x => x.auto)) this.remove(it); }
+
+  applyPoseProps(defs, mirror = false) {
+    this.clearAuto();
+    if (!defs || !defs.length) return;
+    const v = this.v, slot = v.primarySlot;
+    if (!slot || !slot.skeleton) return;
+    // 床合わせのあと、肌の点（スキン）の行列まで新しくする
+    v.applyAll(); v.scene.updateMatrixWorld(true);
+    const sw = k => (mirror ? k.replace(/[LR]$/, m => (m === 'L' ? 'R' : 'L')) : k);
+    const mx = mirror ? -1 : 1;
+    const hp = slot.boneMap.hips.getWorldPosition(V());
+    for (const d of defs) {
+      const it = this.add(d.type, { select: false });
+      if (!it) continue;
+      it.auto = true;
+      if (d.carry) it.grounded = false;
+      if (d.holdAt) it.holdAt = d.holdAt;
+      if (d.size) it.params.size = d.size;
+      if (d.h) it.params.h = d.h;
+      const g = it.group;
+      g.quaternion.setFromAxisAngle(V(0, 1, 0), (d.yaw || 0) * mx * Math.PI / 180);
+      if (d.seat) {
+        const st = this._seatUnderBody(true);
+        if (st) {
+          if (d.type === 'box') it.params.size = Math.max(0.4, st.h / 0.4); else it.params.h = Math.max(0.2, st.h);
+          g.position.set(st.x + (d.shift ? d.shift[0] * mx : 0), 0, st.z + (d.shift ? d.shift[1] : 0));
+        }
+      } else if (d.under) {
+        const cs = d.under.map(k => this._contactOf(sw(k)).p);
+        const c = cs.reduce((a, b) => a.add(b), V()).multiplyScalar(1 / cs.length);
+        const top = Math.max(0.1, c.y);
+        if (d.type === 'box') it.params.size = Math.max(0.4, top / 0.4); else it.params.h = top;
+        g.position.set(c.x + (d.shift ? d.shift[0] * mx : 0), 0, c.z + (d.shift ? d.shift[1] : 0));
+      } else if (d.back) {
+        // 背中のいちばん後ろに、壁の前の面を合わせる
+        const cf = v.contactFix, c = cf._prep(slot); v.scene.updateMatrixWorld(true); cf._read(c);
+        let minZ = Infinity;
+        for (let i = 0; i < c.total; i++) if (c.G[i] === 0 && c.P[i * 3 + 1] > hp.y - 0.15) minZ = Math.min(minZ, c.P[i * 3 + 2]);
+        g.position.set(hp.x + (d.shift ? d.shift[0] * mx : 0), 0, (isFinite(minZ) ? minZ : hp.z - 0.15) - 0.03 + (d.gap || 0));
+      } else if (d.side) {
+        // 手のひらが当たる壁: 壁の前の面（+z）を手のひらへ向ける
+        const ct = this._contactOf(sw(d.side));
+        const nrm = ct.n.clone().negate(); nrm.y = 0; nrm.normalize();     // 壁の前の面の向き（人形の方）
+        g.quaternion.setFromUnitVectors(V(0, 0, 1), nrm);
+        g.position.copy(ct.p).addScaledVector(nrm, -0.03); g.position.y = 0;
+        if (d.shift) g.position.add(V(d.shift[0], 0, d.shift[1]).applyQuaternion(g.quaternion));
+      } else if (d.backTop) {
+        // 椅子の背もたれの上に手を置く: 背もたれの上の端を手のひらの下へ（座面の高さも合わせる）
+        const ct = this._contactOf(sw(d.backTop));
+        it.params.h = Math.max(0.25, ct.p.y - 0.44);
+        g.position.copy(ct.p).sub(V(0, 0, -0.195).applyQuaternion(g.quaternion)); g.position.y = 0;
+      } else if (d.near) {
+        const ct = this._contactOf(sw(d.near));
+        const o = d.off || [0, 0, 0];
+        g.position.copy(ct.p).add(V(o[0] * mx, o[1], o[2]));
+        if (it.grounded) g.position.y = 0;
+      } else if (d.between) {
+        // 両手のあいだ（箱を抱える・運ぶ）。手のひらの間の幅に大きさを合わせる
+        const a = this._contactOf(sw(d.between[0])).p, b = this._contactOf(sw(d.between[1])).p;
+        const ctr = a.clone().add(b).multiplyScalar(0.5);
+        const w = Math.max(0.16, a.distanceTo(b) - 0.01);
+        if (d.type === 'box') it.params.size = w / 0.4;
+        const dir = b.clone().sub(a); dir.y = 0;
+        const yaw = Math.atan2(-dir.z, dir.x);
+        g.quaternion.setFromAxisAngle(V(0, 1, 0), yaw);
+        g.position.copy(ctr); g.position.y -= (d.type === 'box' ? 0.2 * it.params.size : 0);
+      }
+      this._build(it);
+      g.updateWorldMatrix(true, true);
+      it.group.visible = true;
+      for (const k of (d.grips || []).map(sw).sort((a, b) => (/^foot/.test(b) ? 1 : 0) - (/^foot/.test(a) ? 1 : 0))) this.grip(k, it, true);
+      // center: 棒を体の真ん中へすべらせる（両手は握ったまま、棒が手の中を通る）
+      if (d.center && it.type === 'stick') {
+        const ax = V(0, 1, 0).applyQuaternion(g.quaternion);
+        const t = hp.clone().sub(g.position).dot(ax);
+        g.position.addScaledVector(ax, t);
+        g.updateWorldMatrix(true, true);
+        for (const gr of it.grips) gr.rel = this._propRT(it).invert().multiply(this._limbRT(gr.key));
+      }
+    }
+    this.onChange();
   }
 
   _build(it) {
@@ -244,7 +354,7 @@ export class Props {
     else p.size = Math.max(0.4, Math.min(2.5, Math.round((p.size + dir * 0.1) * 10) / 10));
     this._build(it);
     // 手でつないでいたら、新しい形に付け直す
-    for (const g of [...it.grips]) this.grip(g.side, it, true);
+    for (const g of [...it.grips]) this.grip(g.key, it, true);
     this.onChange();
   }
 
@@ -345,7 +455,9 @@ export class Props {
    */
   pointerDown(e, dollDist) {
     if (this.hidden) return false;
-    const rh = this.hitRing(e.clientX, e.clientY, e.pointerType);
+    let rh = this.hitRing(e.clientX, e.clientY, e.pointerType);
+    // 小物の上を押したときは、輪の線の真上（6px 以内）でなければ動かす方を優先
+    if (rh && rh.d > 6) { const pk0 = this.pick(e.clientX, e.clientY); if (pk0 && pk0.it === this.selected) rh = null; }
     if (rh) {
       const it = this.selected;
       const c = this._toScreen(it.center.clone().applyMatrix4(it.group.matrixWorld));
@@ -356,9 +468,9 @@ export class Props {
     const pk = this.pick(e.clientX, e.clientY);
     if (!pk || (dollDist != null && dollDist < pk.dist - 0.005)) return false;
     const it = pk.it;
-    let plane;
-    if (it.grounded) plane = new THREE.Plane(V(0, 1, 0), -pk.point.y);
-    else { const n = V(); this.v.camera.getWorldDirection(n); plane = new THREE.Plane().setFromNormalAndCoplanarPoint(n, pk.point); }
+    // 手・足と同じく、画面の面の中で上下左右に動かす（奥行きはカメラを回して動かす）
+    const n = V(); this.v.camera.getWorldDirection(n);
+    const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(n, pk.point);
     this.drag = { mode: 'move', it, plane, P0: pk.point.clone(), p0: it.group.position.clone(), moved: false, wasSel: this.selected === it };
     return true;
   }
@@ -373,8 +485,7 @@ export class Props {
       const P = ray.ray.intersectPlane(d.plane, V());
       if (!P) return;
       it.group.position.copy(d.p0).add(P.sub(d.P0));
-      if (it.grounded) it.group.position.y = 0;
-      if (it.type === 'ball') it.group.position.y = Math.max(0.11 * it.params.size, it.group.position.y);
+      this._keepAboveFloor(it);
     } else {
       const a = Math.atan2(e.clientY - d.c.y, e.clientX - d.c.x);
       let da = a - d.a0;
@@ -392,6 +503,17 @@ export class Props {
     this._driveHands(it);
   }
 
+  /** 床より下へは入れない。床に置く物は、床の近く（3cm）まで下ろしたら床にぴったり置く */
+  _keepAboveFloor(it) {
+    const p = it.group.position;
+    if (it.grounded) { if (p.y < 0.03) p.y = 0; return; }
+    if (it.type === 'ball') { p.y = Math.max(0.11 * it.params.size, p.y); return; }
+    // 棒: 下の端が床より下へ行かないように
+    const a = V(0, 1, 0).applyQuaternion(it.group.quaternion);
+    const half = 0.6 * it.params.size * Math.abs(a.y);
+    p.y = Math.max(half + 0.016, p.y);
+  }
+
   pointerUp(e) {
     const d = this.drag;
     this.drag = null;
@@ -400,24 +522,30 @@ export class Props {
     if (d.moved) this.onChange();
   }
 
-  // ---- 手で持つ -----------------------------------------------------------
-  _handRT(side) {
-    const b = this.v.primarySlot.boneMap['hand' + side];
+  // ---- 手で持つ・手足を置く ------------------------------------------------
+  //   つなぐ所 g = { key: 'handR' | 'handL' | 'footR' | 'footL', rel: 小物から見た手（足）の位置と向き }
+  //   どこにつなぐかは決めておかず、押したときの手・足にいちばん近い所（ポーズによって変わる）
+  _limbRT(key) {
+    const b = this.v.primarySlot.boneMap[key];
     return new THREE.Matrix4().compose(b.getWorldPosition(V()), b.getWorldQuaternion(new THREE.Quaternion()), V(1, 1, 1));
   }
   _propRT(it) { return new THREE.Matrix4().compose(it.group.position, it.group.quaternion, V(1, 1, 1)); }
+  static keyOf(k) { return k.length === 1 ? 'hand' + k : k; }
 
-  gripOf(side) { for (const it of this.items) { const g = it.grips.find(x => x.side === side); if (g) return { it, g }; } return null; }
+  gripOf(key) { key = Props.keyOf(key); for (const it of this.items) { const g = it.grips.find(x => x.key === key); if (g) return { it, g }; } return null; }
 
   /**
-   * 手を小物のいちばん近い所へ寄せて、つなぐ。keepShape: 手の形を変えない
+   * 手・足を小物のいちばん近い所へ寄せて、つなぐ。keepShape: 手の形を変えない。
+   * 届かなければ 'far'（何も変えない）
    */
-  grip(side, it = this.selected, keepShape = false) {
+  grip(key, it = this.selected, keepShape = false) {
+    key = Props.keyOf(key);
     const v = this.v, slot = v.primarySlot;
-    if (!it || !slot || !slot.boneMap['hand' + side]) return false;
-    // ほかの小物を持っていたら離す
-    const cur = this.gripOf(side);
-    if (cur) cur.it.grips = cur.it.grips.filter(g => g.side !== side);
+    if (!it || !slot || !slot.boneMap[key]) return false;
+    const cur = this.gripOf(key);
+    if (cur) cur.it.grips = cur.it.grips.filter(g => g.key !== key);
+    if (/^foot/.test(key)) return this._placeFoot(key, it);
+    const side = key.slice(-1);
     const f = v._handFrame(slot, side);
     if (!f) return false;
     const fg = slot.fingers && slot.fingers[side];
@@ -428,24 +556,23 @@ export class Props {
     // 棒・ボールをまだだれも持っていなければ、小物の方を手の中へ動かす（手は今の形のまま）
     if (!it.grounded && !it.grips.length) {
       if (it.type === 'stick') {
-        const radial = f.radial.clone();
         const Q = f.origin.clone().addScaledVector(f.along, L * GRIP_A).addScaledVector(f.palmar, GRIP_P);
-        it.group.quaternion.setFromUnitVectors(V(0, 1, 0), radial);
-        it.group.position.copy(Q);
+        it.group.quaternion.setFromUnitVectors(V(0, 1, 0), f.radial.clone());
+        // 持つ所: 指定がなければ棒の真ん中（it.holdAt: 棒の中心からの距離、+ は親指の側）
+        it.group.position.copy(Q).addScaledVector(f.radial, -(it.holdAt || 0));
       } else {
         const r = 0.11 * it.params.size;
         it.group.position.copy(f.origin).addScaledVector(f.along, L * 0.9).addScaledVector(f.palmar, r + 0.03);
       }
       it.group.updateWorldMatrix(true, true);
       if (!keepShape && this.onHandShape) this.onHandShape(side, it.type === 'stick' ? 'grip' : 'claw');
-      it.grips.push({ side, rel: this._propRT(it).invert().multiply(this._handRT(side)) });
+      it.grips.push({ key, rel: this._propRT(it).invert().multiply(this._limbRT(key)) });
       this.onChange();
       return true;
     }
     it.group.updateWorldMatrix(true, true);
     const inv = it.group.matrixWorld.clone().invert();
     const q = PC.clone().applyMatrix4(inv);
-    // いちばん近い形
     let best = null;
     for (const sh of it.shapes) {
       const r = closestOn(sh, q);
@@ -457,7 +584,7 @@ export class Props {
     const nW = best.n.clone().transformDirection(it.group.matrixWorld);
     let along, radial, palmar, wrist, shape;
     if (best.sh.k === 'rod') {
-      // 棒: 親指の側（radial）を棒の向きに。棒は握ったこぶしの中（手のひらから 3cm）を通す
+      // 棒: 親指の側（radial）を棒の向きに。棒は握ったこぶしの中を通す
       const a = V(0, 1, 0).applyQuaternion(it.group.quaternion);
       const ctr = V(...best.sh.c).applyMatrix4(it.group.matrixWorld);
       const t = Math.max(-best.sh.h / 2 + 0.05, Math.min(best.sh.h / 2 - 0.05, PC.clone().sub(ctr).dot(a)));
@@ -470,7 +597,7 @@ export class Props {
       wrist = Q.clone().addScaledVector(along, -L * GRIP_A).addScaledVector(palmar, -GRIP_P);
       shape = 'grip';
     } else {
-      // 面・球: 手のひらを面に当てる（手のひらの向き = 面の内向き）
+      // 面・球: 手のひらを面に当てる（手のひらの向き = 面の内向き）。指の向きは今の向きを面に沿わせたもの
       palmar = nW.clone().negate();
       along = f.along.clone().addScaledVector(palmar, -f.along.dot(palmar));
       if (along.lengthSq() < 1e-6) along = Math.abs(palmar.y) < 0.9 ? V(0, 1, 0).addScaledVector(palmar, -palmar.y) : V(0, 0, 1);
@@ -480,51 +607,103 @@ export class Props {
       wrist = S.clone().addScaledVector(nW, best.sh.k === 'sph' ? 0.03 : 0.028).addScaledVector(along, -L * 0.9);
       shape = best.sh.k === 'sph' ? 'claw' : 'flat';
     }
-    // 手の骨の向き: いまの (along, radial, palmar) → 新しい組へ回す
     const M0 = new THREE.Matrix4().makeBasis(f.along, f.radial, f.palmar);
     const M1 = new THREE.Matrix4().makeBasis(along, radial, palmar);
     const R = new THREE.Quaternion().setFromRotationMatrix(M1.multiply(M0.clone().transpose()));
-    const hq = slot.boneMap['hand' + side].getWorldQuaternion(new THREE.Quaternion());
-    const newQ = R.multiply(hq);
+    const newQ = R.multiply(slot.boneMap[key].getWorldQuaternion(new THREE.Quaternion()));
     const saved = JSON.parse(JSON.stringify(v.angles));
     const savedShape = { ...v.handShape };
     if (!keepShape && this.onHandShape) this.onHandShape(side, shape);
-    for (let i = 0; i < 3; i++) { v.pull.solve('hand' + side, wrist, newQ); v.applyAll(); }
-    // 届かなければ、つながずに元へ戻す
-    if (slot.boneMap['hand' + side].getWorldPosition(V()).distanceTo(wrist) > 0.04) {
+    for (let i = 0; i < 3; i++) { v.pull.solve(key, wrist, newQ); v.applyAll(); }
+    if (slot.boneMap[key].getWorldPosition(V()).distanceTo(wrist) > 0.04) {
       for (const k in saved) v.angles[k] = saved[k];
       v.applyAll();
       if (savedShape[side] !== undefined && savedShape[side] !== v.handShape[side]) v.applyHandShape(side, savedShape[side] || '');
       return 'far';
     }
-    const rel = this._propRT(it).invert().multiply(this._handRT(side));
-    it.grips.push({ side, rel });
+    it.grips.push({ key, rel: this._propRT(it).invert().multiply(this._limbRT(key)) });
     this.onChange();
     return true;
   }
 
-  release(it = this.selected, side = null) {
+  /** 足の裏を、小物の上の面（いちばん近い所）に平らに置く */
+  _placeFoot(key, it) {
+    const v = this.v, slot = v.primarySlot, fb = slot.boneMap[key];
+    const A = fb.getWorldPosition(V());
+    const tb = fb.children.find(c => c.isBone);
+    const toe = tb ? tb.getWorldPosition(V()) : A.clone().add(V(0, 0, 0.1));
+    // いまの足先の向き（水平）
+    const fwd = toe.clone().sub(A); fwd.y = 0;
+    if (fwd.lengthSq() < 1e-6) fwd.set(0, 0, 1);
+    fwd.normalize();
+    const ANK = 0.08, MID = 0.06;   // 足首の高さ・足首から足の裏の真ん中まで
+    const sole = A.clone().addScaledVector(fwd, MID); sole.y -= ANK;
+    it.group.updateWorldMatrix(true, true);
+    const inv = it.group.matrixWorld.clone().invert();
+    const up = V(0, 1, 0);
+    let best = null;
+    for (const sh of it.shapes) {
+      if (sh.k === 'rod') continue;
+      // 上の面の上で、足の裏の真ん中にいちばん近い点
+      const c = V(...sh.c);
+      let pW;
+      if (sh.k === 'sph') pW = c.clone().add(V(0, sh.r, 0)).applyMatrix4(it.group.matrixWorld);
+      else {
+        const top = sh.k === 'box' ? sh.s[1] / 2 : sh.h / 2;
+        const q = sole.clone().applyMatrix4(inv).sub(c);
+        let x = q.x, z = q.z;
+        if (sh.k === 'box') { x = Math.max(-sh.s[0] / 2 + 0.03, Math.min(sh.s[0] / 2 - 0.03, x)); z = Math.max(-sh.s[2] / 2 + 0.05, Math.min(sh.s[2] / 2 - 0.05, z)); }
+        else { const r = Math.hypot(x, z), m = Math.max(0, sh.r - 0.04); if (r > m && r > 0) { x *= m / r; z *= m / r; } }
+        pW = V(x, top, z).add(c).applyMatrix4(it.group.matrixWorld);
+        // 上の面が上を向いていないもの（倒した物・壁の横の面など）は使わない
+        if (V(0, 1, 0).transformDirection(it.group.matrixWorld).dot(up) < 0.7) continue;
+      }
+      const d = pW.distanceTo(sole);
+      if (!best || d < best.d) best = { p: pW, d };
+    }
+    if (!best) return 'far';
+    const target = best.p.clone().addScaledVector(fwd, -MID); target.y += ANK;
+    // 足は平らに（基準姿勢の向きを、いまのつま先の向きへ水平に回したもの）
+    const nb = slot.neutralWorld.get(fb).clone();
+    const nTip = tb ? V(0, 0, 1) : V(0, 0, 1);
+    const yaw = Math.atan2(fwd.x, fwd.z) - Math.atan2(nTip.x, nTip.z);
+    const q = new THREE.Quaternion().setFromAxisAngle(up, yaw).multiply(nb);
+    const saved = JSON.parse(JSON.stringify(v.angles));
+    for (let i = 0; i < 3; i++) { v.pull.solve(key, target, q); v.applyAll(); }
+    if (fb.getWorldPosition(V()).distanceTo(target) > 0.05) {
+      for (const k in saved) v.angles[k] = saved[k];
+      v.applyAll();
+      return 'far';
+    }
+    it.grips.push({ key, rel: this._propRT(it).invert().multiply(this._limbRT(key)) });
+    this.onChange();
+    return true;
+  }
+
+  release(it = this.selected, key = null) {
     if (!it) return;
-    it.grips = side ? it.grips.filter(g => g.side !== side) : [];
+    key = key && Props.keyOf(key);
+    it.grips = key ? it.grips.filter(g => g.key !== key) : [];
     this.onChange();
   }
 
-  /** 小物を動かした: つないだ手を小物について行かせる */
+  /** 小物を動かした: つないだ手・足を小物について行かせる */
   _driveHands(it) {
     if (!it.grips.length) return;
     const v = this.v, PR = this._propRT(it);
     this._busy = true;
     try {
-      for (const g of it.grips) {
+      // 足を先に（体の高さが決まってから手）
+      for (const g of [...it.grips].sort((a, b) => (/^foot/.test(b.key) ? 1 : 0) - (/^foot/.test(a.key) ? 1 : 0))) {
         const W = PR.clone().multiply(g.rel);
         const p = V(), q = new THREE.Quaternion(); W.decompose(p, q, V());
-        v.pull.solve('hand' + g.side, p, q);
+        v.pull.solve(g.key, p, q);
       }
       v.applyAll();
     } finally { this._busy = false; }
   }
 
-  /** 人形の形が変わったあと（毎フレーム）: 棒・ボールは手について行き、もう一方の手・床に置く物の手は小物へ戻す */
+  /** 人形の形が変わったあと（毎フレーム）: 棒・ボールは手について行き、もう一方の手・床に置く物の手足は小物へ戻す */
   update() {
     this._placeRings();
     if (this._busy || !this.items.length) return;
@@ -533,38 +712,39 @@ export class Props {
     const dragKey = v._jd && v._jd.key;
     for (const it of this.items) {
       if (!it.grips.length || (this.drag && this.drag.it === it)) continue;
+      let lead = null;
       if (!it.grounded) {
-        const g0 = it.grips.find(g => 'hand' + g.side === dragKey) || it.grips[0];
-        const W = this._handRT(g0.side).multiply(g0.rel.clone().invert());
-        W.decompose(it.group.position, it.group.quaternion, V());
-        it.group.updateWorldMatrix(true, true);
+        const hands = it.grips.filter(g => /^hand/.test(g.key));
+        lead = hands.find(g => g.key === dragKey) || hands[0] || null;
+        if (lead) {
+          const W = this._limbRT(lead.key).multiply(lead.rel.clone().invert());
+          W.decompose(it.group.position, it.group.quaternion, V());
+          it.group.updateWorldMatrix(true, true);
+        }
       }
-      // つないだ手が小物から離れていたら戻す（いま引っ張っている手は除く）
       const PR = this._propRT(it);
       let moved = false;
       this._busy = true;
       try {
         for (const g of it.grips) {
-          if (!it.grounded && g === (it.grips.find(x => 'hand' + x.side === dragKey) || it.grips[0])) continue;
-          if ('hand' + g.side === dragKey) continue;
+          if (g === lead || g.key === dragKey) continue;
           const W = PR.clone().multiply(g.rel);
           const p = V(), q = new THREE.Quaternion(); W.decompose(p, q, V());
-          const b = slot.boneMap['hand' + g.side];
+          const b = slot.boneMap[g.key];
           const dp = b.getWorldPosition(V()).distanceTo(p);
           const dq = b.getWorldQuaternion(new THREE.Quaternion()).angleTo(q);
-          if (dp > 0.003 || dq > 0.05) { v.pull.solve('hand' + g.side, p, q); moved = true; }
+          if (dp > 0.003 || dq > 0.05) { v.pull.solve(g.key, p, q); moved = true; }
         }
         if (moved) v.applyAll();
       } finally { this._busy = false; }
     }
   }
 
-  /** 手を引っ張り終えた: 床に置く物につないだ手は、面の上の新しい所へ付け直す */
+  /** 手・足を引っ張り終えた: 床に置く物につないだ手足は、面の上の新しい所へ付け直す */
   handDragEnd(key) {
-    const side = key === 'handL' ? 'L' : key === 'handR' ? 'R' : null;
-    if (!side) return;
-    const gp = this.gripOf(side);
-    if (gp && gp.it.grounded) this.grip(side, gp.it, true);
+    if (!/^(hand|foot)[LR]$/.test(key || '')) return;
+    const gp = this.gripOf(key);
+    if (gp && gp.it.grounded) this.grip(key, gp.it, true);
   }
 }
 // ===== props.js ここまで =====

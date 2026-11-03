@@ -12,6 +12,7 @@ export const POSE_CATEGORIES = [
   { key: 'action', name: 'アクション' },
   { key: 'sport', name: 'スポーツ' },
   { key: 'dance', name: 'ダンス' },
+  { key: 'prop', name: '小物と' },
 ];
 
 export const POSE_PRESETS = [
@@ -135,6 +136,18 @@ export const POSE_PRESETS = [
   { id: 'bellyDance', name: '腰を振る（ベリーダンス）', category: 'dance', seat: false, lift: 0, spec: 'hips:0,0,10 spine:0,0,-5 chest:0,0,-8 upperArmL:24,71,70 upperArmR:24,-71,-70 forearmL:-62,-19,0 forearmR:-62,19,0 handL:37,-22,-1 handR:37,23,1 thighL:-19,9,-11 thighR:-32,2,-13 shinL:32,0,0 shinR:44,0,0 footL:-13,5,3 footR:12,5,0' },
   { id: 'charleston', name: '膝を寄せる（チャールストン）', category: 'dance', seat: false, lift: 0, spec: 'hips:40,0,0 spine:8,0,0 chest:10,0,0 neck:-38,0,0 head:-20,0,0 upperArmL:-58,26,-17 upperArmR:-60,-82,20 forearmL:0,-51,0 forearmR:-2,-85,0 handL:-76,-100,13 handR:75,-74,0 thighL:-77,-19,-4 thighR:-77,19,4 shinL:45,0,0 shinR:45,0,0 footL:-9,-2,-8 footR:-9,2,8' },
   { id: 'cossack', name: '蹴り出し（コサック）', category: 'dance', seat: false, lift: 0, spec: 'hips:12,0,0 chest:-8,0,0 neck:-4,0,0 upperArmL:29,70,77 upperArmR:29,-70,-77 forearmL:-35,-20,0 forearmR:-35,20,0 handL:0,-20,0 handR:0,20,0 thighL:-111,-3,1 thighR:-108,10,-3 shinL:58,0,0 shinR:146,0,0 footL:12,0,-3 footR:-15,9,5' },
+  { id: 'footOnBox', name: '箱に片足をのせる', category: 'prop', seat: false, lift: 0, spec: 'spine:12,0,0 chest:10,0,0 neck:-13,0,0 upperArmL:-29,-19,8 upperArmR:38,9,-24 forearmL:-67,-44,0 forearmR:-108,18,0 handL:8,-30,16 handR:-2,-40,-18 thighL:-87,1,5 thighR:-8,0,-1 shinL:92,0,0 shinR:20,0,0 footL:-5,3,0 footR:-12,-12,1' },
+  { id: 'sitOnBox', name: '箱に腰かける', category: 'prop', seat: false, lift: 0, spec: 'spine:18,0,0 chest:18,0,0 neck:-24,0,0 head:-12,0,0 upperArmL:-64,-26,2 upperArmR:-71,49,0 forearmL:-41,14,0 forearmR:-34,-14,0 handL:0,-1,15 handR:4,-20,-26 thighL:-101,-7,5 thighR:-101,7,-5 shinL:96,0,0 shinR:96,0,0 footL:5,6,-6 footR:5,-6,6' },
+  { id: 'tableLean', name: '台に両手をつく', category: 'prop', seat: false, lift: 0, spec: 'spine:14,0,0 chest:16,0,0 neck:7,0,0 upperArmL:-58,-13,6 upperArmR:-58,13,-6 forearmL:-1,-54,0 forearmR:-1,54,0 handL:-48,-46,45 handR:-48,46,-45 thighL:-16,0,0 thighR:-16,-3,-5 shinL:26,0,0 shinR:38,0,0 footL:-11,8,0 footR:-22,-13,4' },
+  { id: 'wallHand', name: '壁に手をついて寄りかかる', category: 'prop', seat: false, lift: 0, spec: 'hips:0,0,-3 spine:0,0,-5 chest:0,-6,-5 neck:0,6,0 upperArmL:61,1,25 upperArmR:-3,-21,-83 forearmL:-114,-11,0 forearmR:-27,-13,0 handL:8,34,16 handR:-60,85,-45 thighL:-19,3,-9 thighR:-9,-1,5 shinL:18,0,0 shinR:16,0,0 footL:31,-16,23 footR:-7,-5,-2' },
+  { id: 'staffStand', name: '棒を杖にして立つ', category: 'prop', seat: false, lift: 0, spec: 'hips:0,6,4 spine:0,-2,-3 chest:0,-3,-4 neck:1,-1,-12 upperArmL:16,-19,13 upperArmR:2,-30,-9 forearmL:-36,19,0 forearmR:-99,-8,0 handL:15,3,2 handR:10,-5,35 thighL:-4,0,-8 thighR:-23,-1,-10 shinL:5,0,0 shinR:36,0,0 footL:-1,8,4 footR:-12,-11,5' },
+  { id: 'stickShoulders', name: '棒を肩に担ぐ', category: 'prop', seat: false, lift: 0, spec: 'upperArmL:4,100,36 upperArmR:4,-100,-36 forearmL:-123,68,2 forearmR:-123,-68,-2 handL:1,-61,-24 handR:1,62,24 thighL:-13,-1,3 thighR:-13,1,-3 shinL:23,0,0 shinR:23,0,0 footL:-10,12,-3 footR:-10,-12,3' },
+  { id: 'ballHip', name: 'ボールを小脇に抱える', category: 'prop', seat: false, lift: 0, spec: 'hips:0,6,6 spine:0,-2,-4 chest:0,-3,-4 neck:1,-1,-12 upperArmL:16,-19,12 upperArmR:19,-8,-11 forearmL:-36,19,0 forearmR:-72,-28,0 handL:15,3,2 handR:-62,-65,35 thighL:-3,0,-10 thighR:-24,0,-12 shinL:4,0,0 shinR:37,0,0 footL:0,8,4 footR:-13,-11,5' },
+  { id: 'chairStraddle', name: '椅子に逆向きにまたがる', category: 'prop', seat: false, lift: 0, spec: 'spine:12,0,0 chest:12,0,0 neck:-2,0,0 head:-16,0,0 upperArmL:-91,-84,9 upperArmR:-97,85,-9 forearmL:-100,34,0 forearmR:-105,-14,0 handL:9,-56,3 handR:14,30,0 thighL:-90,-12,37 thighR:-90,12,-37 shinL:112,0,0 shinR:112,0,0 footL:-22,-7,-12 footR:-22,7,12' },
+  { id: 'chairBackHand', name: '椅子の背に手をかけて立つ', category: 'prop', seat: false, lift: 0, spec: 'hips:0,6,4 spine:0,-2,-3 chest:0,-3,-4 neck:0,-10,6 upperArmL:57,-1,24 upperArmR:24,-7,-18 forearmL:-111,-11,0 forearmR:-52,65,0 handL:5,33,15 handR:-38,23,-45 thighL:-4,0,-8 thighR:-23,-1,-10 shinL:5,0,0 shinR:36,0,0 footL:-1,8,4 footR:-12,-11,5' },
+  { id: 'deskChin', name: '机で頬杖をつく', category: 'prop', seat: false, lift: 0, spec: 'spine:14,0,0 chest:16,0,0 neck:-28,7,-33 upperArmL:-87,-70,9 upperArmR:-83,45,4 forearmL:-58,-39,0 forearmR:-135,21,0 handL:10,5,5 handR:19,-71,-21 thighL:-90,0,6 thighR:-90,0,-6 shinL:90,0,0 shinR:90,0,0' },
+  { id: 'ballOverhead', name: 'ボールを頭上に構える（スローイン）', category: 'prop', seat: false, lift: 0, spec: 'spine:-8,0,0 chest:-10,0,0 neck:10,0,0 head:8,0,0 upperArmL:-38,27,166 upperArmR:-38,-27,-166 forearmL:-63,100,0 forearmR:-63,-100,0 handL:40,52,-35 handR:40,-52,35 thighL:-21,-1,2 thighR:1,0,-2 shinL:10,0,0 shinR:26,0,0 footL:12,5,-2 footR:-3,-9,6' },
+  { id: 'wallSit', name: '壁にもたれて床に座る', category: 'prop', seat: false, lift: 0, spec: 'spine:-4,0,0 chest:4,0,0 neck:3,0,0 upperArmL:-38,-19,1 upperArmR:-35,19,-3 forearmL:-74,18,0 forearmR:-84,-13,0 handL:70,-21,0 handR:76,19,5 thighL:-143,-14,-4 thighR:-147,9,3 shinL:113,0,0 shinR:120,0,0 footL:32,5,-11 footR:28,-6,7' },
 ];
 
 /**
@@ -261,6 +274,18 @@ export const POSE_HANDS = {
   bellyDance: ['relaxed', 'relaxed'],
   charleston: ['flat', 'flat'],
   cossack: ['flat', 'flat'],
+  footOnBox: ['relaxed', 'relaxed'],
+  sitOnBox: ['relaxed', 'relaxed'],
+  tableLean: ['flat', 'flat'],
+  wallHand: ['relaxed', 'flat'],
+  staffStand: ['relaxed', 'grip'],
+  stickShoulders: ['grip', 'grip'],
+  ballHip: ['relaxed', 'open'],
+  chairStraddle: ['relaxed', 'relaxed'],
+  chairBackHand: ['relaxed', 'relaxed'],
+  deskChin: ['relaxed', 'relaxed'],
+  ballOverhead: ['open', 'open'],
+  wallSit: ['relaxed', 'relaxed'],
 };
 
 /** spec 文字列を {関節キー: {x,y,z}} に展開する */
@@ -355,5 +380,39 @@ export function parseFingerSpec(spec) {
   }
   return out;
 }
+
+// ---- ポーズに付いた小物 -----------------------------------------------------
+//   ポーズを当てると、ここに書いた小物も置く（props.js の applyPoseProps）。置き場所は当てたあとの体から決める:
+//   seat … お尻の下（座面の高さも）／ under … その手足の下に上の面／ back … 背中の後ろの壁／ side … 手のひらが当たる壁
+//   backTop … 椅子の背もたれの上に手／ between … 両手のあいだ（箱の大きさも）／ near … その近く。grips … つなぐ手・足
+//   holdAt … 棒の真ん中から握る所まで（m。+ は親指の側の反対へ棒がのびる）
+export const POSE_PROPS = {
+  chair: [{ type: 'chair', seat: true }],
+  chairCrossLegs: [{ type: 'chair', seat: true }],
+  chinRest: [{ type: 'chair', seat: true }],
+  chairLean: [{ type: 'chair', seat: true }],
+  lean: [{ type: 'wall', back: true }],
+  carryBox: [{ type: 'box', between: ['handL', 'handR'], carry: true, grips: ['handL', 'handR'] }],
+  pickUp: [{ type: 'box', between: ['handL', 'handR'], carry: true, grips: ['handL', 'handR'] }],
+  batting: [{ type: 'stick', size: 0.75, grips: ['handR', 'handL'], holdAt: -0.36 }],
+  swordStance: [{ type: 'stick', size: 0.8, grips: ['handR', 'handL'], holdAt: -0.36 }],
+  basketShoot: [{ type: 'ball', size: 1.1, grips: ['handR'] }],
+  throw: [{ type: 'ball', size: 0.35, grips: ['handR'] }],
+  soccerKick: [{ type: 'ball', near: 'footR', off: [0, 0.10, 0.16] }],
+  footOnBox: [{ type: 'box', under: ['footL'], shift: [0, 0.02], grips: ['footL'] }],
+  sitOnBox: [{ type: 'box', seat: true }],
+  tableLean: [{ type: 'table', under: ['handL', 'handR'], shift: [0, 0.16], grips: ['handL', 'handR'] }],
+  wallHand: [{ type: 'wall', side: 'handR', grips: ['handR'] }],
+  staffStand: [{ type: 'stick', size: 1.4, grips: ['handR'], holdAt: 0.33 }],
+  stickShoulders: [{ type: 'stick', size: 1.2, grips: ['handL', 'handR'], center: true }],
+  ballHip: [{ type: 'ball', grips: ['handR'] }],
+  chairStraddle: [{ type: 'chair', seat: true, yaw: 180 }],
+  chairBackHand: [{ type: 'chair', backTop: 'handR', grips: ['handR'] }],
+  deskChin: [{ type: 'chair', seat: true }, { type: 'table', under: ['elbowR', 'elbowL'], shift: [0, 0.14] }],
+  ballOverhead: [{ type: 'ball', grips: ['handR', 'handL'] }],
+  wallSit: [{ type: 'wall', back: true }],
+};
+for (const p of POSE_PRESETS) if (POSE_PROPS[p.id]) p.props = POSE_PROPS[p.id];
+// ---- ポーズに付いた小物 ここまで
 
 // ===== poses.js ここまで =====

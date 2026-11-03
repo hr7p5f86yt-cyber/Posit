@@ -10,7 +10,7 @@ import { poseThumbSVG, thumbFromViewer } from './poseThumbs.js';
 import { REGIONS } from './anatomy.js';
 import * as THREE from 'three';
 
-export const BUILD = '2026-11-03b';
+export const BUILD = '2026-11-03c';
 
 const SAMPLE_URL = 'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r169/examples/models/gltf/Xbot.glb';
 const SETTINGS_KEY = 'posit.settings.v1';
@@ -60,6 +60,7 @@ function loadSettings() {
       shotShadow: !!s.shotShadow,
       shotCrop: s.shotCrop !== false,
       pull: s.pull !== false,
+      poseProps: s.poseProps !== false,
       guideSeen: !!s.guideSeen,
       wireMode: s.wireMode === 'lattice' ? 'lattice' : 'mesh',
       wireDensity: [0, 1, 2, 3].includes(s.wireDensity) ? s.wireDensity : 1,
@@ -75,7 +76,7 @@ function loadSettings() {
 function defaultSettings() {
   return { seconds: 30, count: 10, cqCats: [], cqModel: 'skin', cqFrame: 'full', cqWire: true, cqAngle: 'random',
     cqSide: 'random', cqBody: 'keep', cqHandShape: true, lightBall: true, sheetStage: 1,
-    cqBeep: true, cqMirror: true, cqDefV66: true, guideHeads: false, guideCenter: false, guideTilt: false, musclePal: false, rings: true, wireW: 1, wireA: 0.85, shotShadow: false, shotCrop: true, pull: true, wireMode: 'mesh', wireDensity: 1, dots: false, dotsUser: false };
+    cqBeep: true, cqMirror: true, cqDefV66: true, guideHeads: false, guideCenter: false, guideTilt: false, musclePal: false, rings: true, wireW: 1, wireA: 0.85, shotShadow: false, shotCrop: true, pull: true, poseProps: true, wireMode: 'mesh', wireDensity: 1, dots: false, dotsUser: false };
 }
 function saveSettings() {
   try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch (e) { /* 続行 */ }
@@ -863,11 +864,10 @@ function syncPropBar() {
   $('selBar').hidden = true;
   $('propBarName').textContent = it.name;
   $('propBarSize').textContent = props.sizeLabel(it);
-  for (const sd of ['R', 'L']) {
-    const on = it.grips.some(g => g.side === sd);
-    const b = $('propBarGrip' + sd);
-    b.classList.toggle('on', on);
-    b.textContent = (sd === 'R' ? '右手' : '左手') + (on ? 'を離す' : (it.type === 'stick' ? 'で持つ' : it.type === 'ball' ? 'で持つ' : 'を置く'));
+  for (const [key, id] of PROP_LIMBS) {
+    const b = $(id);
+    b.classList.toggle('on', it.grips.some(g => g.key === key));
+    b.hidden = /^foot/.test(key) && it.type === 'stick';
   }
 }
 props.onSelect = () => syncPropBar();
@@ -879,13 +879,21 @@ document.addEventListener('pointerdown', e => {
 $('propPopClear').addEventListener('click', () => { props.clear(); $('propPop').hidden = true; showToast('小物をすべて消しました'); });
 $('propBarSmaller').addEventListener('click', () => props.resize(-1));
 $('propBarBigger').addEventListener('click', () => props.resize(1));
-for (const sd of ['R', 'L']) $('propBarGrip' + sd).addEventListener('click', () => {
+// 右手・左手・右足・左足（人形から見た左右）。押すとつなぎ、もう一度押すと離す
+const PROP_LIMBS = [['handR', 'propBarGripR'], ['handL', 'propBarGripL'], ['footR', 'propBarFootR'], ['footL', 'propBarFootL']];
+const LIMB_NAME = { handR: '右手', handL: '左手', footR: '右足', footL: '左足' };
+for (const [key, id] of PROP_LIMBS) $(id).addEventListener('click', () => {
   const it = props.selected; if (!it) return;
-  if (it.grips.some(g => g.side === sd)) { props.release(it, sd); showToast((sd === 'R' ? '右手' : '左手') + 'を離しました'); return; }
+  const nm = LIMB_NAME[key];
+  if (it.grips.some(g => g.key === key)) { props.release(it, key); showToast(nm + 'を離しました'); syncPropBar(); return; }
   snapshot();
-  const r = props.grip(sd, it);
-  if (r === 'far') { showToast('手が届きません。小物を手の近くへ動かしてから押してください'); return; }
-  if (r) { syncSliders(); showToast((sd === 'R' ? '右手' : '左手') + 'を' + it.name + (it.grounded ? 'に置きました（小物を動かすと手がついてきます）' : 'に付けました（手を動かすと一緒に動きます）')); }
+  const r = props.grip(key, it);
+  if (r === 'far') { showToast(nm + 'が届きません。小物を' + nm + 'の近くへ動かしてから押してください'); return; }
+  if (!r) return;
+  syncSliders();
+  const foot = /^foot/.test(key);
+  showToast(nm + 'を' + it.name + (foot ? 'の上に置きました（いちばん近い上の面）'
+    : it.grounded ? 'に置きました（小物を動かすと手がついてきます。手を引っ張ると面の上で付け直します）' : 'に付けました（手を動かすと一緒に動きます）'));
 });
 $('propBarDel').addEventListener('click', () => props.remove());
 $('propBarClose').addEventListener('click', () => props.select(null));
@@ -946,6 +954,11 @@ viewer.setPullEnabled(settings.pull);
 $('pullOn').addEventListener('change', e => {
   settings.pull = e.target.checked; saveSettings();
   viewer.setPullEnabled(settings.pull);
+});
+$('posePropsOn').checked = settings.poseProps;
+$('posePropsOn').addEventListener('change', e => {
+  settings.poseProps = e.target.checked; saveSettings();
+  if (!settings.poseProps) viewer.props.clearAuto();
 });
 $('ringsOn').checked = settings.rings;
 viewer.setRingsEnabled(settings.rings);
@@ -1146,10 +1159,15 @@ function applyPoseHands(pose) {
   });
   // v67: 体の重なりは直さない（押し出すと形がくずれるため。実際の体も柔らかく沈み込む）。ポーズは作った形のまま出す
 }
+/** ポーズに付いた小物を置く（前のポーズの小物は片付ける。自分で置いた小物はそのまま） */
+function applyPoseProps(pose, mirror = false) {
+  viewer.props.applyPoseProps(settings.poseProps ? pose.props : null, mirror);
+}
 function applyPose(pose) {
   snapshot();
   viewer.applyPose(pose.spec);
   applyPoseHands(pose);
+  applyPoseProps(pose);
   history.add({ poseId: pose.id, name: pose.name, spec: pose.spec });
   buildHistory();
   syncSliders();
@@ -1670,6 +1688,7 @@ const croquis = new CroquisSession({
     let mirrored = false;
     if (settings.cqMirror && Math.random() < 0.5) { viewer.mirrorPose(); mirrored = true; }
     cqMeta.mirror = mirrored;
+    applyPoseProps(pose, mirrored);
     const hs = croquisHandShape();
     croquisAngle();
     history.add({ poseId: pose.id, name: pose.name + (cqMeta.mirror ? '（反転）' : ''), spec: cqMeta.mirror ? toSpec(viewer.allAngles()) : pose.spec });
@@ -1837,6 +1856,7 @@ function cqBeginNow() {
 
 function stopCroquis() {
   cqCancelCount();
+  viewer.props.clearAuto();
   viewer.props.setHidden(false);
   document.body.classList.remove('croquis');
   updateInsets();

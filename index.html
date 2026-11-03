@@ -190,8 +190,11 @@
   <button id="propBarSmaller" class="qb" aria-label="小さく・低く">−</button>
   <span id="propBarSize"></span>
   <button id="propBarBigger" class="qb" aria-label="大きく・高く">＋</button>
-  <button id="propBarGripR" class="qb">右手で持つ</button>
-  <button id="propBarGripL" class="qb">左手で持つ</button>
+  <span class="pbSep">つなぐ</span>
+  <button id="propBarGripR" class="qb">右手</button>
+  <button id="propBarGripL" class="qb">左手</button>
+  <button id="propBarFootR" class="qb">右足</button>
+  <button id="propBarFootL" class="qb">左足</button>
   <button id="propBarDel" class="qb">消す</button>
   <button id="propBarClose" class="qb icon" aria-label="選択を外す"><svg viewBox="0 0 24 24"><path d="M7 7l10 10M17 7L7 17"/></svg></button>
 </div>
@@ -334,6 +337,8 @@
       <input type="checkbox" id="limitsOn" checked></label>
     <label class="row toggle"><span class="lbl">回転の輪（3軸）を出す</span>
       <input type="checkbox" id="ringsOn" checked></label>
+    <label class="row toggle"><span class="lbl">ポーズに付いた小物（椅子・壁・棒など）も出す</span>
+      <input type="checkbox" id="posePropsOn" checked></label>
     <label class="row toggle"><span class="lbl">手・足を引っ張って腕・脚ごと動かす</span>
       <input type="checkbox" id="pullOn" checked></label>
     <label class="row toggle"><span class="lbl">関節の印を出す</span>
