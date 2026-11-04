@@ -303,12 +303,30 @@ export class Props {
         const dir = b.clone().sub(a); dir.y = 0;
         const yaw = Math.atan2(-dir.z, dir.x);
         g.quaternion.setFromAxisAngle(V(0, 1, 0), yaw);
-        g.position.copy(ctr); g.position.y -= (d.type === 'box' ? 0.2 * it.params.size : 0);
+        // 箱は手のひらが側面の下寄りに来る高さ（底が手のひらの少し下）
+        g.position.copy(ctr); g.position.y -= (d.type === 'box' ? 0.06 : 0);
       }
       this._build(it);
       g.updateWorldMatrix(true, true);
       it.group.visible = true;
-      for (const k of (d.grips || []).map(sw).sort((a, b) => (/^foot/.test(b) ? 1 : 0) - (/^foot/.test(a) ? 1 : 0))) this.grip(k, it, true);
+      const keys = (d.grips || []).map(sw).sort((a, b) => (/^foot/.test(b) ? 1 : 0) - (/^foot/.test(a) ? 1 : 0));
+      keys.forEach((k, i) => {
+        this.grip(k, it, true);
+        // aim: 棒の向き（人形の向きから見た方向）。最初の手で握ったあと、握りこぶしを中心に棒をその向きへ回し、手元を棒の端の近くにする
+        if (i === 0 && d.aim && it.type === 'stick') {
+          const sd = k.slice(-1), f = v._handFrame(slot, sd);
+          const fg = slot.fingers && slot.fingers[sd], mid = fg && fg.middle && fg.middle[1];
+          const L = mid ? mid.getWorldPosition(V()).distanceTo(f.origin) : 0.09;
+          const Q = f.origin.clone().addScaledVector(f.along, L * GRIP_A).addScaledVector(f.palmar, GRIP_P);
+          const yawQ = new THREE.Quaternion().setFromAxisAngle(V(0, 1, 0), Math.atan2(...(() => { const z = V(0, 0, 1).applyQuaternion(slot.boneMap.hips.getWorldQuaternion(new THREE.Quaternion())); return [z.x, z.z]; })()));
+          const dir = V(d.aim[0] * mx, d.aim[1], d.aim[2]).normalize().applyQuaternion(yawQ);
+          const half = 0.6 * it.params.size;
+          g.quaternion.setFromUnitVectors(V(0, 1, 0), dir);
+          g.position.copy(Q).addScaledVector(dir, half - (d.grip0 != null ? d.grip0 : 0.06));
+          g.updateWorldMatrix(true, true);
+          it.grips[it.grips.length - 1].rel = this._propRT(it).invert().multiply(this._limbRT(k));
+        }
+      });
       // center: 棒を体の真ん中へすべらせる（両手は握ったまま、棒が手の中を通る）
       if (d.center && it.type === 'stick') {
         const ax = V(0, 1, 0).applyQuaternion(g.quaternion);
@@ -562,10 +580,11 @@ export class Props {
         it.group.position.copy(Q).addScaledVector(f.radial, -(it.holdAt || 0));
       } else {
         const r = 0.11 * it.params.size;
-        it.group.position.copy(f.origin).addScaledVector(f.along, L * 0.9).addScaledVector(f.palmar, r + 0.03);
+        // ボールの中心: 手のひらの真ん中（指の付け根寄り）から、手のひらの向きへ半径＋手の厚みの半分
+        it.group.position.copy(f.origin).addScaledVector(f.along, L * 0.85).addScaledVector(f.palmar, r + 0.015);
       }
       it.group.updateWorldMatrix(true, true);
-      if (!keepShape && this.onHandShape) this.onHandShape(side, it.type === 'stick' ? 'grip' : 'claw');
+      if (!keepShape && this.onHandShape) this.onHandShape(side, it.type === 'stick' ? 'grip' : 'hold');
       it.grips.push({ key, rel: this._propRT(it).invert().multiply(this._limbRT(key)) });
       this.onChange();
       return true;
@@ -605,7 +624,7 @@ export class Props {
       radial = new THREE.Vector3().crossVectors(palmar, along).multiplyScalar(sgn);
       const S = toW(best.p);
       wrist = S.clone().addScaledVector(nW, best.sh.k === 'sph' ? 0.03 : 0.028).addScaledVector(along, -L * 0.9);
-      shape = best.sh.k === 'sph' ? 'claw' : 'flat';
+      shape = best.sh.k === 'sph' ? 'hold' : 'press';
     }
     const M0 = new THREE.Matrix4().makeBasis(f.along, f.radial, f.palmar);
     const M1 = new THREE.Matrix4().makeBasis(along, radial, palmar);
