@@ -4,7 +4,6 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { clone as cloneSkinned } from 'three/addons/utils/SkeletonUtils.js';
 import { JOINTS, JOINT_BY_KEY, JOINT_GROUPS, mapBones, mapBonesByStructure, mapFingers, fingerCount, clampAngles, limitExcess, wrapDeg, normalizeName } from './bones.js';
 import { parseSpec, parseFingerSpec, POSE_PRESETS } from './poses.js';
 import { buildSkeletonView } from './skeletonView.js';
@@ -140,7 +139,7 @@ class Slot {
 
 export class Viewer {
   /** この viewer.js の版（app.js の BUILD と同じでなければ、古いファイルが混ざっている） */
-  static BUILD = '2026-11-04b';
+  static BUILD = '2026-11-04c';
 
   constructor(canvas) {
     this.canvas = canvas;
@@ -352,6 +351,7 @@ export class Viewer {
         this._updateClipPlane();
         const bone = this.selected ? this._boneForJoint(this.selected) : null;
         if (bone) bone.getWorldPosition(this.marker.position);
+        if (this.second && this.second.dirty) this._rebakeSecond();
         this.props.update();
         this.rings.update();
         this.dots.update();
@@ -1885,6 +1885,8 @@ export class Viewer {
       } else if (this.partView === 'face' && p.boneMap.head) {
         center = p.boneMap.head.getWorldPosition(new THREE.Vector3()); center.y += 0.08; radius = 0.2;
       } else {
+        // 2 体目を出しているときは、2 体とも入るように
+        if (this.second) box.expandByObject(this.second.holder);
         center = box.getCenter(new THREE.Vector3());
         radius = box.getSize(new THREE.Vector3()).length() * 0.5;
       }
@@ -2111,6 +2113,7 @@ export class Viewer {
         this._muscleBuilding = false;
         this.onNotice('');
         this._refreshMuscleView();
+        this.markSecondDirty();
         if (this.onAnatomyChanged) this.onAnatomyChanged();
       }, 40);
     }
@@ -2229,6 +2232,7 @@ export class Viewer {
         this._boneBuilding = false;
         this.onNotice('');
         this._refreshBoneView();
+        this.markSecondDirty();
         if (this.onAnatomyChanged) this.onAnatomyChanged();
       }, 40);
     }
@@ -2290,7 +2294,7 @@ export class Viewer {
   }
 
   /** 単純化した人形の形の組み合わせ: std（箱と円柱）・egg（卵と円柱）・box（すべて箱） */
-  setBlockStyle(style) { this.blockStyle = style; this._refreshBlocks(); }
+  setBlockStyle(style) { this.blockStyle = style; this._refreshBlocks(); this.markSecondDirty(); }
 
   _refreshBlocks() {
     const on = this.viewMode === 'block';
@@ -2355,6 +2359,7 @@ export class Viewer {
     this._refreshHeadPlanes();
     this._applyClipping();
     if (!this._muscleBuilding && !this._boneBuilding) this.onNotice('');
+    this.markSecondDirty();
     return true;
   }
 
@@ -2441,15 +2446,113 @@ export class Viewer {
   //   もう 1 体は「動かしていない方の人形」の写し（形だけ）。入れ替えると、写しと動かす人形の中身を交換する。
   //   どちらも同じ素体なので、体型・質感・ライトは共通
 
-  /** いまの人形の形を写しに写す */
-  _snapSecond() {
-    const sd = this.second; if (!sd) return;
-    this.container.updateWorldMatrix(true, true);
-    sd.holder.matrix.copy(this.container.matrixWorld);
-    sd.holder.matrixWorldNeedsUpdate = true;
-    for (const [a, b] of sd.pairs) { b.position.copy(a.position); b.quaternion.copy(a.quaternion); b.scale.copy(a.scale); b.visible = a.visible; }
+  /**
+   * いまの人形の見えている物（素体・骨格・筋肉・単純化・面の線など、どの表示でも）を、
+   * 世界の座標に焼き付けた動かない形にして、写しにする。骨の位置も覚える（手を寄せるときに使う）
+   */
+  _bakeSecond() {
+    const sd = this.second, slot = this.primarySlot;
+    if (!sd || !slot || !slot.pivot) return;
+    for (const c of [...sd.holder.children]) {
+      sd.holder.remove(c);
+      c.traverse(o => { if (o.userData && o.userData.baked && o.geometry) o.geometry.dispose(); });
+    }
+    this.scene.updateMatrixWorld(true);
+    const grp = new THREE.Group();
+    const v = new THREE.Vector3(), w = new THREE.Vector3(), nrm = new THREE.Vector3();
+    const shown = o => { for (let q = o; q; q = q.parent) { if (!q.visible) return false; if (q === slot.pivot) return true; } return true; };
+    const nm = new THREE.Matrix3();
+    const updated = new Set();
+    // 奥の筋肉（筋膜）: 材質の中で「法線の内側へ沈める」量がメッシュの座標の単位（cm のことがある）なので、
+    // 世界の座標（m）に焼いた写しでは、沈める量をメッシュの倍率で直した材質にする
+    const deepMat = (o, ng) => {
+      const mu = o.material && o.material.userData;
+      if (!mu || !mu.inset || !mu.push) return null;
+      const ws = new THREE.Vector3().setFromMatrixScale(o.matrixWorld).x || 1;
+      const key = '_bakedDeep';
+      if (!o.material[key] || o.material[key].ws !== ws) {
+        const m2 = o.material.clone();
+        const u = { value: mu.inset.value * ws }, push = mu.push;
+        m2.onBeforeCompile = sh => {
+          sh.uniforms.deepInset = u; sh.uniforms.deepPush = push;
+          sh.vertexShader = sh.vertexShader
+            .replace('void main() {', 'uniform float deepInset;\nuniform float deepPush;\nattribute float fatInset;\nvoid main() {')
+            .replace('#include <begin_vertex>', '#include <begin_vertex>\n  transformed -= normalize(objectNormal) * (deepInset + fatInset);')
+            .replace('#include <project_vertex>', '#include <project_vertex>\n  mvPosition.xyz += normalize(mvPosition.xyz) * deepPush;\n  gl_Position = projectionMatrix * mvPosition;');
+        };
+        m2.customProgramCacheKey = () => 'posit-deep-muscle-baked';
+        m2.ws = ws;
+        o.material[key] = m2;
+      }
+      const fa = ng.attributes.fatInset;
+      if (fa) for (let i = 0; i < fa.count; i++) fa.setX(i, fa.getX(i) * ws);
+      return o.material[key];
+    };
+    slot.pivot.traverse(o => {
+      if (!(o.isMesh || o.isLine || o.isPoints) || !shown(o)) return;
+      const g = o.geometry;
+      if (!g || !g.attributes || !g.attributes.position) return;
+      const ng = new THREE.BufferGeometry();
+      for (const [k, at] of Object.entries(g.attributes)) { if (k === 'skinIndex' || k === 'skinWeight') continue; ng.setAttribute(k, at.clone()); }
+      if (g.index) ng.setIndex(g.index.clone());
+      for (const gr of g.groups) ng.addGroup(gr.start, gr.count, gr.materialIndex);
+      const pos = ng.attributes.position, nor = ng.attributes.normal, M = o.matrixWorld;
+      // 骨の行列は描くときにしか新しくならないので、ここで新しくする（骨格ごとに 1 回）
+      if (o.isSkinnedMesh && o.skeleton && !updated.has(o.skeleton)) { o.skeleton.update(); updated.add(o.skeleton); }
+      if (o.isSkinnedMesh) {
+        nm.getNormalMatrix(M);
+        const src = g.attributes.position, sn = g.attributes.normal;
+        for (let i = 0; i < pos.count; i++) {
+          o.getVertexPosition(i, v);
+          if (nor && sn) {
+            // 向き: 少し外の点も同じ骨の動きで動かし、その差を向きにする
+            w.fromBufferAttribute(src, i).addScaledVector(nrm.fromBufferAttribute(sn, i), 0.01);
+            o.applyBoneTransform(i, w);
+            nrm.copy(w).sub(v).applyMatrix3(nm).normalize();
+            nor.setXYZ(i, nrm.x, nrm.y, nrm.z);
+          }
+          v.applyMatrix4(M);
+          pos.setXYZ(i, v.x, v.y, v.z);
+        }
+      } else ng.applyMatrix4(M);
+      ng.computeBoundingBox(); ng.computeBoundingSphere();
+      let m;
+      if (o.isInstancedMesh) {
+        m = new THREE.InstancedMesh(new THREE.BufferGeometry().copy(g), o.material, o.count);
+        const t = new THREE.Matrix4();
+        for (let i = 0; i < o.count; i++) { o.getMatrixAt(i, t); m.setMatrixAt(i, t.premultiply(M)); }
+        ng.dispose();
+      } else if (o.isLineSegments) m = new THREE.LineSegments(ng, o.material);
+      else if (o.isLine) m = new THREE.Line(ng, o.material);
+      else if (o.isPoints) m = new THREE.Points(ng, o.material);
+      else m = new THREE.Mesh(ng, deepMat(o, ng) || o.material);
+      m.castShadow = o.castShadow; m.receiveShadow = o.receiveShadow; m.renderOrder = o.renderOrder;
+      m.frustumCulled = false; m.raycast = () => {};
+      m.userData.baked = true; m.userData.secondDoll = true;
+      grp.add(m);
+    });
+    sd.holder.matrix.identity();
+    sd.holder.add(grp);
     sd.holder.updateMatrixWorld(true);
+    sd.bones = {};
+    for (const [k, bn] of Object.entries(slot.boneMap)) if (bn && bn.getWorldPosition) sd.bones[k] = bn.getWorldPosition(new THREE.Vector3());
+    sd.dirty = false;
   }
+
+  /** 表示を切り替えたあと: 写しを、写しの形のまま今の表示で焼き直す（動かす人形は元に戻す） */
+  _rebakeSecond() {
+    const sd = this.second;
+    if (!sd || !sd.stored) return;
+    const keep = this.allAngles(), keepH = { ...this.handShape };
+    const keepAng = JSON.parse(JSON.stringify(this.angles));
+    const setH = hs => { for (const k of ['L', 'R']) if (hs && hs[k] !== undefined && hs[k] !== this.handShape[k]) this.applyHandShape(k, hs[k] || ''); };
+    this.setAngles(sd.stored); setH(sd.hands); this.applyAll();
+    this._bakeSecond();
+    this.setAngles(keep); this.angles = keepAng; setH(keepH); this.applyAll();
+  }
+
+  /** 写しを焼き直す印（表示・体型・質感などを変えたとき。次の描画の前に焼き直す） */
+  markSecondDirty() { if (this.second) this.second.dirty = true; }
 
   hasSecond() { return !!this.second; }
 
@@ -2457,39 +2560,13 @@ export class Viewer {
   addSecond(dx = 0.7) {
     const slot = this.primarySlot;
     if (this.second || !slot || !slot.pivot) return false;
-    // 写すのは骨と素体の面だけ（骨格・筋肉・面の線・印などは写さない）
-    const keep = new Set([...slot.meshes, ...((slot.breast && slot.breast.parts) || [])]);
-    const anc = new Set();
-    for (const k of keep) for (let p = k.parent; p && p !== slot.pivot; p = p.parent) anc.add(p);
-    const detached = [];
-    slot.pivot.traverse(o => {
-      if (o === slot.pivot || o.isBone || keep.has(o) || anc.has(o)) return;
-      if (o.parent && (o.parent.isBone || anc.has(o.parent) || o.parent === slot.pivot)) detached.push([o, o.parent]);
-    });
-    for (const [o, p] of detached) p.remove(o);
-    const uds = [];
-    slot.pivot.traverse(o => { uds.push([o, o.userData]); o.userData = {}; });
-    let copy;
-    const src = [], dst = [];
-    try {
-      copy = cloneSkinned(slot.pivot);
-      // 写しと元の対応（写さない部品を外している間に、同じ順でたどる）
-      slot.pivot.traverse(o => src.push(o));
-    } finally {
-      for (const [o, u] of uds) o.userData = u;
-      for (const [o, p] of detached) p.add(o);
-    }
-    copy.traverse(o => dst.push(o));
-    const pairs = [];
-    for (let i = 0; i < Math.min(src.length, dst.length); i++) pairs.push([src[i], dst[i]]);
-    copy.traverse(o => { o.userData.secondDoll = true; if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; o.frustumCulled = false; o.raycast = () => {}; } });
     const holder = new THREE.Group();
     holder.matrixAutoUpdate = false;
-    holder.add(copy);
+    holder.userData.secondDoll = true;
     this.scene.add(holder);
     // firstActive: いま動かしているのが 1 体目（最初からいた人形）か。出した直後は 2 体目を動かす
-    this.second = { holder, copy, pairs, stored: null, hands: null, firstActive: false };
-    this._snapSecond();
+    this.second = { holder, bones: {}, stored: null, hands: null, firstActive: false, dirty: false };
+    this._bakeSecond();
     this.second.stored = this.allAngles();
     this.second.hands = { ...this.handShape };
     this.bodyShift.x += dx;
@@ -2503,7 +2580,7 @@ export class Viewer {
     const st = sd.stored, hs = sd.hands;
     sd.stored = this.allAngles();
     sd.hands = { ...this.handShape };
-    this._snapSecond();
+    this._bakeSecond();
     this.clearLocks();
     this.setAngles(st);
     for (const k of ['L', 'R']) if (hs && hs[k] !== undefined && hs[k] !== this.handShape[k]) this.applyHandShape(k, hs[k] || '');
@@ -2515,19 +2592,14 @@ export class Viewer {
   dropSecond() {
     const sd = this.second; if (!sd) return;
     sd.holder.parent && sd.holder.parent.remove(sd.holder);
-    sd.copy.traverse(o => { if (o.isSkinnedMesh && o.skeleton) o.skeleton.dispose && o.skeleton.dispose(); });
+    sd.holder.traverse(o => { if (o.userData && o.userData.baked && o.geometry) o.geometry.dispose(); });
     this.second = null;
   }
 
   /** 写しの骨（handR など）の世界での位置 */
   secondBonePos(key) {
-    const sd = this.second, slot = this.primarySlot;
-    if (!sd || !slot || !slot.boneMap[key]) return null;
-    const src = slot.boneMap[key];
-    const pr = sd.pairs.find(([a]) => a === src);
-    if (!pr) return null;
-    sd.holder.updateMatrixWorld(true);
-    return pr[1].getWorldPosition(new THREE.Vector3());
+    const sd = this.second;
+    return sd && sd.bones && sd.bones[key] ? sd.bones[key].clone() : null;
   }
 
   /** 体全体を縦の軸のまわりに回す（腰の角度に、世界の縦軸の回転を前から掛ける） */
@@ -2558,7 +2630,7 @@ export class Viewer {
       for (const k of ['L', 'R']) if (hs && hs[k] !== undefined && hs[k] !== this.handShape[k]) this.applyHandShape(k, hs[k] || '');
     }
     sd.holder.parent && sd.holder.parent.remove(sd.holder);
-    sd.copy.traverse(o => { if (o.isSkinnedMesh && o.skeleton) o.skeleton.dispose && o.skeleton.dispose(); });
+    sd.holder.traverse(o => { if (o.userData && o.userData.baked && o.geometry) o.geometry.dispose(); });
     this.second = null;
   }
 
@@ -3826,6 +3898,13 @@ export class Viewer {
 }
 
 export const THREE_REVISION = THREE.REVISION;
+// 体型・頭身・質感・面の線などを変えたら、2 体目の写しも今の見え方で焼き直す
+for (const m of ['setBodyType', 'setHeadRatio', 'applyMaterialMode', 'setWireframe', 'setWireStyle', 'setSkinOpacity', 'setBoneViewOn']) {
+  const f = Viewer.prototype[m];
+  if (typeof f !== 'function') continue;
+  Viewer.prototype[m] = function (...args) { const r = f.apply(this, args); this.markSecondDirty(); return r; };
+}
+
 export { JOINTS, JOINT_BY_KEY, JOINT_GROUPS };
 
 // ===== viewer.js ここまで =====

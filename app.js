@@ -10,7 +10,7 @@ import { poseThumbSVG, thumbFromViewer } from './poseThumbs.js';
 import { REGIONS } from './anatomy.js';
 import * as THREE from 'three';
 
-export const BUILD = '2026-11-04b';
+export const BUILD = '2026-11-04c';
 
 const SAMPLE_URL = 'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r169/examples/models/gltf/Xbot.glb';
 const SETTINGS_KEY = 'posit.settings.v1';
@@ -1191,6 +1191,8 @@ function applyDuoPose(pose) {
     for (let i = 0; i < 3; i++) { viewer.pull.solve(kb, t, q); viewer.applyAll(); }
   }
   syncDuo();
+  // 2 体とも画面に入るように（向きは今のまま）
+  viewer.fitView();
 }
 function applyPose(pose) {
   snapshot();
