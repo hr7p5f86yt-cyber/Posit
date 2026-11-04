@@ -139,7 +139,7 @@ class Slot {
 
 export class Viewer {
   /** この viewer.js の版（app.js の BUILD と同じでなければ、古いファイルが混ざっている） */
-  static BUILD = '2026-11-04c';
+  static BUILD = '2026-11-04d';
 
   constructor(canvas) {
     this.canvas = canvas;
@@ -3296,6 +3296,21 @@ export class Viewer {
       // 体全体を持ち上げた分（腰を引っ張って上げた分。床より下へは行かない）だけ浮かせる（跳ぶ・宙に浮くポーズ）
       const lift = Math.max(0, this.bodyShift ? this.bodyShift.y : 0);
       this.container.position.y = p.restLowestY - this._lowestBoneY(p) + lift;
+      // 寝る・座る・ひざまずくなど腰が低いときは、骨ではなく肌のいちばん低い所を床に合わせる
+      // （骨の高さだけで合わせると、背中やお尻が床に沈み、床に置いた手が浮いて見える）
+      const hips = p.boneMap.hips;
+      if (hips && this.contactFix) {
+        this.container.updateMatrixWorld(true);
+        const hy = hips.getWorldPosition(new THREE.Vector3()).y, head = p.boneMap.head;
+        if (hy < 0.55 || (head && head.getWorldPosition(new THREE.Vector3()).y < hy)) {
+          const c = this.contactFix._prep(p);
+          this.contactFix._read(c);
+          let mn = Infinity;
+          // 手（6・7）は除く: 床に置いた手で体が持ち上がらないように（手は体に合わせて床へ置く）
+          for (let i = 0; i < c.total; i++) if (c.G[i] !== 6 && c.G[i] !== 7 && c.P[i * 3 + 1] < mn) mn = c.P[i * 3 + 1];
+          if (isFinite(mn) && mn < -0.003) { this.container.position.y -= mn; this.container.updateMatrixWorld(true); }
+        }
+      }
     });
   }
 
