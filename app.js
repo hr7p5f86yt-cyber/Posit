@@ -10,7 +10,7 @@ import { poseThumbSVG, thumbFromViewer } from './poseThumbs.js';
 import { REGIONS } from './anatomy.js';
 import * as THREE from 'three';
 
-export const BUILD = '2026-11-04a';
+export const BUILD = '2026-11-04b';
 
 const SAMPLE_URL = 'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r169/examples/models/gltf/Xbot.glb';
 const SETTINGS_KEY = 'posit.settings.v1';
@@ -1163,16 +1163,54 @@ function applyPoseHands(pose) {
 function applyPoseProps(pose, mirror = false) {
   viewer.props.applyPoseProps(settings.poseProps ? pose.props : null, mirror);
 }
-function applyPose(pose) {
-  snapshot();
+/**
+ * 2人のポーズ: 1体目（写し）に A の形、2体目（動かす方）に B の形を当てて並べる。
+ * B は B 自身の向きで作ってあるので、回して（yaw）A から見た場所（at, m）へ置き、手が触れる所（join）は B の手を A へ寄せる
+ */
+function applyDuoPose(pose) {
+  const d = pose.duo;
+  viewer.props.clearAuto();
+  if (viewer.hasSecond()) viewer.dropSecond();
   viewer.applyPose(pose.spec);
   applyPoseHands(pose);
+  viewer.addSecond(0);
+  viewer.second.auto = true;
+  const B = d.ref ? POSE_PRESETS.find(p => p.id === d.ref) : null;
+  viewer.applyPose(B ? B.spec : d.spec);
+  applyPoseHands(B || { id: '', hands: null, ...{} });
+  if (!B && d.hands) for (const [i, sd] of ['L', 'R'].entries()) { const sh = HAND_SHAPES.find(x => x.id === d.hands[i]); viewer.applyHandShape(sd, sh ? sh.spec : ''); }
+  if (d.yaw) viewer.turnWhole(d.yaw);
+  viewer.bodyShift.x = d.at[0]; viewer.bodyShift.z = d.at[1];
+  viewer.applyAll();
+  for (const [kb, ka, off] of d.join || []) {
+    const t = viewer.secondBonePos(ka);
+    if (!t) continue;
+    if (off) t.add(new THREE.Vector3(...off));
+    const b = viewer.primarySlot.boneMap[kb];
+    const q = b.getWorldQuaternion(new THREE.Quaternion());
+    for (let i = 0; i < 3; i++) { viewer.pull.solve(kb, t, q); viewer.applyAll(); }
+  }
+  syncDuo();
+}
+function applyPose(pose) {
+  snapshot();
+  if (pose.duo) {
+    applyDuoPose(pose);
+  } else {
+    // 2人のポーズで出した 2体目は、ほかのポーズにしたら片付ける（自分で出した 2体目はそのまま）
+    if (viewer.hasSecond() && viewer.second.auto) { viewer.dropSecond(); syncDuo(); }
+    viewer.applyPose(pose.spec);
+    applyPoseHands(pose);
+  }
   applyPoseProps(pose);
   history.add({ poseId: pose.id, name: pose.name, spec: pose.spec });
   buildHistory();
   syncSliders();
   showToast(pose.name);
 }
+
+// 確かめ用（ポーズを名前で当てる）
+window.__posit.applyPoseById = id => { const p = POSE_PRESETS.find(x => x.id === id); if (p) applyPose(p); return !!p; };
 
 $('btnRandomPose').addEventListener('click', () => {
   const pool = currentPoses();
@@ -1782,6 +1820,7 @@ async function startCroquis() {
   if (settings.cqBeep) unlockAudio();
   // クロッキーの間は小物を隠す（ポーズが毎回変わるので、手でつないだ小物が飛び回らないように）
   viewer.props.setHidden(true);
+  if (viewer.hasSecond() && viewer.second.auto) { viewer.dropSecond(); syncDuo(); }
   document.body.classList.add('croquis');
   updateInsets();
   $('croquis').hidden = false;

@@ -140,7 +140,7 @@ class Slot {
 
 export class Viewer {
   /** この viewer.js の版（app.js の BUILD と同じでなければ、古いファイルが混ざっている） */
-  static BUILD = '2026-11-04a';
+  static BUILD = '2026-11-04b';
 
   constructor(canvas) {
     this.canvas = canvas;
@@ -2509,6 +2509,37 @@ export class Viewer {
     for (const k of ['L', 'R']) if (hs && hs[k] !== undefined && hs[k] !== this.handShape[k]) this.applyHandShape(k, hs[k] || '');
     sd.firstActive = !sd.firstActive;
     return true;
+  }
+
+  /** 2 体目（写し）を、形を戻さずにそのまま片付ける（二人のポーズを入れ替えるとき） */
+  dropSecond() {
+    const sd = this.second; if (!sd) return;
+    sd.holder.parent && sd.holder.parent.remove(sd.holder);
+    sd.copy.traverse(o => { if (o.isSkinnedMesh && o.skeleton) o.skeleton.dispose && o.skeleton.dispose(); });
+    this.second = null;
+  }
+
+  /** 写しの骨（handR など）の世界での位置 */
+  secondBonePos(key) {
+    const sd = this.second, slot = this.primarySlot;
+    if (!sd || !slot || !slot.boneMap[key]) return null;
+    const src = slot.boneMap[key];
+    const pr = sd.pairs.find(([a]) => a === src);
+    if (!pr) return null;
+    sd.holder.updateMatrixWorld(true);
+    return pr[1].getWorldPosition(new THREE.Vector3());
+  }
+
+  /** 体全体を縦の軸のまわりに回す（腰の角度に、世界の縦軸の回転を前から掛ける） */
+  turnWhole(deg) {
+    const a = this.angles.hips || { x: 0, y: 0, z: 0 };
+    const q = new THREE.Quaternion().setFromAxisAngle(AX, a.x * DEG)
+      .multiply(new THREE.Quaternion().setFromAxisAngle(AZ, a.z * DEG))
+      .multiply(new THREE.Quaternion().setFromAxisAngle(AY, a.y * DEG));
+    q.premultiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), deg * DEG));
+    const e = new THREE.Euler().setFromQuaternion(q, 'XZY');
+    this.angles.hips = { x: e.x / DEG, y: e.y / DEG, z: e.z / DEG };
+    this.applyAll();
   }
 
   /** いま動かしているのが 2 体目か */

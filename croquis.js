@@ -34,11 +34,12 @@ export class CroquisSession {
     // 決まった順番（前回と同じ出題）
     const all = this.extra && this.extra.length ? [...POSE_PRESETS, ...this.extra] : POSE_PRESETS;
     if (this.sequence) return all.find(p => p.id === this.sequence[this.index]) || null;
-    let pool = all;
+    // 2人のポーズはクロッキーには出さない（1体だけで描く）
+    let pool = all.filter(p => !p.duo);
     if (this.categories && this.categories.size) {
       pool = pool.filter(p => this.categories.has(p.category));
     }
-    if (!pool.length) pool = all;
+    if (!pool.length) pool = all.filter(p => !p.duo);
 
     const recent = this.history ? this.history.recentIds() : new Set();
     let candidates = pool.filter(p => !this.used.has(p.id) && !recent.has(p.id));

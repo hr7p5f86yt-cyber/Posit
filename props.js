@@ -556,7 +556,7 @@ export class Props {
    * 手・足を小物のいちばん近い所へ寄せて、つなぐ。keepShape: 手の形を変えない。
    * 届かなければ 'far'（何も変えない）
    */
-  grip(key, it = this.selected, keepShape = false) {
+  grip(key, it = this.selected, keepShape = false, tol = 0.04) {
     key = Props.keyOf(key);
     const v = this.v, slot = v.primarySlot;
     if (!it || !slot || !slot.boneMap[key]) return false;
@@ -634,7 +634,7 @@ export class Props {
     const savedShape = { ...v.handShape };
     if (!keepShape && this.onHandShape) this.onHandShape(side, shape);
     for (let i = 0; i < 3; i++) { v.pull.solve(key, wrist, newQ); v.applyAll(); }
-    if (slot.boneMap[key].getWorldPosition(V()).distanceTo(wrist) > 0.04) {
+    if (slot.boneMap[key].getWorldPosition(V()).distanceTo(wrist) > tol) {
       for (const k in saved) v.angles[k] = saved[k];
       v.applyAll();
       if (savedShape[side] !== undefined && savedShape[side] !== v.handShape[side]) v.applyHandShape(side, savedShape[side] || '');

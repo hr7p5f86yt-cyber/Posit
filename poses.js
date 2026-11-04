@@ -13,6 +13,7 @@ export const POSE_CATEGORIES = [
   { key: 'sport', name: 'スポーツ' },
   { key: 'dance', name: 'ダンス' },
   { key: 'prop', name: '小物と' },
+  { key: 'duo', name: '二人で' },
 ];
 
 export const POSE_PRESETS = [
@@ -59,7 +60,7 @@ export const POSE_PRESETS = [
   { id: 'hugKnees', name: '体育座り', category: 'sit', seat: false, lift: 0, spec: 'spine:14,0,0 chest:14,0,0 neck:-16,0,0 head:-12,0,0 upperArmL:-81,-74,17 upperArmR:-90,76,7 forearmL:-66,19,0 forearmR:-4,-36,0 handL:-27,21,-27 handR:-65,-60,35 thighL:-150,-15,-25 thighR:-150,15,25 shinL:130,0,0 shinR:130,0,0 footL:23,4,-29 footR:23,-4,29' },
   { id: 'legsOut', name: '脚を伸ばして座る', category: 'sit', seat: false, lift: 0, spec: 'spine:-8,0,0 chest:-10,0,0 neck:5,0,0 upperArmL:31,-3,7 upperArmR:30,34,-7 forearmL:-2,51,0 forearmR:1,-15,0 handL:74,71,45 handR:77,-86,20 thighL:-80,0,5 thighR:-80,0,-5 shinL:5,0,0 shinR:5,0,0 footL:10,0,0 footR:10,0,0' },
   { id: 'seiza', name: '正座', category: 'sit', seat: false, lift: 0, spec: 'spine:3,0,0 neck:4,0,0 upperArmL:-2,-30,10 upperArmR:-2,30,-10 forearmL:-62,-27,0 forearmR:-62,27,0 handL:-10,-48,30 handR:-10,48,-30 thighL:-66,0,3 thighR:-66,0,-3 shinL:148,0,0 shinR:148,0,0 footL:70,0,0 footR:70,0,0 bodyPos:0,2,0' },
-  { id: 'sideSit', name: '横座り', category: 'sit', seat: false, lift: 0, spec: 'chest:0,10,8 upperArmL:-30,-20,10 upperArmR:11,-86,-15 forearmL:-40,0,0 forearmR:-16,33,0 handR:85,-100,-45 thighL:-102,68,10 thighR:-121,67,-13 shinL:127,0,0 shinR:119,0,0 footL:40,0,-27 footR:45,-3,-40' },
+  { id: 'sideSit', name: '横座り', category: 'sit', seat: false, lift: 0, spec: 'chest:0,10,8 upperArmL:-30,-20,10 upperArmR:9,-85,-20 forearmL:-40,0,0 forearmR:-4,33,0 handR:82,-68,-45 thighL:-102,68,10 thighR:-121,67,-13 shinL:127,0,0 shinR:119,0,0 footL:40,0,-27 footR:45,-3,-40' },
   { id: 'allFours', name: '四つんばい', category: 'kneel', seat: false, lift: 0, spec: 'hips:90,0,0 spine:-5,0,0 chest:-5,0,0 neck:-45,0,0 head:-25,0,0 upperArmL:-79,0,0 upperArmR:-84,20,2 forearmL:-3,100,0 forearmR:10,100,0 handL:85,94,-35 handR:85,-89,-45 thighL:-90,0,4 thighR:-90,0,-4 shinL:90,0,0 shinR:90,0,0 footL:40,0,0 footR:40,0,0' },
   { id: 'crouchLook', name: 'しゃがんで覗き込む', category: 'kneel', seat: false, lift: 0, spec: 'spine:25,0,0 chest:20,0,0 neck:-25,0,0 upperArmL:-60,-19,20 upperArmR:-68,20,-11 forearmL:-39,0,0 forearmR:-30,0,0 handL:-5,5,-8 handR:-2,-1,4 thighL:-125,0,12 thighR:-80,0,-10 shinL:150,0,0 shinR:160,0,0 footL:-35,0,0 footR:30,0,0' },
   { id: 'kneelBoth', name: '膝立ち', category: 'kneel', seat: false, lift: 0, spec: 'upperArmL:-4,0,7 upperArmR:-4,1,-7 forearmL:-9,0,0 forearmR:-9,0,0 handL:-2,0,-1 handR:-2,0,1 thighL:0,0,5 thighR:0,0,-5 shinL:90,0,0 shinR:90,0,0 footL:40,0,0 footR:40,0,0' },
@@ -104,7 +105,7 @@ export const POSE_PRESETS = [
   { id: 'sideKick', name: '横蹴り', category: 'action', seat: false, lift: 0, spec: 'hips:0,0,-35 spine:0,0,-10 chest:0,0,-10 neck:0,0,30 head:0,0,10 upperArmL:-61,-15,-17 upperArmR:-36,18,3 forearmL:-118,-5,0 forearmR:-130,5,0 handL:57,-37,-11 handR:40,-31,-42 thighL:-24,28,50 thighR:-37,25,-40 shinL:40,0,0 shinR:52,0,0 footL:-17,0,-1 footR:-35,-2,21' },
   { id: 'pushForward', name: '両手で押し出す', category: 'action', seat: false, lift: 0, spec: 'chest:8,0,0 neck:-6,0,0 head:-2,0,0 upperArmL:-71,-18,-3 upperArmR:-71,18,3 forearmL:-34,-30,0 forearmR:-34,30,0 handL:-62,-82,45 handR:-62,82,-45 thighL:-33,-1,1 thighR:14,-47,-8 shinL:21,0,0 shinR:18,0,0 footL:12,5,-2 footR:-1,38,0' },
   { id: 'warrior2', name: '戦士のポーズ（ヨガ）', category: 'sport', seat: false, lift: 0, spec: 'neck:0,40,0 head:0,50,0 upperArmL:77,73,88 upperArmR:77,-73,-88 forearmL:-3,4,1 forearmR:-3,-4,-1 thighL:-18,70,66 thighR:-7,6,-27 shinL:58,0,0 shinR:12,0,0 footL:9,3,-1 footR:-8,-18,27' },
-  { id: 'pushup', name: '腕立て伏せ', category: 'sport', seat: false, lift: 0, spec: 'hips:80,0,0 neck:-30,0,0 upperArmL:-68,62,-17 upperArmR:-31,16,-31 forearmL:-51,-65,0 forearmR:-100,61,0 handL:-78,-61,0 handR:18,0,-45 thighL:-13,0,0 thighR:-13,0,0 shinL:24,0,0 shinR:24,0,0 footL:-40,0,0 footR:-40,0,0' },
+  { id: 'pushup', name: '腕立て伏せ', category: 'sport', seat: false, lift: 0, spec: 'hips:80,0,0 neck:-30,0,0 upperArmL:-70,-3,5 upperArmR:-74,30,-5 forearmL:-20,-65,0 forearmR:-4,61,0 handL:-80,-75,45 handR:85,-94,-45 thighL:-13,0,0 thighR:-13,0,0 shinL:24,0,0 shinR:24,0,0 footL:-40,0,0 footR:-40,0,0' },
   { id: 'tennisServe', name: 'サーブ（テニス）', category: 'sport', seat: false, lift: 0, spec: 'spine:-8,0,0 chest:-15,0,0 neck:-25,0,0 upperArmL:-159,-57,12 upperArmR:-7,88,-172 forearmL:-3,61,1 forearmR:3,0,1 handL:0,60,0 thighL:-25,-1,1 thighR:-4,1,-5 shinL:25,0,0 shinR:27,0,0 footL:-1,-20,-2 footR:2,1,5' },
   { id: 'volleyball', name: 'レシーブ（バレー）', category: 'sport', seat: false, lift: 0, spec: 'hips:30,0,0 chest:10,0,0 neck:-30,0,0 head:-16,0,0 upperArmL:-46,3,-6 upperArmR:-46,-3,6 forearmL:-4,-9,0 forearmR:-4,9,0 handL:-40,90,-35 handR:-40,-90,35 thighL:-87,2,27 thighR:-87,-2,-27 shinL:76,0,0 shinR:76,0,0 footL:-16,-5,-13 footR:-16,5,13' },
   { id: 'quadStretch', name: '太ももを伸ばす', category: 'sport', seat: false, lift: 0, spec: 'spine:5,0,0 chest:5,0,-6 neck:-3,0,4 upperArmL:9,50,60 upperArmR:21,2,10 forearmL:-51,0,0 forearmR:-3,0,0 thighL:-8,1,-3 thighR:-10,4,-1 shinL:14,0,0 shinR:153,0,0 footL:-6,8,3 footR:-40,2,3' },
@@ -114,10 +115,10 @@ export const POSE_PRESETS = [
   { id: 'grandJete', name: 'グラン・ジュテ（バレエ）', category: 'dance', seat: false, lift: 0, spec: 'chest:-6,0,0 neck:-3,0,0 upperArmL:-103,-9,11 upperArmR:-61,42,-104 forearmL:-24,-42,0 forearmR:-30,14,0 handL:0,-40,0 thighL:-91,26,7 thighR:43,-10,-3 shinL:39,0,0 shinR:48,0,0 footL:68,0,0 footR:68,0,0 bodyPos:0,26,0' },
   { id: 'jazzHands', name: 'ジャズハンズ（ジャズ）', category: 'dance', seat: false, lift: 0, spec: 'hips:22,0,0 chest:-8,0,0 neck:-20,0,0 upperArmL:-27,16,63 upperArmR:-27,-16,-63 forearmL:-77,14,0 forearmR:-77,-14,0 handL:-36,-37,40 handR:-36,38,-40 thighL:-60,1,6 thighR:-60,-1,-6 shinL:54,0,0 shinR:54,0,0 footL:-16,6,-4 footR:-16,-6,4' },
   { id: 'toprock', name: 'トップロック（ブレイク）', category: 'dance', seat: false, lift: 0, spec: 'hips:0,-10,0 spine:5,0,0 chest:5,14,0 neck:-8,-5,10 upperArmL:47,65,1 upperArmR:-45,18,-11 forearmL:-76,0,0 forearmR:-80,-17,0 handR:15,-2,-15 thighL:-17,-1,2 thighR:-23,-3,7 shinL:26,0,0 shinR:15,0,0 footL:-9,10,-2 footR:22,-21,-2' },
-  { id: 'sixStep', name: '6歩（ブレイク）', category: 'dance', seat: false, lift: 0, spec: 'hips:38,0,-6 spine:14,0,-4 chest:14,0,-6 neck:-30,0,0 head:-32,0,0 upperArmL:-12,22,43 upperArmR:-56,-56,-2 forearmL:-107,-30,0 forearmR:0,87,0 handL:-2,-20,21 handR:-90,76,-45 thighL:-125,-33,47 thighR:-121,0,-6 shinL:80,0,0 shinR:119,0,0 footL:3,-27,-32 footR:-1,5,3' },
-  { id: 'chairFreeze', name: 'チェアーフリーズ（ブレイク）', category: 'dance', seat: false, lift: 0, spec: 'hips:20,0,75 spine:5,0,8 chest:5,0,8 neck:-16,22,-36 head:-8,0,0 upperArmL:37,89,82 upperArmR:9,-5,-16 forearmL:-89,0,0 forearmR:-86,97,0 handR:-20,75,-29 thighL:-98,19,6 thighR:-86,-6,-4 shinL:93,0,0 shinR:95,0,0 footL:68,0,0 footR:68,0,0' },
-  { id: 'headstand', name: 'ヘッドスタンド（ブレイク）', category: 'dance', seat: false, lift: 0, spec: 'hips:180,0,0 neck:-20,0,0 upperArmL:-12,51,134 upperArmR:-12,-51,-134 forearmL:-104,-59,0 forearmR:-104,59,0 handL:-54,-52,-25 handR:-54,53,25 thighL:-25,-4,19 thighR:-25,4,-19 shinL:42,0,0 shinR:42,0,0 footL:68,0,0 footR:68,0,0' },
-  { id: 'windmill', name: 'ウインドミル（ブレイク）', category: 'dance', seat: false, lift: 0, spec: 'hips:-90,0,0 upperArmL:0,0,80 upperArmR:0,0,-80 forearmL:-10,0,0 forearmR:-10,0,0 thighL:-75,-16,21 thighR:-75,16,-21 shinL:4,0,0 shinR:4,0,0 footL:68,0,0 footR:68,0,0' },
+  { id: 'sixStep', name: '6歩（ブレイク）', category: 'dance', seat: false, lift: 0, spec: 'hips:30,0,30 spine:14,0,24 chest:10,0,18 neck:-13,22,-12 head:-16,16,-18 upperArmL:-37,100,10 upperArmR:-96,34,-39 forearmL:0,-23,0 forearmR:-4,51,0 handL:-55,-40,-35 handR:-81,80,-10 thighL:-91,13,54 thighR:-136,32,18 shinL:98,0,0 shinR:138,0,0 footL:-4,-24,-27 footR:15,12,2' },
+  { id: 'chairFreeze', name: 'チェアーフリーズ（ブレイク）', category: 'dance', seat: false, lift: 0, spec: 'hips:20,0,75 spine:5,0,8 chest:5,0,8 neck:-16,22,-36 head:-8,0,0 upperArmL:37,89,82 upperArmR:-6,-7,-30 forearmL:-89,0,0 forearmR:-63,97,0 handR:-26,70,-41 thighL:-98,19,6 thighR:-86,-6,-4 shinL:93,0,0 shinR:95,0,0 footL:68,0,0 footR:68,0,0' },
+  { id: 'headstand', name: 'ヘッドスタンド（ブレイク）', category: 'dance', seat: false, lift: 0, spec: 'hips:180,0,0 neck:-20,0,0 upperArmL:-17,44,132 upperArmR:-17,-44,-132 forearmL:-113,-59,0 forearmR:-113,59,0 handL:-50,-49,-26 handR:-50,49,26 thighL:-25,-4,19 thighR:-25,4,-19 shinL:42,0,0 shinR:42,0,0 footL:68,0,0 footR:68,0,0' },
+  { id: 'windmill', name: 'ウインドミル（ブレイク）', category: 'dance', seat: false, lift: 0, spec: 'hips:-90,0,0 upperArmL:40,39,74 upperArmR:40,-39,-74 forearmL:-15,0,0 forearmR:-15,0,0 handL:5,-90,2 handR:5,90,-2 thighL:-75,-16,21 thighR:-75,16,-21 shinL:4,0,0 shinR:4,0,0 footL:68,0,0 footR:68,0,0' },
   { id: 'hipHopGroove', name: 'グルーヴ（ヒップホップ）', category: 'dance', seat: false, lift: 0, spec: 'hips:8,10,0 spine:-3,0,0 chest:-6,-10,0 neck:10,9,0 head:0,6,0 upperArmL:24,14,20 upperArmR:17,-13,-20 forearmL:-79,0,0 forearmR:-88,0,0 thighL:-41,2,5 thighR:-33,-1,-8 shinL:52,0,0 shinR:48,0,0 footL:-19,11,-5 footR:-13,-10,7' },
   { id: 'runningMan', name: 'ランニングマン（ヒップホップ）', category: 'dance', seat: false, lift: 0, spec: 'chest:4,0,0 neck:2,0,0 upperArmL:-9,-1,11 upperArmR:70,-23,-12 forearmL:-93,9,0 forearmR:-84,0,0 handL:-25,1,3 thighL:12,0,0 thighR:-84,-3,-5 shinL:13,0,0 shinR:104,0,0 footL:-5,0,0 footR:68,0,0' },
   { id: 'dab', name: 'ダブ（ヒップホップ）', category: 'dance', seat: false, lift: 0, spec: 'chest:8,-15,0 neck:24,-20,18 head:32,0,0 upperArmL:-73,-34,-44 upperArmR:-157,7,-61 forearmL:-73,-32,0 forearmR:0,88,0 handL:0,-20,0 handR:0,60,0 thighL:-11,0,1 thighR:-11,1,-3 shinL:20,0,0 shinR:19,0,0 footL:-9,10,-1 footR:-8,-10,3' },
@@ -148,6 +149,25 @@ export const POSE_PRESETS = [
   { id: 'deskChin', name: '机で頬杖をつく', category: 'prop', seat: false, lift: 0, spec: 'spine:16,0,0 chest:20,0,0 neck:-15,0,-21 head:-16,0,0 upperArmL:-92,-69,11 upperArmR:-88,54,2 forearmL:-63,-43,0 forearmR:-138,3,0 handL:13,8,3 handR:59,-97,-45 thighL:-90,0,6 thighR:-90,0,-6 shinL:90,0,0 shinR:90,0,0' },
   { id: 'ballOverhead', name: 'ボールを頭上に構える（スローイン）', category: 'prop', seat: false, lift: 0, spec: 'spine:-8,0,0 chest:-10,0,0 neck:10,0,0 head:8,0,0 upperArmL:-38,27,166 upperArmR:-38,-27,-166 forearmL:-63,100,0 forearmR:-63,-100,0 handL:40,52,-35 handR:40,-52,35 thighL:-21,-1,2 thighR:1,0,-2 shinL:10,0,0 shinR:26,0,0 footL:12,5,-2 footR:-3,-9,6' },
   { id: 'wallSit', name: '壁にもたれて床に座る', category: 'prop', seat: false, lift: 0, spec: 'spine:-4,0,0 chest:4,0,0 neck:3,0,0 upperArmL:-38,-19,1 upperArmR:-35,19,-3 forearmL:-74,18,0 forearmR:-84,-13,0 handL:70,-21,0 handR:76,19,5 thighL:-143,-14,-4 thighR:-147,9,3 shinL:113,0,0 shinR:120,0,0 footL:32,5,-11 footR:28,-6,7' },
+  { id: 'tieShoe', name: '靴ひもを結ぶ', category: 'daily', seat: false, lift: 0, spec: 'spine:34,0,0 chest:30,0,0 neck:34,-8,-19 upperArmL:-85,59,-13 upperArmR:-82,85,-10 forearmL:7,-82,0 forearmR:-17,-17,0 handL:-54,-77,20 handR:-36,31,-45 thighL:-16,3,7 thighR:-100,0,-5 shinL:101,0,0 shinR:113,0,0 footL:-40,-7,-2 footR:-13,-1,-1' },
+  { id: 'peek', name: 'のぞき込む', category: 'daily', seat: false, lift: 0, spec: 'spine:34,0,0 chest:26,0,0 neck:-47,0,0 head:-16,0,0 upperArmL:-71,35,-3 upperArmR:-71,-35,3 forearmL:-4,-68,0 forearmR:-4,68,0 handL:-64,-79,20 handR:-64,79,-20 thighL:-43,2,5 thighR:-43,-2,-5 shinL:63,0,0 shinR:63,0,0 footL:-20,5,-3 footR:-20,-5,3' },
+  { id: 'sideStretch', name: '体側を伸ばす', category: 'sport', seat: false, lift: 0, spec: 'hips:0,0,5 spine:0,0,-18 chest:0,0,-22 neck:0,0,-8 upperArmL:13,-24,9 upperArmR:-170,-52,36 forearmL:-37,24,0 forearmR:-21,36,0 handL:17,3,6 handR:0,20,0 thighL:-11,1,-5 thighR:-15,2,-6 shinL:19,0,0 shinR:28,0,0 footL:-8,6,0 footR:-13,-7,1' },
+  { id: 'sitBackHands', name: '床に座って後ろに手をつく', category: 'sit', seat: false, lift: 0, spec: 'spine:-14,0,0 chest:-6,0,0 neck:6,0,0 upperArmL:42,-86,27 upperArmR:42,86,-27 forearmL:-40,-86,0 forearmR:-40,86,0 handL:-72,-79,-22 handR:-72,79,23 thighL:-118,-3,1 thighR:-135,7,0 shinL:49,0,0 shinR:79,0,0 footL:70,-2,-1 footR:66,5,4' },
+  { id: 'stoolPerch', name: 'スツールに浅く腰かける', category: 'prop', seat: false, lift: 0, spec: 'spine:4,0,0 chest:2,0,0 neck:-2,0,0 head:-4,0,0 upperArmL:-7,-21,8 upperArmR:-5,21,-9 forearmL:-58,-56,0 forearmR:-59,54,0 handL:-7,-25,25 handR:-8,26,-26 thighL:-70,-2,7 thighR:-66,2,-6 shinL:63,0,0 shinR:94,0,0 footL:7,6,-4 footR:7,-2,6' },
+  { id: 'wallPush', name: '壁を押す', category: 'prop', seat: false, lift: 0, spec: 'spine:6,0,0 chest:4,0,0 neck:-6,0,0 head:-4,0,0 upperArmL:-83,-23,10 upperArmR:-83,23,-10 forearmL:-37,-20,0 forearmR:-37,20,0 handL:-65,-77,44 handR:-65,78,-43 thighL:-36,4,2 thighR:27,60,1 shinL:36,0,0 shinR:4,0,0 footL:-1,-1,1 footR:-17,-40,-24' },
+  { id: 'boxLift', name: '箱を頭上に持ち上げる', category: 'prop', seat: false, lift: 0, spec: 'spine:-6,0,0 chest:-6,0,0 neck:-13,0,0 head:-6,0,0 upperArmL:-155,11,-2 upperArmR:-155,-11,2 forearmL:-4,-11,0 forearmR:-4,11,0 handL:-3,0,2 handR:-3,0,-1 thighL:-15,-1,3 thighR:-9,1,-3 shinL:21,0,0 shinR:23,0,0 footL:-6,10,-3 footR:-14,-10,3' },
+  { id: 'ballDribble', name: 'ボールをつく（ドリブル）', category: 'prop', seat: false, lift: 0, spec: 'spine:16,0,0 chest:10,0,0 neck:-18,0,0 head:-8,0,0 upperArmL:-40,-2,23 upperArmR:-42,6,-17 forearmL:-88,-14,0 forearmR:-4,59,0 handL:-35,-30,19 handR:-54,43,-45 thighL:-45,0,7 thighR:-23,-13,-17 shinL:58,0,0 shinR:63,0,0 footL:-13,5,-5 footR:-37,-1,11' },
+  { id: 'stickOverhead', name: '棒を頭上に掲げる', category: 'prop', seat: false, lift: 0, spec: 'spine:-4,0,0 neck:4,0,0 upperArmL:6,28,156 upperArmR:6,-28,-156 forearmL:-2,39,3 forearmR:-2,-39,-3 handL:-17,22,10 handR:-17,-22,-10 thighL:-12,-1,4 thighR:-12,1,-4 shinL:22,0,0 shinR:22,0,0 footL:-10,12,-4 footR:-10,-12,4' },
+  { id: 'tableSit', name: '台に腰かける', category: 'prop', seat: false, lift: 0, spec: 'spine:2,0,0 neck:-2,0,0 upperArmL:21,-16,18 upperArmR:21,16,-18 forearmL:-42,-19,0 forearmR:-42,19,0 handL:-65,-70,45 handR:-65,70,-45 thighL:-30,-1,4 thighR:-86,1,-5 shinL:4,0,0 shinR:99,0,0 footL:41,8,-6 footR:17,-1,3' },
+  { id: 'handshake', name: '握手', category: 'duo', seat: false, lift: 0, spec: 'hips:0,6,4 spine:0,-2,-3 chest:0,-3,-4 neck:1,-1,-12 upperArmL:16,-19,13 upperArmR:-18,28,-3 forearmL:-36,19,0 forearmR:-59,-15,0 handL:15,3,2 handR:-16,0,-11 thighL:-3,0,-7 thighR:-24,-1,-10 shinL:5,0,0 shinR:36,0,0 footL:-1,8,4 footR:-11,-11,4' },
+  { id: 'highFive', name: 'ハイタッチ', category: 'duo', seat: false, lift: 0, spec: 'spine:0,-6,0 chest:-4,-8,0 neck:0,15,18 upperArmL:45,-36,28 upperArmR:-98,24,2 forearmL:-70,43,0 forearmR:-72,40,0 handL:25,20,15 handR:12,30,-10 thighL:-24,0,0 thighR:-2,0,-1 shinL:17,0,0 shinR:26,0,0 footL:7,4,0 footR:-5,-7,4' },
+  { id: 'waltz', name: 'ワルツのホールド', category: 'duo', seat: false, lift: 0, spec: 'spine:-4,0,0 chest:-6,0,0 neck:0,-13,20 head:0,-8,0 upperArmL:-15,20,49 upperArmR:-41,29,-26 forearmL:-106,-39,0 forearmR:-63,16,0 handL:0,-10,35 handR:-76,-95,30 thighL:-18,-1,2 thighR:-10,0,-2 shinL:24,0,0 shinR:26,0,0 footL:-7,4,-2 footR:-16,-4,2' },
+  { id: 'shoulderArm', name: '肩を組む', category: 'duo', seat: false, lift: 0, spec: 'spine:0,0,-4 chest:0,6,-4 neck:0,3,26 upperArmL:7,82,65 upperArmR:48,19,-26 forearmL:-80,-100,1 forearmR:-100,13,0 handL:-23,38,-35 handR:1,-47,-22 thighL:-13,0,1 thighR:-13,0,-1 shinL:24,0,0 shinR:24,0,0 footL:-11,6,-1 footR:-11,-6,1' },
+  { id: 'backToBack', name: '背中合わせ', category: 'duo', seat: false, lift: 0, spec: 'hips:0,-6,-4 spine:0,2,3 chest:-4,3,4 neck:0,26,-12 upperArmL:-29,-73,8 upperArmR:-41,76,-9 forearmL:-92,6,0 forearmR:-93,35,0 handL:-6,43,-23 handR:-18,-79,8 thighL:-24,1,10 thighR:-3,0,7 shinL:36,0,0 shinR:5,0,0 footL:-11,11,-4 footR:-1,-8,-4' },
+  { id: 'handInHand', name: '手をつないで歩く', category: 'duo', seat: false, lift: 0, spec: 'hips:0,6,0 chest:0,-8,0 neck:0,9,0 upperArmL:12,3,8 upperArmR:-3,-1,-3 forearmL:-31,100,0 forearmR:-27,0,0 handL:-4,82,8 thighL:-22,-45,-2 thighR:3,0,0 shinL:4,0,0 shinR:28,0,0 footL:2,40,-4 footR:-5,0,0' },
+  { id: 'hug', name: 'ハグ', category: 'duo', seat: false, lift: 0, spec: 'spine:4,0,0 chest:4,0,0 neck:-6,39,-5 upperArmL:-63,-42,20 upperArmR:-42,43,-12 forearmL:-83,0,0 forearmR:-60,13,0 handL:-38,78,-32 handR:-55,-57,35 thighL:-17,0,1 thighR:-12,0,-1 shinL:26,0,0 shinR:27,0,0 footL:-9,8,-1 footR:-15,-8,1' },
+  { id: 'proposalDuo', name: '手を取ってプロポーズ', category: 'duo', seat: false, lift: 0, spec: 'chest:5,0,0 neck:-3,0,0 head:-2,0,0 upperArmL:-53,3,-3 upperArmR:-62,20,-2 forearmL:-2,-57,0 forearmR:-36,-57,0 handL:-15,-40,24 handR:-6,-50,-9 thighL:-90,0,5 thighR:0,0,-3 shinL:90,0,0 shinR:92,0,0 footR:-5,0,0' },
+  { id: 'fightDuo', name: 'パンチとガード', category: 'duo', seat: false, lift: 0, spec: 'hips:0,-15,0 spine:3,12,0 chest:3,18,0 neck:0,-16,-22 upperArmL:-39,-28,-15 upperArmR:-107,11,-4 forearmL:-134,-41,0 forearmR:-2,46,0 handL:29,28,-5 handR:16,38,4 thighL:-33,-2,3 thighR:14,0,-3 shinL:20,0,0 shinR:5,0,0 footL:13,10,-4 footR:3,-27,15' },
 ];
 
 /**
@@ -286,6 +306,25 @@ export const POSE_HANDS = {
   deskChin: ['relaxed', 'fist'],
   ballOverhead: ['hold', 'hold'],
   wallSit: ['relaxed', 'relaxed'],
+  tieShoe: ['pinch', 'pinch'],
+  peek: ['relaxed', 'relaxed'],
+  sideStretch: ['flat', 'relaxed'],
+  sitBackHands: ['press', 'press'],
+  stoolPerch: ['relaxed', 'relaxed'],
+  wallPush: ['press', 'press'],
+  boxLift: ['flat', 'flat'],
+  ballDribble: ['relaxed', 'hold'],
+  stickOverhead: ['grip', 'grip'],
+  tableSit: ['press', 'press'],
+  handshake: ['relaxed', 'grip'],
+  highFive: ['relaxed', 'flat'],
+  waltz: ['grip', 'flat'],
+  shoulderArm: ['relaxed', 'relaxed'],
+  backToBack: ['', ''],
+  handInHand: ['grip', 'relaxed'],
+  hug: ['flat', 'flat'],
+  proposalDuo: ['relaxed', 'open'],
+  fightDuo: ['fist', 'fist'],
 };
 
 /** spec 文字列を {関節キー: {x,y,z}} に展開する */
@@ -416,8 +455,21 @@ export const POSE_PROPS = {
   deskChin: [{ type: 'chair', seat: true }, { type: 'table', under: ['elbowR', 'elbowL'], shift: [0, 0.14] }],
   ballOverhead: [{ type: 'ball', grips: ['handR', 'handL'] }],
   wallSit: [{ type: 'wall', back: true }],
+  stoolPerch: [{ type: 'stool', seat: true, shift: [0, -0.06] }],
+  wallPush: [{ type: 'wall', size: 0.8, side: 'handR', grips: ['handR', 'handL'] }],
+  boxLift: [{ type: 'box', between: ['handL', 'handR'], carry: true, grips: ['handL', 'handR'] }],
+  ballDribble: [{ type: 'ball', near: 'handR', off: [0, -0.125, 0] }],
+  stickOverhead: [{ type: 'stick', size: 1.2, grips: ['handL', 'handR'], center: true }],
+  tableSit: [{ type: 'table', seat: true, shift: [0, -0.22], grips: ['handL', 'handR'] }],
 };
 for (const p of POSE_PRESETS) if (POSE_PROPS[p.id]) p.props = POSE_PROPS[p.id];
 // ---- ポーズに付いた小物 ここまで
+
+// ---- 2人のポーズ -------------------------------------------------------------
+//   ポーズ（A）を 1体目に、ここの形（B）を 2体目に当てる。B は B 自身の向きで作った形（spec・手の形 hands）か、ほかのポーズ（ref）。
+//   at: A から見た B の立つ場所（m。+x は A の左、+z は A の前）／ yaw: B の向き（度）／ join: [B の手, A の骨, ずらし] … B の手を A のその骨へ寄せる
+export const POSE_DUO = { "handshake": { "spec": "hips:0,-6,-4 spine:0,2,3 chest:0,3,4 neck:1,1,12 upperArmL:15,-21,8 upperArmR:-18,26,-8 forearmL:-36,24,0 forearmR:-61,-18,0 handL:14,0,4 handR:-14,5,-6 thighL:-24,1,10 thighR:-3,0,7 shinL:36,0,0 shinR:5,0,0 footL:-11,11,-4 footR:-1,-8,-4", "hands": [ "relaxed", "grip" ], "at": [ -0.14, 0.7 ], "yaw": 180, "join": [ [ "handR", "handR", [ 0, 0, 0.02 ] ] ] }, "highFive": { "spec": "spine:0,-6,0 chest:-4,-8,0 neck:0,15,18 upperArmL:45,-36,28 upperArmR:-98,24,2 forearmL:-70,43,0 forearmR:-72,40,0 handL:25,20,15 handR:12,30,-10 thighL:-24,0,0 thighR:-2,0,-1 shinL:17,0,0 shinR:26,0,0 footL:7,4,0 footR:-5,-7,4", "hands": [ "relaxed", "flat" ], "at": [ -0.08, 0.62 ], "yaw": 180, "join": [ [ "handR", "handR", [ 0, 0, 0.03 ] ] ] }, "waltz": { "spec": "spine:-6,0,0 chest:-8,0,0 neck:10,8,4 head:0,16,0 upperArmL:-34,-18,16 upperArmR:-13,-24,-49 forearmL:-101,-33,0 forearmR:-97,8,0 handL:67,-50,-10 handR:-25,43,-25 thighL:-10,0,2 thighR:-18,1,-2 shinL:26,0,0 shinR:24,0,0 footL:-16,4,-2 footR:-7,-4,2", "hands": [ "grip", "relaxed" ], "at": [ -0.12, 0.34 ], "yaw": 180, "join": [ [ "handR", "handL", [ 0, 0, 0 ] ], [ "handL", "upperArmR", [ 0, 0.07, 0.02 ] ] ] }, "shoulderArm": { "spec": "spine:0,0,4 chest:0,-6,4 neck:0,-3,-26 upperArmL:11,23,27 upperArmR:9,-100,-6 forearmL:-124,-37,0 forearmR:-89,43,0 handL:-25,-34,45 handR:-16,-55,9 thighL:-13,0,1 thighR:-13,0,-1 shinL:24,0,0 shinR:24,0,0 footL:-11,6,-1 footR:-11,-6,1", "hands": [ "relaxed", "relaxed" ], "at": [ 0.46, 0 ], "yaw": 0, "join": [ [ "handR", "spine", [ 0, 0.02, -0.13 ] ] ] }, "backToBack": { "spec": "hips:0,-6,-4 spine:0,2,3 chest:-4,3,4 neck:0,26,-12 upperArmL:-29,-73,8 upperArmR:-41,76,-9 forearmL:-92,6,0 forearmR:-93,35,0 handL:-6,43,-23 handR:-18,-79,8 thighL:-24,1,10 thighR:-3,0,7 shinL:36,0,0 shinR:5,0,0 footL:-11,11,-4 footR:-1,-8,-4", "hands": [ "", "" ], "at": [ 0, -0.27 ], "yaw": 180 }, "handInHand": { "spec": "hips:0,6,0 chest:0,-8,0 neck:0,-5,0 upperArmL:26,1,3 upperArmR:10,-3,-8 forearmL:-23,0,0 forearmR:-30,100,0 handR:0,82,9 thighL:-22,-45,-2 thighR:3,0,0 shinL:4,0,0 shinR:28,0,0 footL:2,40,-4 footR:-5,0,0", "hands": [ "relaxed", "grip" ], "at": [ 0.42, 0 ], "yaw": 0, "join": [ [ "handR", "handL", [ 0.03, 0, 0 ] ] ] }, "hug": { "spec": "spine:4,0,0 chest:4,0,0 neck:-6,39,-5 upperArmL:-63,-42,20 upperArmR:-42,43,-12 forearmL:-83,0,0 forearmR:-60,13,0 handL:-38,78,-32 handR:-55,-57,35 thighL:-17,0,1 thighR:-12,0,-1 shinL:26,0,0 shinR:27,0,0 footL:-9,8,-1 footR:-15,-8,1", "hands": [ "flat", "flat" ], "at": [ 0, 0.3 ], "yaw": 180 }, "proposalDuo": { "spec": "neck:27,0,0 upperArmL:-28,-22,1 upperArmR:4,39,13 forearmL:-34,-25,0 forearmR:-121,-60,0 handL:-9,-50,23 handR:41,48,35 thighL:-23,3,6 thighR:-8,-1,3 shinL:34,0,0 shinR:14,0,0 footL:-10,11,-4 footR:-6,-8,-3", "hands": [ "relaxed", "flat" ], "at": [ 0, 0.62 ], "yaw": 180, "join": [ [ "handL", "handR", [ 0, 0.03, 0 ] ] ] }, "fightDuo": { "ref": "fightStance", "at": [ 0, 0.78 ], "yaw": 180 } };
+for (const p of POSE_PRESETS) if (POSE_DUO[p.id]) p.duo = POSE_DUO[p.id];
+// ---- 2人のポーズ ここまで
 
 // ===== poses.js ここまで =====
