@@ -5,12 +5,13 @@ import { POSE_CATEGORIES, POSE_PRESETS, POSE_HANDS, HAND_SHAPES, FACE_PRESETS, t
 import { PoseHistory, relativeTime, HISTORY_LIMIT } from './history.js';
 import { CroquisSession, CROQUIS_SECONDS, CROQUIS_COUNTS } from './croquis.js';
 import { PROP_TYPES } from './props.js';
+import { CroquisScenes } from './croquisScenes.js';
 import { LightBall } from './lightBall.js';
 import { poseThumbSVG, thumbFromViewer } from './poseThumbs.js';
 import { REGIONS } from './anatomy.js';
 import * as THREE from 'three';
 
-export const BUILD = '2026-11-06a';
+export const BUILD = '2026-11-06b';
 
 const SAMPLE_URL = 'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r169/examples/models/gltf/Xbot.glb';
 const SETTINGS_KEY = 'posit.settings.v1';
@@ -45,6 +46,8 @@ function loadSettings() {
       cqSide: s.cqSide || 'random',
       cqBody: s.cqBody || 'keep',
       cqHandShape: s.cqHandShape !== false,
+      cqSubject: ['pose', 'props', 'plaster'].includes(s.cqSubject) ? s.cqSubject : 'pose',
+      cqPropMode: s.cqPropMode === 'single' ? 'single' : 'combo',
       lightBall: s.lightBall !== false,
       sheetStage: [0, 1, 2].includes(s.sheetStage) ? s.sheetStage : 1,
       cqBeep: s.cqBeep !== false,
@@ -75,7 +78,7 @@ function loadSettings() {
 
 function defaultSettings() {
   return { seconds: 30, count: 10, cqCats: [], cqModel: 'skin', cqFrame: 'full', cqWire: true, cqAngle: 'random',
-    cqSide: 'random', cqBody: 'keep', cqHandShape: true, lightBall: true, sheetStage: 1,
+    cqSide: 'random', cqBody: 'keep', cqHandShape: true, cqSubject: 'pose', cqPropMode: 'combo', lightBall: true, sheetStage: 1,
     cqBeep: true, cqMirror: true, cqDefV66: true, guideHeads: false, guideCenter: false, guideTilt: false, musclePal: false, rings: true, wireW: 1, wireA: 0.85, shotShadow: false, shotCrop: true, pull: true, poseProps: true, wireMode: 'mesh', wireDensity: 1, dots: false, dotsUser: false };
 }
 function saveSettings() {
@@ -850,14 +853,22 @@ props.onHandShape = (sd, id) => {
   const sh = HAND_SHAPES.find(x => x.id === id);
   viewer.applyHandShape(sd, sh ? sh.spec : '');
 };
+let propGroupShown = null;
 for (const t of PROP_TYPES) {
+  if (propGroupShown !== t.grounded) {
+    propGroupShown = t.grounded;
+    const h = document.createElement('div');
+    h.className = 'qpSub';
+    h.textContent = t.grounded ? '置く物' : '手に持つ物';
+    $('propPopGrid').appendChild(h);
+  }
   const b = document.createElement('button');
   b.className = 'ghost';
   b.textContent = t.name;
   b.addEventListener('click', () => {
     $('propPop').hidden = true;
     const it = props.add(t.key);
-    if (it) showToast(`${t.name}を置きました（押したまま動かす・輪で回す）`);
+    if (it) showToast(t.grounded ? `${t.name}を置きました（押したまま動かす・輪で回す）` : `${t.name}を出しました（「右手」「左手」で手に持たせます）`);
   });
   $('propPopGrid').appendChild(b);
 }
@@ -869,11 +880,12 @@ function syncPropBar() {
   if (!it) return;
   $('selBar').hidden = true;
   $('propBarName').textContent = it.name;
-  $('propBarSize').textContent = props.sizeLabel(it);
+  $('propBarAxis').textContent = PROP_AXES.find(a => a[0] === propAxis)[1];
+  $('propBarSize').textContent = props.sizeLabel(it, propAxis);
   for (const [key, id] of PROP_LIMBS) {
     const b = $(id);
     b.classList.toggle('on', it.grips.some(g => g.key === key));
-    b.hidden = /^foot/.test(key) && it.type === 'stick';
+    b.hidden = /^foot/.test(key) && !it.grounded && it.type !== 'ball';
   }
 }
 props.onSelect = () => syncPropBar();
@@ -883,8 +895,16 @@ document.addEventListener('pointerdown', e => {
   if (!$('propPop').hidden && !e.target.closest('#propPop, #actProp')) $('propPop').hidden = true;
 }, { capture: true });
 $('propPopClear').addEventListener('click', () => { props.clear(); $('propPop').hidden = true; showToast('小物をすべて消しました'); });
-$('propBarSmaller').addEventListener('click', () => props.resize(-1));
-$('propBarBigger').addEventListener('click', () => props.resize(1));
+// 大きさを変える向き（全体 → 縦 → 横 → 奥行き の順に切り替え）
+const PROP_AXES = [['all', '全体'], ['y', '縦'], ['x', '横'], ['z', '奥行き']];
+let propAxis = 'all';
+$('propBarAxis').addEventListener('click', () => {
+  const i = PROP_AXES.findIndex(a => a[0] === propAxis);
+  propAxis = PROP_AXES[(i + 1) % PROP_AXES.length][0];
+  syncPropBar();
+});
+$('propBarSmaller').addEventListener('click', () => props.resize(-1, props.selected, propAxis));
+$('propBarBigger').addEventListener('click', () => props.resize(1, props.selected, propAxis));
 // 右手・左手・右足・左足（人形から見た左右）。押すとつなぎ、もう一度押すと離す
 const PROP_LIMBS = [['handR', 'propBarGripR'], ['handL', 'propBarGripL'], ['footR', 'propBarFootR'], ['footL', 'propBarFootL']];
 const LIMB_NAME = { handR: '右手', handL: '左手', footR: '右足', footL: '左足' };
@@ -1678,6 +1698,19 @@ function croquisHandShape() {
 let lastAz = null;
 function croquisAngle() {
   const meta = [cqMeta.side, cqMeta.body].filter(Boolean);
+  if (cqSubject !== 'pose') {
+    // 小物だけ・石膏像: 向き・高さ・レンズを変え、ライトは見る向きから横へずらす（陰影がはっきり出るように）
+    const bust = cqScenes.active && cqScenes.active.kind === 'bust';
+    let az = settings.cqAngle === 'random' ? (bust ? rand(-130, 130) : rand(0, 360)) : (bust ? 0 : 30);
+    if (settings.cqAngle === 'random' && lastAz !== null) for (let k = 0; k < 6 && Math.abs(((az - lastAz + 540) % 360) - 180) < 40; k++) az = bust ? rand(-130, 130) : rand(0, 360);
+    lastAz = az;
+    const el = settings.cqAngle === 'random' ? (bust ? rand(-4, 22) : rand(12, 48)) : (bust ? 6 : 25);
+    const mm = settings.cqAngle === 'random' ? pick(bust ? [50, 70, 85] : [35, 50, 50, 70]) : 50;
+    viewer.viewFromAngle(az, el, mm);
+    cqScenes.lightFor(az);
+    $('cqAngleText').textContent = bust ? angleLabel(az, el, mm) : `${mm}mm`;
+    return;
+  }
   if (settings.cqAngle !== 'random') { $('cqAngleText').textContent = meta.join('・'); return; }
   let az = rand(0, 360);
   if (lastAz !== null) for (let k = 0; k < 6 && Math.abs(((az - lastAz + 540) % 360) - 180) < 50; k++) az = rand(0, 360);
@@ -1722,9 +1755,35 @@ function beep(last) {
 }
 let lastBeepSec = null;
 
+// 小物だけ・石膏像（クロッキーの間だけ出す）
+const cqScenes = new CroquisScenes(viewer);
+let cqSubject = 'pose';
+const CQ_SUBJECTS = [
+  { value: 'pose', label: '人物（ポーズ）' },
+  { value: 'props', label: '小物だけ' },
+  { value: 'plaster', label: '石膏像' },
+];
+const CQ_PROP_MODES = [
+  { value: 'combo', label: '組み合わせ（1〜4個）' },
+  { value: 'single', label: '1つずつ' },
+];
+
 const croquis = new CroquisSession({
   history,
   onPose: (pose, index) => {
+    if (pose.subject) {
+      // 小物だけ・石膏像
+      cqLog.push(pose);
+      lastBeepSec = null;
+      cqScenes.show(pose);
+      croquisAngle();
+      $('cqName').textContent = pose.name;
+      $('cqIndex').textContent = croquis.count > 0 ? `${index} / ${croquis.count}` : `${index} 枚目`;
+      const k = cqLog.length - 1, nm = pose.name;
+      cqShots[k] = { name: nm, canvas: null };
+      setTimeout(() => { if (cqShots[k] && croquis.running) cqShots[k].canvas = viewer.captureThumb(360); }, 120);
+      return;
+    }
     cqLog.push(pose.id);
     croquisSetup();
     viewer.applyPose(pose.spec);
@@ -1773,6 +1832,17 @@ function buildCqLog() {
   const el = $('cqLog');
   el.innerHTML = '';
   lastCqLog.forEach((id, i) => {
+    if (id && typeof id === 'object') {
+      // 小物だけ・石膏像は名前だけ（「同じ順番でもう一度」で同じ物を出せる）
+      const row = document.createElement('div');
+      row.className = 'clRow';
+      const sp = document.createElement('span');
+      sp.className = 'clName';
+      sp.textContent = `${i + 1}. ${id.name}`;
+      row.appendChild(sp);
+      el.appendChild(row);
+      return;
+    }
     const p = POSE_PRESETS.find(x => x.id === id) || myPoses.find(x => x.id === id);
     if (!p) return;
     const row = poseRow(p, () => { $('cqDone').hidden = true; applyPose(p); }, 'clRow', 'clPick ghost');
@@ -1836,18 +1906,29 @@ async function startCroquis() {
   // 出題中だけ見え方を切り替え、終わったら戻す
   beforeCroquis = { view: viewer.viewMode, part: viewer.partView, side: viewer.partSide, wire: viewer.wireOn,
     cam: viewer.camera.position.clone(), target: viewer.controls.target.clone(),
-    body: viewer.bodyType, hands: { ...viewer.handShape } };
+    body: viewer.bodyType, hands: { ...viewer.handShape },
+    material: viewer.materialMode, light: [viewer.lightAzimuth, viewer.lightElevation],
+    angles: cqReplay || settings.cqSubject !== 'pose' ? JSON.parse(JSON.stringify(viewer.angles)) : null };
   lastAz = null;
   lastHandShape = null;
   $('lightPop').hidden = true;
-  if (settings.cqModel !== viewer.viewMode) viewer.applyViewMode(settings.cqModel);
-  if (settings.cqBody !== 'keep' && settings.cqBody !== 'random' && settings.cqBody !== viewer.bodyType) {
-    viewer.setBodyType(settings.cqBody);
+  // 描く物: 「同じ順番でもう一度」のときは前回と同じ物
+  cqSubject = cqReplay && cqReplay.length && typeof cqReplay[0] === 'object' ? cqReplay[0].subject : cqReplay && cqReplay.length ? 'pose' : settings.cqSubject;
+  if (cqSubject !== 'pose') {
+    // 小物だけ・石膏像: 素体（胸像は石膏の質感）で、全身の見え方。面の線は出さない
+    if (viewer.viewMode !== 'skin') viewer.applyViewMode('skin');
+    viewer.setPartView('full', viewer.partSide);
+    viewer.setWireframe(false);
+  } else {
+    if (settings.cqModel !== viewer.viewMode) viewer.applyViewMode(settings.cqModel);
+    if (settings.cqBody !== 'keep' && settings.cqBody !== 'random' && settings.cqBody !== viewer.bodyType) {
+      viewer.setBodyType(settings.cqBody);
+    }
+    viewer.setPartView(settings.cqFrame, settings.cqSide === 'L' || settings.cqSide === 'R' ? settings.cqSide : viewer.partSide);
+    // クロッキーの面の線は少なめ（短い時間で大きな面の向きをつかむため）。終わったらいつもの数に戻す
+    viewer.setWireStyle(settings.wireMode, 0);
+    viewer.setWireframe(settings.cqWire);
   }
-  viewer.setPartView(settings.cqFrame, settings.cqSide === 'L' || settings.cqSide === 'R' ? settings.cqSide : viewer.partSide);
-  // クロッキーの面の線は少なめ（短い時間で大きな面の向きをつかむため）。終わったらいつもの数に戻す
-  viewer.setWireStyle(settings.wireMode, 0);
-  viewer.setWireframe(settings.cqWire);
   try {
     if (navigator.wakeLock && navigator.wakeLock.request) {
       wakeLock = await navigator.wakeLock.request('screen');
@@ -1863,6 +1944,8 @@ async function startCroquis() {
     categories: settings.cqCats.length ? new Set(settings.cqCats) : null,
     extra: myPoses,
     sequence,
+    gen: cqSubject === 'props' ? () => cqScenes.genProps(settings.cqPropMode)
+      : cqSubject === 'plaster' ? () => cqScenes.genPlaster() : null,
   }));
 }
 
@@ -1903,6 +1986,7 @@ function cqBeginNow() {
 
 function stopCroquis() {
   cqCancelCount();
+  cqScenes.clear();
   viewer.props.clearAuto();
   viewer.props.setHidden(false);
   document.body.classList.remove('croquis');
@@ -1910,6 +1994,10 @@ function stopCroquis() {
   $('croquis').hidden = true;
   if (beforeCroquis) {
     viewer.applyViewMode(beforeCroquis.view);
+    if (viewer.materialMode !== beforeCroquis.material) viewer.applyMaterialMode(beforeCroquis.material);
+    viewer.setLightDirection(...beforeCroquis.light);
+    // 石膏像の胸像で動かした首・頭の向きを、出題前のポーズに戻す
+    if (beforeCroquis.angles && cqSubject !== 'pose') { for (const k in beforeCroquis.angles) viewer.angles[k] = beforeCroquis.angles[k]; viewer.applyAll(); }
     if (viewer.bodyType !== beforeCroquis.body) viewer.setBodyType(beforeCroquis.body);
     for (const sd of ['L', 'R']) {
       if (viewer.handShape[sd] !== beforeCroquis.hands[sd]) viewer.applyHandShape(sd, beforeCroquis.hands[sd] || '');
@@ -1936,6 +2024,7 @@ function stopCroquis() {
 }
 
 $('btnCroquis').addEventListener('click', () => startCroquis());
+window.__posit.croquis = { settings, start: startCroquis, session: croquis, scenes: cqScenes, stop: () => croquis.finish() };
 $('cqSkip').addEventListener('click', () => { if (cqCount) cqBeginNow(); else croquis.skip(); });
 $('cqStop').addEventListener('click', () => { if (cqCount) { cqCancelCount(); stopCroquis(); } else croquis.finish(); });
 $('cqPause').addEventListener('click', () => {
@@ -1962,6 +2051,24 @@ function buildChips(wrapId, options, isOn, onPick, cls) {
 }
 
 function buildCroquisChips() {
+  buildChips('cqSubject', CQ_SUBJECTS,
+    o => settings.cqSubject === o.value,
+    o => { settings.cqSubject = o.value; saveSettings(); buildCroquisChips(); });
+  const sub = settings.cqSubject;
+  $('cqPropMode').hidden = sub !== 'props';
+  if (sub === 'props') {
+    buildChips('cqPropMode', CQ_PROP_MODES,
+      o => settings.cqPropMode === o.value,
+      o => { settings.cqPropMode = o.value; saveSettings(); buildCroquisChips(); });
+  }
+  $('cqSubjectHint').hidden = sub === 'pose';
+  $('cqSubjectHint').textContent = sub === 'props'
+    ? (settings.cqPropMode === 'single' ? '小物を 1 つずつ、置き方・大きさ・見る向き・ライトを毎回変えて出します。人形は隠します。'
+      : '小物を 1〜4 個、台の上か床に静物のように並べて出します。人形は隠します。')
+    : '胸像（人形の頭〜胸を石膏にしたもの。顔の向き・表情を毎回変えます）と、幾何形体（立方体・円柱・円すい・球・六角柱など）を交互に近い割合で出します。ライトの向きも毎回変えます。';
+  $('cqPoseOpts').hidden = sub !== 'pose';
+  $('cqMirrorRow').hidden = sub !== 'pose';
+  $('cqWireRow').hidden = sub !== 'pose';
   buildChips('cqSeconds',
     CROQUIS_SECONDS.map(s => ({ value: s, label: s >= 60 ? `${s / 60}分` : `${s}秒` })),
     o => settings.seconds === o.value,

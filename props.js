@@ -1,11 +1,14 @@
-// props.js — 小物（椅子・スツール・台・箱・棒・壁・ボール）
+// props.js — 小物
+//   置く物: 椅子・スツール・ベンチ・ソファ・台・箱・円柱台・階段・鉄棒・壁
+//   手に持つ物: 棒・ボール・本・コップ・傘・剣・かばん・ダンベル
 //
-// ・置く: 種類を選ぶと、人形の近くに置く（椅子・スツールは、座っている人形ならお尻の下へ、座面の高さも合わせる）
-// ・動かす: 小物を押したまま動かす。床に置く物（椅子・台・箱・壁）は床の上を滑り、棒・ボールは画面の面の中で動く
-// ・回す: 選ぶと出る輪を回す（床に置く物は縦の軸だけ、棒・ボールは 3 軸）
-// ・手で持つ: 「右手で持つ」「左手で持つ」で、手をいちばん近い所へ寄せて、手と小物をつなぐ
-//     棒・ボール … 手に付いて動く（手や腕を動かすと小物がついてくる）。両手で持つと、もう一方の手もついてくる
-//     椅子・台・箱・壁 … 小物の側に手を固定する（小物を動かすと手がついてくる。手を引っ張ると面の上を滑る）
+// ・置く: 種類を選ぶと、人形の近くに置く（椅子・スツール・ベンチ・ソファは、座っている人形ならお尻の下へ、座面の高さも合わせる）
+// ・動かす: 小物を押したまま、画面の面の中で上下左右に動かす（床に置く物は床より下へは行かない）
+// ・回す: 選ぶと出る輪を回す（床に置く物は縦の軸だけ、手に持つ物は 3 軸）
+// ・大きさ: 全体・縦・横・奥行きを別々に変える（座面・天板の高さがある物の「縦」はその高さ）
+// ・手で持つ: 「右手」「左手」で、手と小物をつなぐ
+//     手に持つ物 … 決めた持つ所（柄・取っ手など）を手の中へ動かして、手に付いて動く。両手で持つと、もう一方の手もついてくる
+//     置く物 … 手をいちばん近い所へ寄せて、小物の側に手を固定する（小物を動かすと手がついてくる。手を引っ張ると面の上を滑る）
 //   小物は人形の 1 体目にだけつなぐ
 
 import * as THREE from 'three';
@@ -18,15 +21,46 @@ export function setGripPoint(a, p) { GRIP_A = a; GRIP_P = p; }
 export const PROP_TYPES = [
   { key: 'chair', name: '椅子', grounded: true },
   { key: 'stool', name: 'スツール', grounded: true },
+  { key: 'bench', name: 'ベンチ', grounded: true },
+  { key: 'sofa', name: 'ソファ', grounded: true },
   { key: 'table', name: '台', grounded: true },
   { key: 'box', name: '箱', grounded: true },
+  { key: 'pedestal', name: '円柱台', grounded: true },
+  { key: 'stairs', name: '階段', grounded: true },
+  { key: 'bar', name: '鉄棒', grounded: true },
   { key: 'wall', name: '壁', grounded: true },
   { key: 'stick', name: '棒', grounded: false },
   { key: 'ball', name: 'ボール', grounded: false },
+  { key: 'book', name: '本', grounded: false },
+  { key: 'cup', name: 'コップ', grounded: false },
+  { key: 'umbrella', name: '傘', grounded: false },
+  { key: 'sword', name: '剣', grounded: false },
+  { key: 'bag', name: 'かばん', grounded: false },
+  { key: 'dumbbell', name: 'ダンベル', grounded: false },
 ];
 const TYPE = Object.fromEntries(PROP_TYPES.map(t => [t.key, t]));
+// 座面・天板などの高さ（h）を持つ物。「縦」で大きさを変えるときは、この高さを変える
+const H_TYPES = { chair: 0.45, stool: 0.45, bench: 0.43, sofa: 0.42, table: 0.72, pedestal: 0.6, bar: 1.1 };
+const SEAT_TYPES = new Set(['chair', 'stool', 'bench', 'sofa']);
 
-// 形（小物の座標。床の中心が原点、+z が前）。box: 中心 c・大きさ s / cyl: 縦の円柱（中心 c・半径 r・高さ h）/ sph: 球 / rod: y 軸の棒
+// 手に持つ物の、持つ所（小物の座標）
+//   rod: 握る軸（c: 握る所・ax: 軸の向き → 親指の側）。down: 手の指の向き（hang: 真下）へ向ける向き / face: 手のひらの向きへ向ける向き / off: 握りこぶしの中心から手のひらの側へずらす
+//   palm: 手のひらに載せる（c: 当てる所・n: 手のひらに向ける外向き・along: 指の向きへ向ける向き）
+//   ball: 手のひらで包む
+const HANDLES = {
+  stick: { k: 'rod', c: [0, 0, 0], ax: 'y', shape: 'grip' },
+  ball: { k: 'ball', shape: 'hold' },
+  book: { k: 'palm', c: [0, -0.015, 0], n: [0, -1, 0], along: [0, 0, 1], shape: 'press' },
+  cup: { k: 'rod', c: [0, 0, 0], ax: 'y', off: 0.026, shape: 'grip' },
+  umbrella: { k: 'rod', c: [0, 0.09, 0], ax: 'y', shape: 'grip' },
+  sword: { k: 'rod', c: [0, 0.1, 0], ax: 'y', face: [0, 0, 1], shape: 'grip' },
+  bag: { k: 'rod', c: [0, 0, 0], ax: 'x', down: [0, -1, 0], hang: true, shape: 'grip' },
+  dumbbell: { k: 'rod', c: [0, 0, 0], ax: 'y', shape: 'grip' },
+};
+const AXV = { x: [1, 0, 0], y: [0, 1, 0], z: [0, 0, 1] };
+
+// 形（小物の座標。床の中心が原点、+z が前）。box: 中心 c・大きさ s / cyl: 円柱（中心 c・半径 r・高さ h）/ sph: 球 / rod: 棒 / cone: 円すい（上がとがる）
+//   円柱・棒・円すいの軸はふつう y。ax: 'x' | 'z' でその向きにする
 function shapesOf(type, p) {
   const s = p.size || 1;
   switch (type) {
@@ -43,6 +77,19 @@ function shapesOf(type, p) {
       for (let i = 0; i < 4; i++) { const a = i * Math.PI / 2 + Math.PI / 4; out.push({ k: 'cyl', c: [Math.cos(a) * 0.11, (h - t) / 2, Math.sin(a) * 0.11], r: 0.016, h: h - t }); }
       return out;
     }
+    case 'bench': {
+      const h = p.h, w = 1.2, d = 0.36, t = 0.05;
+      const out = [{ k: 'box', c: [0, h - t / 2, 0], s: [w, t, d] }];
+      for (const x of [-1, 1]) out.push({ k: 'box', c: [x * (w / 2 - 0.1), (h - t) / 2, 0], s: [0.05, h - t, d - 0.04] });
+      return out;
+    }
+    case 'sofa': {
+      const h = p.h, w = 1.6, d = 0.8;
+      return [{ k: 'box', c: [0, h / 2, 0], s: [w, h, d] },
+        { k: 'box', c: [0, h + 0.21, -d / 2 + 0.1], s: [w, 0.42, 0.2] },
+        { k: 'box', c: [-(w / 2 - 0.09), h + 0.11, 0.1], s: [0.18, 0.22, d - 0.2] },
+        { k: 'box', c: [w / 2 - 0.09, h + 0.11, 0.1], s: [0.18, 0.22, d - 0.2] }];
+    }
     case 'table': {
       const h = p.h, w = 1.0 * s, d = 0.6 * s, t = 0.04, leg = 0.05;
       const out = [{ k: 'box', c: [0, h - t / 2, 0], s: [w, t, d] }];
@@ -50,21 +97,65 @@ function shapesOf(type, p) {
       return out;
     }
     case 'box': { const a = 0.4 * s; return [{ k: 'box', c: [0, a / 2, 0], s: [a, a, a] }]; }
+    case 'pedestal': return [{ k: 'cyl', c: [0, p.h / 2, 0], r: 0.25 * s, h: p.h }];
+    case 'stairs': {
+      // 3 段（手前がいちばん低い）
+      const w = 0.8, rise = 0.18, tr = 0.28, out = [];
+      for (let i = 0; i < 3; i++) out.push({ k: 'box', c: [0, (i + 1) * rise / 2, (1 - i) * tr], s: [w, (i + 1) * rise, tr] });
+      return out;
+    }
+    case 'bar': {
+      const h = p.h, w = 1.5;
+      return [{ k: 'rod', c: [-w / 2, h / 2, 0], r: 0.022, h },
+        { k: 'rod', c: [w / 2, h / 2, 0], r: 0.022, h },
+        { k: 'rod', c: [0, h, 0], r: 0.017, h: w + 0.044, ax: 'x' }];
+    }
     case 'wall': return [{ k: 'box', c: [0, 1.2 * s, 0], s: [2.0 * s, 2.4 * s, 0.06] }];
     case 'stick': return [{ k: 'rod', c: [0, 0, 0], r: 0.016, h: 1.2 * s }];
     case 'ball': return [{ k: 'sph', c: [0, 0, 0], r: 0.11 * s }];
+    case 'book': return [{ k: 'box', c: [0, 0, 0], s: [0.17, 0.03, 0.24] }];
+    case 'cup': return [{ k: 'cyl', c: [0, 0, 0], r: 0.042, h: 0.1 }];
+    case 'umbrella': return [{ k: 'rod', c: [0, 0.43, 0], r: 0.012, h: 0.86 },
+      { k: 'cone', c: [0, 0.75, 0], r: 0.5, h: 0.22 }];
+    case 'sword': return [{ k: 'rod', c: [0, 0.1, 0], r: 0.016, h: 0.2 },
+      { k: 'box', c: [0, 0.212, 0], s: [0.2, 0.024, 0.035] },
+      { k: 'box', c: [0, 0.6, 0], s: [0.045, 0.75, 0.008] }];
+    case 'bag': return [{ k: 'rod', c: [0, 0, 0], r: 0.011, h: 0.13, ax: 'x' },
+      { k: 'box', c: [-0.06, -0.035, 0], s: [0.014, 0.07, 0.014] },
+      { k: 'box', c: [0.06, -0.035, 0], s: [0.014, 0.07, 0.014] },
+      { k: 'box', c: [0, -0.21, 0], s: [0.38, 0.28, 0.12] }];
+    case 'dumbbell': return [{ k: 'rod', c: [0, 0, 0], r: 0.016, h: 0.38 },
+      { k: 'cyl', c: [0, 0.12, 0], r: 0.075, h: 0.05 }, { k: 'cyl', c: [0, -0.12, 0], r: 0.075, h: 0.05 },
+      { k: 'cyl', c: [0, 0.165, 0], r: 0.062, h: 0.035 }, { k: 'cyl', c: [0, -0.165, 0], r: 0.062, h: 0.035 }];
   }
   return [];
 }
 
 function geometryOf(sh) {
+  let g;
   if (sh.k === 'box') return new THREE.BoxGeometry(...sh.s);
-  if (sh.k === 'cyl' || sh.k === 'rod') return new THREE.CylinderGeometry(sh.r, sh.r, sh.h, sh.k === 'rod' ? 16 : 32);
-  return new THREE.SphereGeometry(sh.r, 32, 20);
+  if (sh.k === 'sph') return new THREE.SphereGeometry(sh.r, 32, 20);
+  if (sh.k === 'cone') g = new THREE.ConeGeometry(sh.r, sh.h, 40);
+  else g = new THREE.CylinderGeometry(sh.r, sh.r, sh.h, sh.k === 'rod' ? 16 : 32);
+  if (sh.ax === 'x') g.rotateZ(-Math.PI / 2);
+  else if (sh.ax === 'z') g.rotateX(Math.PI / 2);
+  return g;
 }
+
+// 軸の向き（x・z）を y と入れ替える（入れ替えは自分に戻る）
+const swapAx = (ax, v) => (ax === 'x' ? V(v.y, v.x, v.z) : ax === 'z' ? V(v.x, v.z, v.y) : v.clone());
 
 // 形の表面でいちばん近い点と、外向きの向き（小物の座標で）
 function closestOn(sh, q) {
+  if (sh.ax && sh.ax !== 'y' && sh.k !== 'box' && sh.k !== 'sph') {
+    const r = closestOn({ ...sh, ax: null, c: swapAx(sh.ax, V(...sh.c)).toArray() }, swapAx(sh.ax, q));
+    return { p: swapAx(sh.ax, r.p), n: swapAx(sh.ax, r.n) };
+  }
+  if (sh.k === 'cone') {
+    // 円すい: その高さの半径の円柱として見る（おおよそ）
+    const dy = Math.max(-sh.h / 2, Math.min(sh.h / 2, q.y - sh.c[1]));
+    return closestOn({ ...sh, k: 'cyl', r: Math.max(0.005, sh.r * (0.5 - dy / sh.h)) }, q);
+  }
   const c = V(...sh.c);
   if (sh.k === 'box') {
     const h = V(...sh.s).multiplyScalar(0.5), d = q.clone().sub(c);
@@ -86,7 +177,7 @@ function closestOn(sh, q) {
     const n = q.clone().sub(c); if (n.lengthSq() < 1e-10) n.set(0, 1, 0); n.normalize();
     return { p: c.clone().addScaledVector(n, sh.r), n };
   }
-  // 円柱（cyl は縦・rod も縦）: 横の面か上下の面
+  // 円柱（縦）: 横の面か上下の面
   const d = q.clone().sub(c), hh = sh.h / 2;
   const radial = V(d.x, 0, d.z), rl = radial.length();
   const y = Math.max(-hh, Math.min(hh, d.y));
@@ -94,6 +185,19 @@ function closestOn(sh, q) {
   const side = { p: V(rn.x * sh.r, y, rn.z * sh.r).add(c), n: rn };
   if (Math.abs(d.y) > hh && rl < sh.r) return { p: V(d.x, Math.sign(d.y) * hh, d.z).add(c), n: V(0, Math.sign(d.y), 0) };
   return side;
+}
+
+/** 小物の向き: 小物の向き a1・b1 を、それぞれ a2・b2（b は a に直交するようにならす）へ向ける回転 */
+function basisRot(a1, b1, a2, b2) {
+  const mk = (a, b) => {
+    const A = a.clone().normalize();
+    const B = b.clone().addScaledVector(A, -b.dot(A));
+    if (B.lengthSq() < 1e-8) B.copy(Math.abs(A.y) < 0.9 ? V(0, 1, 0) : V(1, 0, 0)).addScaledVector(A, -(Math.abs(A.y) < 0.9 ? A.y : A.x));
+    B.normalize();
+    return new THREE.Matrix4().makeBasis(A, B, V().crossVectors(A, B));
+  };
+  const M = mk(a2, b2).multiply(mk(a1, b1).transpose());
+  return new THREE.Quaternion().setFromRotationMatrix(M);
 }
 
 export class Props {
@@ -128,7 +232,7 @@ export class Props {
     const slot = this.v.primarySlot;
     const group = new THREE.Group();
     group.userData.prop = true;
-    const it = { id: ++this._seq, type, name: T.name, grounded: T.grounded, params: { size: 1, h: type === 'table' ? 0.72 : 0.45 }, group, meshes: [], grips: [] };
+    const it = { id: ++this._seq, type, name: T.name, grounded: T.grounded, params: { size: 1, h: H_TYPES[type] || 0.45, sx: 1, sy: 1, sz: 1 }, group, meshes: [], grips: [] };
     // 置く場所: 人形の前（腰の向き）
     const hips = slot && slot.boneMap.hips;
     const hp = hips ? hips.getWorldPosition(V()) : V(0, 0.9, 0);
@@ -137,25 +241,33 @@ export class Props {
     const side = V(fwd.z, 0, -fwd.x);   // 人形の左
     const yaw = Math.atan2(fwd.x, fwd.z);
     group.quaternion.setFromAxisAngle(V(0, 1, 0), yaw);
-    const sit = type === 'chair' || type === 'stool' ? this._seatUnderBody() : null;
+    const sit = SEAT_TYPES.has(type) ? this._seatUnderBody() : null;
     if (sit) {
       it.params.h = Math.max(0.2, Math.min(0.9, sit.h));
       group.position.set(sit.x, 0, sit.z);
-    } else if (type === 'chair' || type === 'stool') {
+      // ソファは座面の真ん中が少し前（背もたれの分）
+      if (type === 'sofa') group.position.addScaledVector(fwd, -0.1);
+    } else if (SEAT_TYPES.has(type)) {
       // 立っているとき: 人形の左横に、同じ向きで置く（座らせるときは椅子を動かして、ポーズの「座る」を当てる）
-      group.position.copy(hp).addScaledVector(side, 0.7); group.position.y = 0;
+      group.position.copy(hp).addScaledVector(side, type === 'sofa' ? 1.2 : type === 'bench' ? 0.95 : 0.7); group.position.y = 0;
     } else if (type === 'wall') {
       group.position.copy(hp).addScaledVector(fwd, -0.45); group.position.y = 0;
     } else if (type === 'stick') {
       group.position.copy(hp).addScaledVector(side, 0.45).addScaledVector(fwd, 0.15); group.position.y = 0.6;
     } else if (type === 'ball') {
       group.position.copy(hp).addScaledVector(fwd, 0.5); group.position.y = 0.11;
+    } else if (!T.grounded) {
+      // 手に持つ物: 人形の左前の、腰の高さ（「右手」「左手」で手の中へ）
+      group.position.copy(hp).addScaledVector(side, 0.45).addScaledVector(fwd, 0.25); group.position.y = Math.max(0.3, hp.y - 0.1);
+    } else if (type === 'bar') {
+      group.position.copy(hp).addScaledVector(fwd, 0.45); group.position.y = 0;
     } else {
-      group.position.copy(hp).addScaledVector(fwd, type === 'table' ? 0.55 : 0.6); group.position.y = 0;
+      group.position.copy(hp).addScaledVector(fwd, type === 'table' ? 0.55 : type === 'stairs' ? 0.75 : 0.6); group.position.y = 0;
     }
     this.v.scene.add(group);
     this.items.push(it);
     this._build(it);
+    if (!T.grounded) { group.updateWorldMatrix(true, true); this._keepAboveFloor(it); }
     group.visible = !this.hidden;
     if (opts.select !== false) this.select(it);
     this.onChange();
@@ -255,6 +367,41 @@ export class Props {
   }
 
   clearAuto() { for (const it of this.items.filter(x => x.auto)) this.remove(it); }
+
+  /**
+   * 静物として置く（クロッキーの「小物だけ」）。params: 大きさ（sx・sy・sz・size・h）、q: 向き、x・z: 床の上の場所、
+   * baseY: 載せる面の高さ（いちばん下の所をそこへ）。ポーズに付いた小物と同じく auto（クロッキーの間も見える）
+   */
+  addStill(type, params, q, x, z, baseY = 0) {
+    const it = this.add(type, { select: false });
+    if (!it) return null;
+    it.auto = true;
+    Object.assign(it.params, params || {});
+    it.group.quaternion.set(...q);
+    it.group.position.set(x, 0, z);
+    this._build(it);
+    it.group.updateWorldMatrix(true, true);
+    let minY = Infinity;
+    for (const m of it.meshes) {
+      const pos = m.geometry.attributes.position, w = V();
+      for (let i = 0; i < pos.count; i++) { w.fromBufferAttribute(pos, i).applyMatrix4(m.matrixWorld); if (w.y < minY) minY = w.y; }
+    }
+    it.group.position.y = baseY - (isFinite(minY) ? minY : 0);
+    it.group.updateWorldMatrix(true, true);
+    it.group.visible = true;
+    return it;
+  }
+
+  /** 見た目: null（いつもの）| 'clay'（粘土）| 'plaster'（石膏）。クロッキーの間だけ */
+  setLook(look) {
+    this.look = look;
+    if (!this._looks) this._looks = {
+      clay: new THREE.MeshStandardMaterial({ color: 0xd6cec2, roughness: 0.72, metalness: 0 }),
+      plaster: new THREE.MeshStandardMaterial({ color: 0xf1eee8, roughness: 0.92, metalness: 0 }),
+    };
+    for (const it of this.items) for (const m of it.meshes) m.material = this._matOf(it);
+  }
+  _matOf(it) { return this.look ? this._looks[this.look] : this.selected === it ? this.matSel : this.mat; }
 
   applyPoseProps(defs, mirror = false) {
     this.clearAuto();
@@ -360,8 +507,10 @@ export class Props {
     for (const m of it.meshes) { it.group.remove(m); m.geometry.dispose(); }
     it.meshes = [];
     it.shapes = shapesOf(it.type, it.params);
+    const p = it.params;
+    it.group.scale.set(p.sx || 1, p.sy || 1, p.sz || 1);
     for (const sh of it.shapes) {
-      const m = new THREE.Mesh(geometryOf(sh), this.selected === it ? this.matSel : this.mat);
+      const m = new THREE.Mesh(geometryOf(sh), this._matOf(it));
       m.position.set(...sh.c);
       m.castShadow = true; m.receiveShadow = true;
       m.userData.propItem = it;
@@ -374,30 +523,51 @@ export class Props {
     const b = new THREE.Box3();
     for (const sh of it.shapes) {
       const c = V(...sh.c);
-      const e = sh.k === 'box' ? V(...sh.s).multiplyScalar(0.5) : sh.k === 'sph' ? V(sh.r, sh.r, sh.r) : V(sh.r, sh.h / 2, sh.r);
+      const e = sh.k === 'box' ? V(...sh.s).multiplyScalar(0.5) : sh.k === 'sph' ? V(sh.r, sh.r, sh.r) : swapAx(sh.ax, V(sh.r, sh.h / 2, sh.r));
       b.expandByPoint(c.clone().sub(e)); b.expandByPoint(c.clone().add(e));
     }
     it.center = b.getCenter(V());
-    return b.getSize(V()).length() / 2;
+    it.dims = b.getSize(V()).multiply(it.group.scale);   // 本当の大きさ（m）
+    return it.dims.length() / 2;
   }
 
-  /** 大きさ（椅子・スツール・台は座面・天板の高さ）を変える。dir = +1 / -1 */
-  resize(dir, it = this.selected) {
+  /**
+   * 大きさを変える。dir = +1 / -1。axis: 'all'（全体）| 'y'（縦）| 'x'（横）| 'z'（奥行き）
+   *   縦: 座面・天板の高さがある物（椅子・台など）はその高さを 2cm ずつ、ほかは縦だけ 1 割ずつ
+   */
+  resize(dir, it = this.selected, axis = 'all') {
     if (!it) return;
     const p = it.params;
-    if (it.type === 'chair' || it.type === 'stool' || it.type === 'table') p.h = Math.max(0.2, Math.min(1.1, Math.round((p.h + dir * 0.02) * 100) / 100));
-    else p.size = Math.max(0.4, Math.min(2.5, Math.round((p.size + dir * 0.1) * 10) / 10));
+    const clampF = x => Math.max(0.25, Math.min(4, Math.round(x * 100) / 100));
+    const k = dir > 0 ? 1.1 : 1 / 1.1;
+    if (axis === 'y' && H_TYPES[it.type]) {
+      const sy = p.sy || 1, top = it.type === 'bar' ? 2.4 : 1.1;
+      const hh = Math.max(0.2, Math.min(top, Math.round((p.h * sy + dir * 0.02) * 100) / 100));
+      p.h = hh / sy;
+    } else if (axis === 'all') { p.sx = clampF(p.sx * k); p.sy = clampF(p.sy * k); p.sz = clampF(p.sz * k); }
+    else { const key = 's' + axis; p[key] = clampF((p[key] || 1) * k); }
     this._build(it);
+    if (!it.grounded) { it.group.updateWorldMatrix(true, true); if (!it.grips.length) this._keepAboveFloor(it); }
     // 手でつないでいたら、新しい形に付け直す
     for (const g of [...it.grips]) this.grip(g.key, it, true);
     this.onChange();
   }
 
-  sizeLabel(it = this.selected) {
-    if (!it) return '';
-    if (it.type === 'chair' || it.type === 'stool') return `座面 ${Math.round(it.params.h * 100)}cm`;
-    if (it.type === 'table') return `高さ ${Math.round(it.params.h * 100)}cm`;
-    return `×${it.params.size.toFixed(1)}`;
+  /** 大きさの表示（cm）。axis は resize と同じ */
+  sizeLabel(it = this.selected, axis = 'all') {
+    if (!it || !it.dims) return '';
+    const cm = x => Math.round(x * 100);
+    const d = it.dims;
+    if (axis === 'x') return `幅 ${cm(d.x)}cm`;
+    if (axis === 'z') return `奥行き ${cm(d.z)}cm`;
+    if (axis === 'y') {
+      if (H_TYPES[it.type]) {
+        const hh = cm(it.params.h * (it.params.sy || 1));
+        return (SEAT_TYPES.has(it.type) ? '座面 ' : it.type === 'bar' ? '棒の高さ ' : '高さ ') + hh + 'cm';
+      }
+      return (/^(stick|sword|umbrella|dumbbell)$/.test(it.type) ? '長さ ' : '高さ ') + cm(d.y) + 'cm';
+    }
+    return `${cm(d.x)}×${cm(d.z)}×${cm(d.y)}cm`;
   }
 
   // ---- 選ぶ ---------------------------------------------------------------
@@ -405,7 +575,7 @@ export class Props {
     if (this.selected === it) { this._syncRings(); return; }
     const prev = this.selected;
     this.selected = it;
-    for (const x of [prev, it]) if (x) for (const m of x.meshes) m.material = x === this.selected ? this.matSel : this.mat;
+    for (const x of [prev, it]) if (x) for (const m of x.meshes) m.material = this._matOf(x);
     if (it && this.v.selected) { this._selecting = true; try { this.v.select(null); } finally { this._selecting = false; } }
     this._syncRings();
     this.onSelect(it);
@@ -538,15 +708,20 @@ export class Props {
     this._driveHands(it);
   }
 
-  /** 床より下へは入れない。床に置く物は、床の近く（3cm）まで下ろしたら床にぴったり置く */
+  /** 床より下へは入れない。床に置く物は、床の近く（3cm）まで下ろしたら床にぴったり置く。手に持つ物は、いちばん下の所を床の上に */
   _keepAboveFloor(it) {
     const p = it.group.position;
     if (it.grounded) { if (p.y < 0.03) p.y = 0; return; }
-    if (it.type === 'ball') { p.y = Math.max(0.11 * it.params.size, p.y); return; }
-    // 棒: 下の端が床より下へ行かないように
-    const a = V(0, 1, 0).applyQuaternion(it.group.quaternion);
-    const half = 0.6 * it.params.size * Math.abs(a.y);
-    p.y = Math.max(half + 0.016, p.y);
+    it.group.updateWorldMatrix(true, true);
+    let minY = Infinity;
+    for (const m of it.meshes) {
+      const g = m.geometry;
+      if (!g.boundingBox) g.computeBoundingBox();
+      // 形の頂点の数は少ないので、頂点で見る（回した箱でも余らない）
+      const pos = g.attributes.position, w = V();
+      for (let i = 0; i < pos.count; i++) { w.fromBufferAttribute(pos, i).applyMatrix4(m.matrixWorld); if (w.y < minY) minY = w.y; }
+    }
+    if (isFinite(minY) && minY < 0) { p.y -= minY; it.group.updateWorldMatrix(true, true); }
   }
 
   pointerUp(e) {
@@ -588,20 +763,34 @@ export class Props {
     const L = mid ? mid.getWorldPosition(V()).distanceTo(f.origin) : 0.09;
     const sgn = side === 'L' ? 1 : -1;
     const PC = f.origin.clone().addScaledVector(f.along, L * 0.9).addScaledVector(f.palmar, 0.02);
-    // 棒・ボールをまだだれも持っていなければ、小物の方を手の中へ動かす（手は今の形のまま）
+    // 手に持つ物をまだだれも持っていなければ、小物の方を手の中へ動かす（手は今の形のまま）
     if (!it.grounded && !it.grips.length) {
-      if (it.type === 'stick') {
-        const Q = f.origin.clone().addScaledVector(f.along, L * GRIP_A).addScaledVector(f.palmar, GRIP_P);
-        it.group.quaternion.setFromUnitVectors(V(0, 1, 0), f.radial.clone());
-        // 持つ所: 指定がなければ棒の真ん中（it.holdAt: 棒の中心からの距離、+ は親指の側）
-        it.group.position.copy(Q).addScaledVector(f.radial, -(it.holdAt || 0));
+      const H = HANDLES[it.type] || HANDLES.stick;
+      const sc = it.group.scale;
+      if (H.k === 'rod') {
+        // 握る軸を親指の側へ（down: 指の向きへ / face: 手のひらの向きへ）。握る所を握りこぶしの中へ
+        const Q = f.origin.clone().addScaledVector(f.along, L * GRIP_A).addScaledVector(f.palmar, GRIP_P + (H.off || 0) * Math.max(sc.x, sc.z));
+        const a = V(...AXV[H.ax]);
+        const q = H.down ? basisRot(a, V(...H.down), f.radial, H.hang ? V(0, -1, 0) : f.along)
+          : H.face ? basisRot(a, V(...H.face), f.radial, f.palmar)
+          : new THREE.Quaternion().setFromUnitVectors(a, f.radial.clone());
+        it.group.quaternion.copy(q);
+        // 持つ所: 指定がなければ決めた握る所（it.holdAt: そこからの距離、+ は親指の側）
+        const gl = V(...H.c).addScaledVector(a, it.holdAt || 0).multiply(sc).applyQuaternion(q);
+        it.group.position.copy(Q).sub(gl);
+      } else if (H.k === 'palm') {
+        // 手のひらに載せる: 当てる所を手のひらの真ん中へ、外向きを手のひらと向かい合わせに
+        const q = basisRot(V(...H.n), V(...H.along), f.palmar.clone().negate(), f.along);
+        it.group.quaternion.copy(q);
+        const P = f.origin.clone().addScaledVector(f.along, L * 0.75).addScaledVector(f.palmar, 0.014);
+        it.group.position.copy(P).sub(V(...H.c).multiply(sc).applyQuaternion(q));
       } else {
-        const r = 0.11 * it.params.size;
+        const r = 0.11 * it.params.size * Math.max(sc.x, sc.y, sc.z);
         // ボールの中心: 手のひらの真ん中（指の付け根寄り）から、手のひらの向きへ半径＋手の厚みの半分
         it.group.position.copy(f.origin).addScaledVector(f.along, L * 0.85).addScaledVector(f.palmar, r + 0.015);
       }
       it.group.updateWorldMatrix(true, true);
-      if (!keepShape && this.onHandShape) this.onHandShape(side, it.type === 'stick' ? 'grip' : 'hold');
+      if (!keepShape && this.onHandShape) this.onHandShape(side, H.shape);
       it.grips.push({ key, rel: this._propRT(it).invert().multiply(this._limbRT(key)) });
       this.onChange();
       return true;
@@ -617,13 +806,16 @@ export class Props {
     }
     if (!best) return false;
     const toW = p => p.clone().applyMatrix4(it.group.matrixWorld);
-    const nW = best.n.clone().transformDirection(it.group.matrixWorld);
+    // 外向き: 縦・横・奥行きを別々に伸ばしたときも面に直交するように
+    const nW = best.n.clone().applyMatrix3(new THREE.Matrix3().getNormalMatrix(it.group.matrixWorld)).normalize();
     let along, radial, palmar, wrist, shape;
     if (best.sh.k === 'rod') {
       // 棒: 親指の側（radial）を棒の向きに。棒は握ったこぶしの中を通す
-      const a = V(0, 1, 0).applyQuaternion(it.group.quaternion);
+      const al = V(...AXV[best.sh.ax || 'y']);
+      const a = al.clone().applyQuaternion(it.group.quaternion);
+      const hl = best.sh.h / 2 * Math.abs(al.dot(it.group.scale));
       const ctr = V(...best.sh.c).applyMatrix4(it.group.matrixWorld);
-      const t = Math.max(-best.sh.h / 2 + 0.05, Math.min(best.sh.h / 2 - 0.05, PC.clone().sub(ctr).dot(a)));
+      const t = Math.max(-hl + 0.05, Math.min(hl - 0.05, PC.clone().sub(ctr).dot(a)));
       const Q = ctr.clone().addScaledVector(a, t);
       radial = f.radial.dot(a) >= 0 ? a.clone() : a.clone().negate();
       along = f.along.clone().addScaledVector(radial, -f.along.dot(radial));
@@ -679,7 +871,7 @@ export class Props {
     const up = V(0, 1, 0);
     let best = null;
     for (const sh of it.shapes) {
-      if (sh.k === 'rod') continue;
+      if (sh.k === 'rod' || sh.k === 'cone' || (sh.ax && sh.ax !== 'y')) continue;
       // 上の面の上で、足の裏の真ん中にいちばん近い点
       const c = V(...sh.c);
       let pW;

@@ -139,7 +139,7 @@ class Slot {
 
 export class Viewer {
   /** この viewer.js の版（app.js の BUILD と同じでなければ、古いファイルが混ざっている） */
-  static BUILD = '2026-11-06a';
+  static BUILD = '2026-11-06b';
 
   constructor(canvas) {
     this.canvas = canvas;
@@ -1632,6 +1632,19 @@ export class Viewer {
     return out;
   }
 
+  /** 胸像の切り口の高さ（世界の y）。null で切らない */
+  setBustCut(y) {
+    this.bustPlane = y == null ? null : new THREE.Plane(new THREE.Vector3(0, 1, 0), -y);
+    this._applyClipping();
+  }
+
+  /** 人形（2 体目も）を隠す。クロッキーの「小物だけ」「石膏像」の幾何形体 */
+  setDollHidden(on) {
+    this.dollHidden = !!on;
+    this.container.visible = !on;
+    if (this.second && this.second.holder) this.second.holder.visible = !on;
+  }
+
   get _partOn() { return this.partView === 'hand' || this.partView === 'foot'; }
 
   /** 手・足だけを見るときに残すボーン（前腕／すね と、その先すべて） */
@@ -1723,7 +1736,9 @@ export class Viewer {
 
   _applyClipping() {
     const on = this._partOn;
-    const planes = on ? [this.clipPlane] : null;
+    // 胸像（クロッキーの石膏像）: 胸の高さの水平な面より上だけを出す
+    const bust = !on && this.bustPlane;
+    const planes = on ? [this.clipPlane] : bust ? [this.bustPlane] : null;
     const keepBy = new Map();
     for (const s of SLOTS) keepBy.set(s.key, this._partBones(this.slots[s.key]));
     for (const s of SLOTS) {
@@ -1739,7 +1754,7 @@ export class Viewer {
         if (!mat) continue;
         mat.clippingPlanes = planes;
         mat.clipShadows = true;
-        if (!o.userData.keepSide) mat.side = on ? THREE.DoubleSide : THREE.FrontSide;
+        if (!o.userData.keepSide) mat.side = on || bust ? THREE.DoubleSide : THREE.FrontSide;
         mat.needsUpdate = true;
       }
     }
@@ -1868,7 +1883,10 @@ export class Viewer {
     const aspect = Math.max(0.3, this.camera.aspect || 1);
     let center, radius;
     const f = this._partFrame();
-    if (f) {
+    if (this.frameOverride) {
+      // クロッキーの「小物だけ」「石膏像」: 決めた範囲を見る
+      center = this.frameOverride.center.clone(); radius = this.frameOverride.radius;
+    } else if (f) {
       // 手・足は骨の向きを基準に回す（手のどの面を見せるかを変える）
       dir.applyQuaternion(f.quat);
       center = this.controls.target.clone();

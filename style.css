@@ -148,6 +148,7 @@ body.collapsed #grip { padding: 6px 0 2px; }
   scrollbar-width: none;
 }
 .scroller::-webkit-scrollbar { display: none; }
+.scroller[hidden], .row[hidden], .hint[hidden], #cqPoseOpts[hidden] { display: none; }
 
 .chip {
   flex: none; white-space: nowrap;
@@ -759,6 +760,7 @@ body.posePanel #viewBar .qb { flex: 0 0 auto; }
 /* クロッキーの記録 */
 #cqLog { max-height: 42vh; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; margin: 6px 0 10px; }
 #cqLog .clRow { display: flex; gap: 4px; }
+#cqLog .clRow .clName { padding: 8px 10px; font-size: 14px; }
 #cqLog .clRow .clPick { flex: 1; text-align: left; display: flex; align-items: center; gap: 8px; padding: 6px 10px; }
 #cqLog .clRow .ppStar { flex: 0 0 38px; padding: 0; font-size: 16px; color: var(--muted); }
 #cqLog .clRow .ppStar.fav { color: #ffc94d; }
@@ -790,11 +792,15 @@ body.croquis #lockBar { display: none; }
 /* 小物（v67） */
 #propPop { position: fixed; z-index: 36; left: 8px; bottom: calc(var(--view-b, 0px) + 100px); width: min(340px, calc(100vw - 16px));
   padding: 10px; border-radius: 16px; background: rgba(24, 28, 35, 0.94); border: 1px solid var(--line);
-  -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); }
+  -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+  max-height: calc(100vh - var(--view-b, 0px) - 160px); overflow-y: auto; }
 #propPop[hidden] { display: none; }
 #propPop .qpTitle { font-size: 12px; color: var(--muted); margin: 0 2px 8px; }
 #propPop .qpGrid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
 #propPop .qpGrid button { padding: 9px 4px; font-size: 13px; border-radius: 10px; }
+#propPop .qpSub { grid-column: 1 / -1; font-size: 11px; color: var(--muted); margin: 4px 2px 0; }
+#propPop .qpSub:first-child { margin-top: 0; }
+#propBar .qb.axis { border: 1px solid var(--line, rgba(255,255,255,0.18)); min-width: 44px; font-size: 12px; }
 #propPop #propPopClear { margin-top: 8px; width: 100%; }
 #propPop #propPopClear[hidden] { display: none; }
 #propPop .hint { margin: 8px 2px 0; }

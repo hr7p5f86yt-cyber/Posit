@@ -183,10 +183,11 @@
   <div class="qpTitle">小物を置く</div>
   <div class="qpGrid" id="propPopGrid"></div>
   <button id="propPopClear" class="ghost small" hidden>小物をすべて消す</button>
-  <p class="hint tiny">小物を押したまま動かします。選ぶと出る輪で回します。座っているときの椅子・スツールは、お尻の下に置きます</p>
+  <p class="hint tiny">小物を押したまま動かします。選ぶと出る輪で回します。座っているときの椅子・スツール・ベンチ・ソファは、お尻の下に置きます。大きさは上の帯で、全体・縦・横・奥行きを切り替えて変えます</p>
 </div>
 <div id="propBar" hidden>
   <span id="propBarName"></span>
+  <button id="propBarAxis" class="qb axis" title="大きさを変える向き（押すたびに 全体・縦・横・奥行き）">全体</button>
   <button id="propBarSmaller" class="qb" aria-label="小さく・低く">−</button>
   <span id="propBarSize"></span>
   <button id="propBarBigger" class="qb" aria-label="大きく・高く">＋</button>
@@ -347,10 +348,15 @@
 
   <!-- クロッキー -->
   <div class="page" data-page="croquis" hidden>
-    <div class="sub">1ポーズの時間</div>
+    <div class="sub">描く物</div>
+    <div class="scroller" id="cqSubject"></div>
+    <div class="scroller" id="cqPropMode" hidden></div>
+    <p class="hint tiny" id="cqSubjectHint" hidden></p>
+    <div class="sub">1枚の時間</div>
     <div class="scroller" id="cqSeconds"></div>
     <div class="sub">枚数</div>
     <div class="scroller" id="cqCounts"></div>
+    <div id="cqPoseOpts">
     <div class="sub">出題するカテゴリ<span class="dim">（選ばなければ全部）</span></div>
     <div class="grid small" id="cqCats"></div>
     <div class="sub">出題中の見え方</div>
@@ -362,11 +368,12 @@
       <input type="checkbox" id="cqHandShape"></label>
     <div class="sub">体型</div>
     <div class="scroller" id="cqBody"></div>
+    </div>
     <div class="sub">画角<span class="dim">（向き・高さ・レンズを毎回変えます）</span></div>
     <div class="scroller" id="cqAngle"></div>
-    <label class="row toggle"><span class="lbl">面の線を出す</span>
+    <label class="row toggle" id="cqWireRow"><span class="lbl">面の線を出す</span>
       <input type="checkbox" id="cqWire"></label>
-    <label class="row toggle"><span class="lbl">ポーズごとに左右をランダムに反転</span>
+    <label class="row toggle" id="cqMirrorRow"><span class="lbl">ポーズごとに左右をランダムに反転</span>
       <input type="checkbox" id="cqMirror"></label>
     <label class="row toggle"><span class="lbl">終わる前に音と振動で知らせる<span class="dim">（残り3秒）</span></span>
       <input type="checkbox" id="cqBeep"></label>

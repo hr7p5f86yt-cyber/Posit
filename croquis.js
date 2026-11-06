@@ -33,7 +33,13 @@ export class CroquisSession {
   _pick() {
     // 決まった順番（前回と同じ出題）
     const all = this.extra && this.extra.length ? [...POSE_PRESETS, ...this.extra] : POSE_PRESETS;
-    if (this.sequence) return all.find(p => p.id === this.sequence[this.index]) || null;
+    if (this.sequence) {
+      const s = this.sequence[this.index];
+      // 小物だけ・石膏像は、出題の中身（オブジェクト）をそのまま出す
+      return s && typeof s === 'object' ? s : all.find(p => p.id === s) || null;
+    }
+    // 小物だけ・石膏像: 毎回作る
+    if (this.gen) return this.gen(this.index);
     // 2人のポーズはクロッキーには出さない（1体だけで描く）
     let pool = all.filter(p => !p.duo);
     if (this.categories && this.categories.size) {
@@ -55,6 +61,7 @@ export class CroquisSession {
     this.categories = config.categories || null;
     this.extra = config.extra || null;   // マイポーズ（分類は 'mine'）
     this.sequence = config.sequence && config.sequence.length ? config.sequence.slice() : null;
+    this.gen = config.gen || null;     // () => 出題（小物だけ・石膏像）
     if (this.sequence) this.count = this.sequence.length;
     this.index = 0;
     this.used = new Set();
