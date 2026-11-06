@@ -11,7 +11,7 @@ import { poseThumbSVG, thumbFromViewer } from './poseThumbs.js';
 import { REGIONS } from './anatomy.js';
 import * as THREE from 'three';
 
-export const BUILD = '2026-11-06b';
+export const BUILD = '2026-11-06c';
 
 const SAMPLE_URL = 'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r169/examples/models/gltf/Xbot.glb';
 const SETTINGS_KEY = 'posit.settings.v1';
@@ -136,7 +136,9 @@ function showTab(name, expand = true) {
   for (const p of document.querySelectorAll('.page')) {
     p.hidden = p.dataset.page !== name;
   }
-  if (expand && sheetStage === 0) setSheetStage(1);
+  // クロッキーの設定は画面いっぱいに出す（下のタブは残す）
+  document.body.classList.toggle('cqPage', name === 'croquis');
+  if (expand && sheetStage === 0 && name !== 'croquis') setSheetStage(1);
   if (window.__positRelayout) window.__positRelayout();
 }
 for (const b of document.querySelectorAll('#tabbar button')) {
@@ -2050,76 +2052,76 @@ function buildChips(wrapId, options, isOn, onPick, cls) {
   }
 }
 
-function buildCroquisChips() {
-  buildChips('cqSubject', CQ_SUBJECTS,
-    o => settings.cqSubject === o.value,
-    o => { settings.cqSubject = o.value; saveSettings(); buildCroquisChips(); });
-  const sub = settings.cqSubject;
-  $('cqPropMode').hidden = sub !== 'props';
-  if (sub === 'props') {
-    buildChips('cqPropMode', CQ_PROP_MODES,
-      o => settings.cqPropMode === o.value,
-      o => { settings.cqPropMode = o.value; saveSettings(); buildCroquisChips(); });
+/** プルダウン（select）を作る。options: [{ value, label }]、cur: いまの値 */
+function buildSelect(id, options, cur, onPick) {
+  const sel = $(id);
+  sel.innerHTML = '';
+  for (const o of options) {
+    const op = document.createElement('option');
+    op.value = String(o.value);
+    op.textContent = o.label;
+    if (o.value === cur) op.selected = true;
+    sel.appendChild(op);
   }
-  $('cqSubjectHint').hidden = sub === 'pose';
+  sel.onchange = () => {
+    const o = options.find(x => String(x.value) === sel.value);
+    if (o) onPick(o);
+  };
+}
+
+function buildCroquisChips() {
+  const save = () => { saveSettings(); buildCroquisChips(); };
+  buildSelect('cqSubject', CQ_SUBJECTS, settings.cqSubject, o => { settings.cqSubject = o.value; save(); });
+  const sub = settings.cqSubject, pose = sub === 'pose';
+  $('cqPropModeRow').hidden = sub !== 'props';
+  buildSelect('cqPropMode', CQ_PROP_MODES, settings.cqPropMode, o => { settings.cqPropMode = o.value; save(); });
+  $('cqSubjectHint').hidden = pose;
   $('cqSubjectHint').textContent = sub === 'props'
     ? (settings.cqPropMode === 'single' ? '小物を 1 つずつ、置き方・大きさ・見る向き・ライトを毎回変えて出します。人形は隠します。'
       : '小物を 1〜4 個、台の上か床に静物のように並べて出します。人形は隠します。')
-    : '胸像（人形の頭〜胸を石膏にしたもの。顔の向き・表情を毎回変えます）と、幾何形体（立方体・円柱・円すい・球・六角柱など）を交互に近い割合で出します。ライトの向きも毎回変えます。';
-  $('cqPoseOpts').hidden = sub !== 'pose';
-  $('cqMirrorRow').hidden = sub !== 'pose';
-  $('cqWireRow').hidden = sub !== 'pose';
-  buildChips('cqSeconds',
-    CROQUIS_SECONDS.map(s => ({ value: s, label: s >= 60 ? `${s / 60}分` : `${s}秒` })),
-    o => settings.seconds === o.value,
-    o => { settings.seconds = o.value; saveSettings(); buildCroquisChips(); });
+    : '胸像（人形の頭〜胸を石膏にしたもの。顔の向き・表情を毎回変えます）と、幾何形体（立方体・円柱・円すい・球・六角柱など）を半々くらいで出します。ライトの向きも毎回変えます。';
+  // 人物のときだけの設定
+  $('cqPoseOpts').hidden = !pose;
+  for (const id of ['cqModelRow', 'cqFrameRow', 'cqWireRow']) $(id).hidden = !pose;
 
-  buildChips('cqCounts',
-    CROQUIS_COUNTS.map(c => ({ value: c, label: c === 0 ? '制限なし' : `${c}枚` })),
-    o => settings.count === o.value,
-    o => { settings.count = o.value; saveSettings(); buildCroquisChips(); });
-
-  buildChips('cqModel',
-    VIEW_MODES.map(m => ({ value: m.key, label: m.name })),
-    o => settings.cqModel === o.value,
-    o => { settings.cqModel = o.value; saveSettings(); buildCroquisChips(); });
-
-  buildChips('cqFrame',
-    FRAMES.map(f => ({ value: f.key, label: f.label })),
-    o => settings.cqFrame === o.value,
-    o => { settings.cqFrame = o.value; saveSettings(); buildCroquisChips(); });
-
-  const sided = settings.cqFrame === 'hand' || settings.cqFrame === 'foot';
-  $('cqSide').hidden = !sided;
-  if (sided) {
-    buildChips('cqSide', CQ_SIDES,
-      o => settings.cqSide === o.value,
-      o => { settings.cqSide = o.value; saveSettings(); buildCroquisChips(); });
-  }
-  $('cqHandShapeRow').hidden = settings.cqFrame !== 'hand';
+  buildSelect('cqSeconds', CROQUIS_SECONDS.map(s => ({ value: s, label: s >= 60 ? `${s / 60}分` : `${s}秒` })),
+    settings.seconds, o => { settings.seconds = o.value; save(); });
+  buildSelect('cqCounts', CROQUIS_COUNTS.map(c => ({ value: c, label: c === 0 ? '制限なし' : `${c}枚` })),
+    settings.count, o => { settings.count = o.value; save(); });
+  buildSelect('cqModel', VIEW_MODES.map(m => ({ value: m.key, label: m.name })),
+    settings.cqModel, o => { settings.cqModel = o.value; save(); });
+  buildSelect('cqFrame', FRAMES.map(f => ({ value: f.key, label: f.label })),
+    settings.cqFrame, o => { settings.cqFrame = o.value; save(); });
+  const sided = pose && (settings.cqFrame === 'hand' || settings.cqFrame === 'foot');
+  $('cqSideRow').hidden = !sided;
+  buildSelect('cqSide', CQ_SIDES, settings.cqSide, o => { settings.cqSide = o.value; save(); });
+  $('cqHandShapeRow').hidden = !pose || settings.cqFrame !== 'hand';
   $('cqHandShape').checked = settings.cqHandShape;
-
-  buildChips('cqBody', CQ_BODIES,
-    o => settings.cqBody === o.value,
-    o => { settings.cqBody = o.value; saveSettings(); buildCroquisChips(); });
+  buildSelect('cqBody', CQ_BODIES, settings.cqBody, o => { settings.cqBody = o.value; save(); });
+  buildSelect('cqAngle', CQ_ANGLES, settings.cqAngle, o => { settings.cqAngle = o.value; save(); });
 
   $('cqWire').checked = settings.cqWire;
   $('cqMirror').checked = settings.cqMirror;
   $('cqBeep').checked = settings.cqBeep;
 
-  buildChips('cqAngle', CQ_ANGLES,
-    o => settings.cqAngle === o.value,
-    o => { settings.cqAngle = o.value; saveSettings(); buildCroquisChips(); });
-
-  buildChips('cqCats',
-    [...POSE_CATEGORIES.map(c => ({ value: c.key, label: c.name })), ...(myPoses.length ? [{ value: 'mine', label: 'マイポーズ' }] : [])],
+  // カテゴリ（いくつでも選べる）: 開くと並ぶ。閉じているときは選んだ物の名前
+  const cats = [...POSE_CATEGORIES.map(c => ({ value: c.key, label: c.name })), ...(myPoses.length ? [{ value: 'mine', label: 'マイポーズ' }] : [])];
+  buildChips('cqCats', cats,
     o => settings.cqCats.includes(o.value),
     o => {
       const i = settings.cqCats.indexOf(o.value);
       if (i >= 0) settings.cqCats.splice(i, 1); else settings.cqCats.push(o.value);
-      saveSettings();
-      buildCroquisChips();
+      save();
     }, '');
+  const chosen = cats.filter(c => settings.cqCats.includes(c.value)).map(c => c.label);
+  $('cqCatsVal').textContent = !chosen.length ? '全部' : chosen.length <= 2 ? chosen.join('・') : `${chosen.slice(0, 2).join('・')} ほか${chosen.length - 2}`;
+  // まとまりの中で最後に見えている行は、下の線を出さない
+  for (const g of document.querySelectorAll('.cqGroup')) {
+    const rows = [...g.children].filter(r => r.classList.contains('cqRow'));
+    rows.forEach(r => r.classList.remove('lastShown'));
+    const last = rows.filter(r => !r.hidden).pop();
+    if (last) last.classList.add('lastShown');
+  }
 }
 
 // ---- 関節一覧 --------------------------------------------------------------

@@ -348,38 +348,57 @@
 
   <!-- クロッキー -->
   <div class="page" data-page="croquis" hidden>
-    <div class="sub">描く物</div>
-    <div class="scroller" id="cqSubject"></div>
-    <div class="scroller" id="cqPropMode" hidden></div>
-    <p class="hint tiny" id="cqSubjectHint" hidden></p>
-    <div class="sub">1枚の時間</div>
-    <div class="scroller" id="cqSeconds"></div>
-    <div class="sub">枚数</div>
-    <div class="scroller" id="cqCounts"></div>
+    <h2 class="cqTitle">クロッキー</h2>
+
+    <section class="cqGroup">
+      <label class="cqRow"><span class="lbl">描く物</span><select id="cqSubject"></select></label>
+      <label class="cqRow" id="cqPropModeRow" hidden><span class="lbl">小物の出し方</span><select id="cqPropMode"></select></label>
+      <p class="cqNote" id="cqSubjectHint" hidden></p>
+    </section>
+
+    <div class="cqHead">時間</div>
+    <section class="cqGroup">
+      <label class="cqRow"><span class="lbl">1枚の時間</span><select id="cqSeconds"></select></label>
+      <label class="cqRow"><span class="lbl">枚数</span><select id="cqCounts"></select></label>
+    </section>
+
     <div id="cqPoseOpts">
-    <div class="sub">出題するカテゴリ<span class="dim">（選ばなければ全部）</span></div>
-    <div class="grid small" id="cqCats"></div>
-    <div class="sub">出題中の見え方</div>
-    <div class="scroller" id="cqModel"></div>
-    <div class="sub">見る範囲</div>
-    <div class="scroller" id="cqFrame"></div>
-    <div class="scroller" id="cqSide" hidden></div>
-    <label class="row toggle" id="cqHandShapeRow" hidden><span class="lbl">手の形も毎回変える</span>
-      <input type="checkbox" id="cqHandShape"></label>
-    <div class="sub">体型</div>
-    <div class="scroller" id="cqBody"></div>
+      <div class="cqHead">出題するポーズ</div>
+      <section class="cqGroup">
+        <details class="cqRow cqMulti" id="cqCatsBox">
+          <summary><span class="lbl">カテゴリ</span><span class="val" id="cqCatsVal">全部</span></summary>
+          <div class="cqCatsWrap">
+            <div class="grid small" id="cqCats"></div>
+            <p class="cqNote">選ばなければ全部から出します</p>
+          </div>
+        </details>
+        <label class="cqRow"><span class="lbl">体型</span><select id="cqBody"></select></label>
+        <label class="cqRow toggle" id="cqMirrorRow"><span class="lbl">ポーズごとに左右をランダムに反転</span>
+          <input type="checkbox" id="cqMirror"></label>
+      </section>
     </div>
-    <div class="sub">画角<span class="dim">（向き・高さ・レンズを毎回変えます）</span></div>
-    <div class="scroller" id="cqAngle"></div>
-    <label class="row toggle" id="cqWireRow"><span class="lbl">面の線を出す</span>
-      <input type="checkbox" id="cqWire"></label>
-    <label class="row toggle" id="cqMirrorRow"><span class="lbl">ポーズごとに左右をランダムに反転</span>
-      <input type="checkbox" id="cqMirror"></label>
-    <label class="row toggle"><span class="lbl">終わる前に音と振動で知らせる<span class="dim">（残り3秒）</span></span>
-      <input type="checkbox" id="cqBeep"></label>
-    <p class="hint">直近の履歴30件と重ならないように出題します。進行中は画面が消えません。
-      終わると元の見え方に戻ります。</p>
-    <div class="bar">
+
+    <div class="cqHead">見え方</div>
+    <section class="cqGroup">
+      <label class="cqRow" id="cqModelRow"><span class="lbl">表示するモデル</span><select id="cqModel"></select></label>
+      <label class="cqRow" id="cqFrameRow"><span class="lbl">見る範囲</span><select id="cqFrame"></select></label>
+      <label class="cqRow" id="cqSideRow" hidden><span class="lbl">左右</span><select id="cqSide"></select></label>
+      <label class="cqRow toggle" id="cqHandShapeRow" hidden><span class="lbl">手の形も毎回変える</span>
+        <input type="checkbox" id="cqHandShape"></label>
+      <label class="cqRow"><span class="lbl">画角</span><select id="cqAngle"></select></label>
+      <label class="cqRow toggle" id="cqWireRow"><span class="lbl">面の線を出す</span>
+        <input type="checkbox" id="cqWire"></label>
+    </section>
+    <p class="cqNote" id="cqAngleNote">「いろいろな画角」にすると、見る向き・高さ・レンズを 1 枚ごとに変えます</p>
+
+    <div class="cqHead">お知らせ</div>
+    <section class="cqGroup">
+      <label class="cqRow toggle"><span class="lbl">終わる前に音と振動で知らせる<span class="dim">（残り3秒）</span></span>
+        <input type="checkbox" id="cqBeep"></label>
+    </section>
+    <p class="cqNote">直近の履歴30件と重ならないように出題します。進行中は画面が消えません。終わると元の見え方に戻ります。</p>
+
+    <div class="bar cqStart">
       <button id="btnCroquis" class="primary big">はじめる</button>
     </div>
   </div>

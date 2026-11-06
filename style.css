@@ -840,3 +840,71 @@ body.posePanel #propBar { left: calc(clamp(150px, 34vw, 300px) + 8px); max-width
 #propBar .qb[hidden] { display: none; }
 
 /* ===== style.css ここまで ===== */
+
+/* ---------- クロッキーの設定（画面いっぱい。下のタブは残す） ---------- */
+
+body.cqPage #sheet {
+  top: 0; left: 0; right: 0; width: auto; height: auto; max-height: none; min-height: 0;
+  z-index: 46; border-radius: 0; border: 0;
+  background: var(--bg); -webkit-backdrop-filter: none; backdrop-filter: none;
+  padding-top: var(--safe-t);
+}
+body.cqPage #grip { display: none; }
+body.cqPage.collapsed .page[data-page="croquis"]:not([hidden]) { display: flex; }
+body.cqPage #lightBall, body.cqPage #lightPop { display: none; }
+
+.page[data-page="croquis"] { padding: 4px 16px 0; }
+.page[data-page="croquis"] > * { width: 100%; max-width: 640px; margin-left: auto; margin-right: auto; }
+.cqTitle { font-size: 22px; font-weight: 700; margin: 14px 0 12px; letter-spacing: 0.02em; }
+.cqHead { font-size: 12px; color: var(--muted); margin: 18px 0 6px 4px; letter-spacing: 0.04em; }
+.cqGroup {
+  background: var(--sheet-solid); border: 1px solid var(--line-soft); border-radius: 14px;
+  padding: 0 14px; flex: none;
+}
+.cqRow {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  min-height: 50px; margin: 0; border-bottom: 1px solid var(--line-soft);
+}
+.cqGroup > .cqRow.lastShown { border-bottom: 0; }
+.cqGroup > .cqNote:not([hidden]) { border-top: 1px solid var(--line-soft); padding-top: 10px; }
+.cqGroup > .cqRow.lastShown:has(~ .cqNote:not([hidden])) { border-bottom: 0; }
+.cqRow[hidden] { display: none; }
+.cqRow .lbl { flex: 1; font-size: 15px; color: var(--text); line-height: 1.35; }
+.cqRow .lbl .dim { color: var(--muted); font-size: 12px; }
+.cqRow select {
+  flex: none; max-width: 58%;
+  -webkit-appearance: none; appearance: none;
+  background: var(--fill) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5l5 5 5-5' fill='none' stroke='%23aab5c4' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") no-repeat right 11px center;
+  color: var(--text); border: 1px solid var(--line); border-radius: 10px;
+  font: inherit; font-size: 15px; padding: 8px 32px 8px 12px; min-height: 38px;
+  text-overflow: ellipsis;
+}
+.cqRow select:focus { outline: none; border-color: var(--accent); }
+.cqRow.toggle input { width: 24px; height: 24px; accent-color: var(--accent); flex: none; }
+.cqNote { font-size: 12px; color: var(--muted); line-height: 1.6; margin: 8px 4px 0; flex: none; }
+.cqGroup > .cqNote { margin: 0; padding: 0 0 12px; }
+
+/* カテゴリ: 開くと選べる */
+details.cqMulti { display: block; }
+details.cqMulti > summary {
+  list-style: none; display: flex; align-items: center; gap: 12px; min-height: 50px; cursor: pointer;
+}
+details.cqMulti > summary::-webkit-details-marker { display: none; }
+details.cqMulti > summary .val { color: var(--muted); font-size: 15px; max-width: 58%; text-align: right;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+details.cqMulti > summary::after {
+  content: ''; width: 8px; height: 8px; flex: none; margin: 0 4px 0 2px;
+  border-right: 1.8px solid var(--muted); border-bottom: 1.8px solid var(--muted);
+  transform: rotate(-45deg); transition: transform 0.18s ease;
+}
+details.cqMulti[open] > summary::after { transform: rotate(45deg); }
+.cqCatsWrap { padding: 2px 0 12px; }
+.cqCatsWrap .grid { padding-bottom: 0; }
+.cqCatsWrap .cqNote { margin: 8px 0 0; }
+
+.cqStart { margin-top: 18px; padding-bottom: 14px; background: var(--bg); }
+@media (min-width: 720px) and (orientation: landscape) {
+  body.cqPage #sheet { left: 0; width: auto; }
+  body.cqPage #topbar { right: 0; }
+}
+details.cqMulti > summary .lbl { font-weight: 400; }
