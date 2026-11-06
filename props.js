@@ -237,6 +237,23 @@ export class Props {
     return { p, n: V(0, -1, 0), along: fwd };
   }
 
+  /**
+   * 人形の左右反転に合わせて、小物も左右反転（体の真ん中の面 x = 0 で鏡に映す）。つないだ手足も左右を入れ替える。
+   * 人形を反転したあとに呼ぶ
+   */
+  mirrorAll() {
+    const sw = k => k.replace(/[LR]$/, m => (m === 'L' ? 'R' : 'L'));
+    for (const it of this.items) {
+      const g = it.group;
+      g.position.x *= -1;
+      const q = g.quaternion; q.set(q.x, -q.y, -q.z, q.w);
+      g.updateWorldMatrix(true, true);
+      for (const gr of it.grips) gr.key = sw(gr.key);
+      for (const gr of it.grips) gr.rel = this._propRT(it).invert().multiply(this._limbRT(gr.key));
+    }
+    this.onChange();
+  }
+
   clearAuto() { for (const it of this.items.filter(x => x.auto)) this.remove(it); }
 
   applyPoseProps(defs, mirror = false) {

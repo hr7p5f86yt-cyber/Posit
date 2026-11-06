@@ -139,7 +139,7 @@ class Slot {
 
 export class Viewer {
   /** この viewer.js の版（app.js の BUILD と同じでなければ、古いファイルが混ざっている） */
-  static BUILD = '2026-11-04d';
+  static BUILD = '2026-11-06a';
 
   constructor(canvas) {
     this.canvas = canvas;
@@ -3277,6 +3277,9 @@ export class Viewer {
     swap('shinL', 'shinR');
     swap('footL', 'footR');
     this.bodyShift.x *= -1;
+    // 手の形（指）も左右を入れ替える
+    const hL = this.handShape.L, hR = this.handShape.R;
+    if (hL !== hR) { this.applyHandShape('L', hR || ''); this.applyHandShape('R', hL || ''); }
     this.clearLocks();
     for (const k of ['hips', 'spine', 'chest', 'neck', 'head']) {
       this.angles[k].y *= -1;
@@ -3304,10 +3307,8 @@ export class Viewer {
         const hy = hips.getWorldPosition(new THREE.Vector3()).y, head = p.boneMap.head;
         if (hy < 0.55 || (head && head.getWorldPosition(new THREE.Vector3()).y < hy)) {
           const c = this.contactFix._prep(p);
-          this.contactFix._read(c);
-          let mn = Infinity;
-          // 手（6・7）は除く: 床に置いた手で体が持ち上がらないように（手は体に合わせて床へ置く）
-          for (let i = 0; i < c.total; i++) if (c.G[i] !== 6 && c.G[i] !== 7 && c.P[i * 3 + 1] < mn) mn = c.P[i * 3 + 1];
+          // 手（6・7）は除く: 床に置いた手で体が持ち上がらないように（手は体に合わせて床へ置く）。間引いて軽く
+          const mn = this.contactFix.lowestY(c, [6, 7], 5);
           if (isFinite(mn) && mn < -0.003) { this.container.position.y -= mn; this.container.updateMatrixWorld(true); }
         }
       }

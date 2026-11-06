@@ -799,10 +799,11 @@ body.croquis #lockBar { display: none; }
 #propPop #propPopClear[hidden] { display: none; }
 #propPop .hint { margin: 8px 2px 0; }
 #propBar { position: fixed; z-index: 34; left: 8px; top: calc(var(--safe-t) + 62px);
-  display: flex; gap: 4px; align-items: center; padding: 4px; border-radius: 999px;
+  display: flex; flex-wrap: wrap; gap: 2px 4px; align-items: center; padding: 4px; border-radius: 18px;
   background: rgba(24, 28, 35, 0.86); border: 1px solid rgba(143, 212, 74, 0.55);
-  -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); max-width: calc(100vw - 16px);
-  overflow-x: auto; scrollbar-width: none; }
+  -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+  /* 右上の光の玉（幅 84px）に重ならない幅。入りきらない分は横にすべらせる */
+  max-width: calc(100vw - 108px); }
 #propBar::-webkit-scrollbar { display: none; }
 #propBar[hidden] { display: none; }
 #propBar .qb { flex: none; background: transparent; border-color: transparent; height: 32px; padding: 0 8px; }
@@ -812,7 +813,7 @@ body.croquis #lockBar { display: none; }
 #propBarSize { flex: none; font-size: 12px; color: var(--muted); min-width: 52px; text-align: center; white-space: nowrap; }
 #actBar .qb.propOn { border-color: #8fd44a; color: #8fd44a; }
 body.croquis #propPop, body.croquis #propBar { display: none; }
-body.posePanel #propBar { left: calc(clamp(150px, 34vw, 300px) + 8px); max-width: calc(100vw - clamp(150px, 34vw, 300px) - 16px); }
+body.posePanel #propBar { left: calc(clamp(150px, 34vw, 300px) + 8px); max-width: calc(100vw - clamp(150px, 34vw, 300px) - 108px); }
 @media (max-width: 400px) { #propBar .qb { padding: 0 6px; font-size: 12.5px; } }
 
 /* マイポーズ（v67） */

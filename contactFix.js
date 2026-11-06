@@ -95,6 +95,28 @@ export class ContactFix {
     return c;
   }
 
+  /**
+   * 床合わせ用: 肌のいちばん低い高さ（ワールド）。skip のグループ（手など）は除く。
+   * 全部の頂点を計算すると重いので、stride ごとに間引いて位置だけを計算する
+   */
+  lowestY(c, skip = [], stride = 5) {
+    const v = new THREE.Vector3();
+    let mn = Infinity;
+    for (const me of c.meshes) {
+      const m = me.m;
+      m.updateWorldMatrix(true, false);
+      m.skeleton.update();
+      const W = m.matrixWorld;
+      for (let i = 0; i < me.n; i += stride) {
+        if (skip.includes(me.grp[i])) continue;
+        m.getVertexPosition(i, v);
+        const y = W.elements[1] * v.x + W.elements[5] * v.y + W.elements[9] * v.z + W.elements[13];
+        if (y < mn) mn = y;
+      }
+    }
+    return mn;
+  }
+
   /** いまの形の頂点（ワールド）と法線 */
   _read(c) {
     const v = new THREE.Vector3(), nn = new THREE.Vector3();

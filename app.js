@@ -10,7 +10,7 @@ import { poseThumbSVG, thumbFromViewer } from './poseThumbs.js';
 import { REGIONS } from './anatomy.js';
 import * as THREE from 'three';
 
-export const BUILD = '2026-11-04d';
+export const BUILD = '2026-11-06a';
 
 const SAMPLE_URL = 'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r169/examples/models/gltf/Xbot.glb';
 const SETTINGS_KEY = 'posit.settings.v1';
@@ -91,8 +91,14 @@ function syncUndoButtons() {
   $('btnRedo').disabled = !redoStack.length;
 }
 /** 変える前に呼ぶ（いまの角度を「戻す」に積み、「やり直す」は空にする） */
+// 戻す・やり直す: 関節の角度と、手の形（指）を一緒に残す
+const takeState = () => ({ ...viewer.allAngles(), _hands: { ...viewer.handShape } });
+function putState(st) {
+  viewer.setAngles(st);
+  if (st && st._hands) for (const sd of ['L', 'R']) if (st._hands[sd] !== undefined && st._hands[sd] !== viewer.handShape[sd]) viewer.applyHandShape(sd, st._hands[sd] || '');
+}
 function snapshot() {
-  undoStack.push(viewer.allAngles());
+  undoStack.push(takeState());
   if (undoStack.length > 50) undoStack.shift();
   redoStack.length = 0;
   syncUndoButtons();
@@ -100,8 +106,8 @@ function snapshot() {
 $('btnUndo').addEventListener('click', () => {
   const prev = undoStack.pop();
   if (!prev) return;
-  redoStack.push(viewer.allAngles());
-  viewer.setAngles(prev);
+  redoStack.push(takeState());
+  putState(prev);
   viewer.relock();
   syncSliders();
   syncUndoButtons();
@@ -109,8 +115,8 @@ $('btnUndo').addEventListener('click', () => {
 $('btnRedo').addEventListener('click', () => {
   const next = redoStack.pop();
   if (!next) return;
-  undoStack.push(viewer.allAngles());
-  viewer.setAngles(next);
+  undoStack.push(takeState());
+  putState(next);
   viewer.relock();
   syncSliders();
   syncUndoButtons();
@@ -2623,6 +2629,7 @@ $('btnReset').addEventListener('click', () => { snapshot(); viewer.resetToDefaul
 $('btnMirror').addEventListener('click', () => {
   snapshot();
   viewer.mirrorPose();
+  viewer.props.mirrorAll();
   syncSliders();
   history.add({ name: '左右反転', spec: toSpec(viewer.allAngles()) });
   buildHistory();

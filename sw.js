@@ -1,5 +1,5 @@
 // sw.js — オフライン動作用のキャッシュ
-const CACHE = 'posit-v72';
+const CACHE = 'posit-v73';
 
 const SHELL = [
   './',
@@ -32,6 +32,7 @@ const SHELL = [
   './icon-180.png',
   './icon-192.png',
   './icon-512.png',
+  './icon-maskable-512.png',
 ];
 
 // three.js 本体はCDNから取る。初回アクセス時にキャッシュへ入れて以後オフラインでも動くようにする。
