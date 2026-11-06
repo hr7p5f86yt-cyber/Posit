@@ -908,3 +908,11 @@ details.cqMulti[open] > summary::after { transform: rotate(45deg); }
   body.cqPage #topbar { right: 0; }
 }
 details.cqMulti > summary .lbl { font-weight: 400; }
+
+/* クレジット・ライセンス */
+.credits { font-size: 12px; line-height: 1.65; color: var(--muted); padding: 2px 2px 8px; }
+.credits h4 { font-size: 13px; color: var(--text); margin: 12px 0 4px; font-weight: 600; }
+.credits h4:first-child { margin-top: 4px; }
+.credits p { margin: 0 0 6px; }
+.credits a { color: var(--accent); word-break: break-all; }
+.credits b { color: var(--text); font-weight: 600; }

@@ -11,7 +11,7 @@ import { poseThumbSVG, thumbFromViewer } from './poseThumbs.js';
 import { REGIONS } from './anatomy.js';
 import * as THREE from 'three';
 
-export const BUILD = '2026-11-06d';
+export const BUILD = '2026-11-06e';
 
 const SAMPLE_URL = 'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r169/examples/models/gltf/Xbot.glb';
 const SETTINGS_KEY = 'posit.settings.v1';
@@ -2093,7 +2093,7 @@ function buildCroquisChips() {
   $('cqSubjectHint').textContent = sub === 'props'
     ? (settings.cqPropMode === 'single' ? '小物を 1 つずつ、置き方・大きさ・見る向き・ライトを毎回変えて出します。人形は隠します。'
       : '小物を 1〜4 個、台の上か床に静物のように並べて出します。人形は隠します。')
-    : '胸像（実在の人の頭部を 3D スキャンした像を石膏の質感にしたもの。傾き・左右を毎回変えます）と、幾何形体（立方体・円柱・円すい・球・六角柱など）を半々くらいで出します。ライトの向きも毎回変えます。胸像の元: “Infinite, 3D Head Scan” by Lee Perry-Smith（CC BY 3.0）';
+    : '胸像（実在の人の頭部を 3D スキャンした像を石膏の質感にしたもの。傾き・左右を毎回変えます）と、幾何形体（立方体・円柱・円すい・球・六角柱など）を半々くらいで出します。ライトの向きも毎回変えます。胸像の元: “Infinite, 3D Head Scan” by Lee Perry-Smith（CC BY 3.0。色・質感を石膏風に変え、台座を付けて表示しています）。くわしくは 設定 › 体とモデル › クレジット・ライセンス';
   // 人物のときだけの設定
   $('cqPoseOpts').hidden = !pose;
   for (const id of ['cqModelRow', 'cqFrameRow', 'cqWireRow']) $(id).hidden = !pose;
