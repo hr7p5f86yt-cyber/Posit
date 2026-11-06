@@ -356,11 +356,18 @@
       <p class="cqNote" id="cqSubjectHint" hidden></p>
     </section>
 
-    <div class="cqHead">時間</div>
+    <div class="cqHead">見え方</div>
     <section class="cqGroup">
-      <label class="cqRow"><span class="lbl">1枚の時間</span><select id="cqSeconds"></select></label>
-      <label class="cqRow"><span class="lbl">枚数</span><select id="cqCounts"></select></label>
+      <label class="cqRow" id="cqModelRow"><span class="lbl">表示するモデル</span><select id="cqModel"></select></label>
+      <label class="cqRow" id="cqFrameRow"><span class="lbl">見る範囲</span><select id="cqFrame"></select></label>
+      <label class="cqRow" id="cqSideRow" hidden><span class="lbl">左右</span><select id="cqSide"></select></label>
+      <label class="cqRow toggle" id="cqHandShapeRow" hidden><span class="lbl">手の形も毎回変える</span>
+        <input type="checkbox" id="cqHandShape"></label>
+      <label class="cqRow"><span class="lbl">画角</span><select id="cqAngle"></select></label>
+      <label class="cqRow toggle" id="cqWireRow"><span class="lbl">面の線を出す</span>
+        <input type="checkbox" id="cqWire"></label>
     </section>
+    <p class="cqNote" id="cqAngleNote">「いろいろな画角」にすると、見る向き・高さ・レンズを 1 枚ごとに変えます</p>
 
     <div id="cqPoseOpts">
       <div class="cqHead">出題するポーズ</div>
@@ -378,18 +385,11 @@
       </section>
     </div>
 
-    <div class="cqHead">見え方</div>
+    <div class="cqHead">時間</div>
     <section class="cqGroup">
-      <label class="cqRow" id="cqModelRow"><span class="lbl">表示するモデル</span><select id="cqModel"></select></label>
-      <label class="cqRow" id="cqFrameRow"><span class="lbl">見る範囲</span><select id="cqFrame"></select></label>
-      <label class="cqRow" id="cqSideRow" hidden><span class="lbl">左右</span><select id="cqSide"></select></label>
-      <label class="cqRow toggle" id="cqHandShapeRow" hidden><span class="lbl">手の形も毎回変える</span>
-        <input type="checkbox" id="cqHandShape"></label>
-      <label class="cqRow"><span class="lbl">画角</span><select id="cqAngle"></select></label>
-      <label class="cqRow toggle" id="cqWireRow"><span class="lbl">面の線を出す</span>
-        <input type="checkbox" id="cqWire"></label>
+      <label class="cqRow"><span class="lbl">1枚の時間</span><select id="cqSeconds"></select></label>
+      <label class="cqRow"><span class="lbl">枚数</span><select id="cqCounts"></select></label>
     </section>
-    <p class="cqNote" id="cqAngleNote">「いろいろな画角」にすると、見る向き・高さ・レンズを 1 枚ごとに変えます</p>
 
     <div class="cqHead">お知らせ</div>
     <section class="cqGroup">

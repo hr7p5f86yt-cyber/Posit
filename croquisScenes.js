@@ -1,11 +1,13 @@
 // croquisScenes.js — クロッキーの「小物だけ」「石膏像」の出題
 //
 // ・小物だけ … 組み合わせ（1〜4 個を台の上か床に静物のように置く）／ 1 つずつ（1 個を毎回ちがう置き方で）
-// ・石膏像 … 胸像（人形の頭〜胸を石膏の質感で。顔の向き・表情を毎回変える）と、幾何形体（立方体・円柱・円すい・球・六角柱など）
+// ・石膏像 … 胸像（実在の人の頭部の 3D スキャンを石膏の質感で。台に載せ、傾き・左右・ライトを毎回変える）と、幾何形体（立方体・円柱・円すい・球・六角柱など）
+//     胸像の元: "Infinite, 3D Head Scan" by Lee Perry-Smith（CC BY 3.0。www.triplegangers.com / www.ir-ltd.net）。読み込めないときは人形の頭〜胸で代わりにする
 // ・どれも人形は隠し、ライトの向きを毎回変える。出題の中身（desc）を残しておけば、同じ順番でもう一度出せる
 // ・クロッキーの間だけ使う（終わったら clear で消す）
 
 import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { FACE_PRESETS } from './poses.js';
 
 const V = (x = 0, y = 0, z = 0) => new THREE.Vector3(x, y, z);
@@ -151,7 +153,9 @@ export class CroquisScenes {
       this._lastFace = face.id;
       // 顔の向きに少しゆらぎを足す（同じ表情でも毎回ちがう角度に）
       const j = { head: [R(-8, 8), R(-15, 15), R(-6, 6)], neck: [R(-6, 6), R(-12, 12), R(-5, 5)], chest: [R(-4, 4), R(-10, 10), R(-4, 4)] };
-      return { subject: 'plaster', kind: 'bust', id, face: face.spec, jitter: j, light: this._light(), name: '胸像・' + face.name };
+      // 実物の胸像: 少し傾け、ときどき左右を入れ替える（同じ像でも毎回ちがって見えるように）
+      const real = { tx: +R(-7, 5).toFixed(1), tz: +R(-6, 6).toFixed(1), mirror: Math.random() < 0.5, stand: +R(0.95, 1.15).toFixed(2) };
+      return { subject: 'plaster', kind: 'bust', id, real, face: face.spec, jitter: j, light: this._light(), name: '胸像' };
     }
     const n = Math.random() < 0.35 ? 1 : Math.random() < 0.7 ? 2 : 3;
     const keys = [];
@@ -208,7 +212,56 @@ export class CroquisScenes {
     P.setLook('clay');
   }
 
+  /** 胸像の 3D スキャンを読み込む（1 回だけ。読み込めなかったら null） */
+  preload() {
+    if (this._headP) return this._headP;
+    const base = new URL('./models/', import.meta.url).href;
+    this._headP = Promise.all([
+      new GLTFLoader().loadAsync(base + 'LeePerrySmith.glb'),
+      new THREE.TextureLoader().loadAsync(base + 'LeePerrySmith_normal.jpg').catch(() => null),
+    ]).then(([g, nm]) => {
+      let mesh = null;
+      g.scene.traverse(o => { if (o.isMesh && !mesh) mesh = o; });
+      if (!mesh) return null;
+      if (nm) { nm.flipY = false; nm.colorSpace = THREE.NoColorSpace; }
+      // 石膏: 白く、つやのない面。細かい凹凸は法線の画像で
+      mesh.material = new THREE.MeshStandardMaterial({ color: 0xf3f0ea, roughness: 0.93, metalness: 0, normalMap: nm || null,
+        normalScale: new THREE.Vector2(0.8, 0.8) });
+      mesh.castShadow = true; mesh.receiveShadow = true;
+      mesh.geometry.computeBoundingBox();
+      mesh.userData.keep = true;
+      this.head = mesh;
+      return mesh;
+    }).catch(() => null);
+    return this._headP;
+  }
+
+  _showRealBust(desc) {
+    const v = this.v, r = desc.real, m = this.head;
+    v.setDollHidden(true);
+    const S = 0.045;                       // 頭のてっぺん〜肩の下で約 36cm
+    const bb = m.geometry.boundingBox;
+    const top = r.stand;                   // 台の上の高さ
+    const stand = new THREE.Mesh(new THREE.BoxGeometry(0.34, top, 0.3), this.plaster);
+    stand.position.set(0, top / 2, 0);
+    const cap = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.035, 0.36), this.plaster);
+    cap.position.set(0, top - 0.0175, 0);
+    for (const o of [stand, cap]) { o.castShadow = true; o.receiveShadow = true; o.userData.base = true; this.group.add(o); }
+    const piv = new THREE.Group();          // 台の上の、胸像の底の真ん中で傾ける
+    piv.position.set(0, top, 0);
+    piv.rotation.set(r.tx * DEG, 0, r.tz * DEG);
+    m.scale.set(r.mirror ? -S : S, S, S);
+    m.position.set(0, -bb.min.y * S - 0.004, -(bb.min.z + bb.max.z) / 2 * S);
+    piv.add(m);
+    piv.userData.keep = true;
+    this.group.add(piv);
+    this.group.visible = true;
+    const h = (bb.max.y - bb.min.y) * S;
+    this._bust = { center: V(0, top + h * 0.42, 0), radius: Math.max(0.28, h * 0.72) };
+  }
+
   _showBust(desc) {
+    if (desc.real && this.head) { this._showRealBust(desc); return; }
     const v = this.v;
     v.setDollHidden(false);
     if (v.second && v.second.holder) v.second.holder.visible = false;   // 2 体目は出さない
@@ -305,7 +358,11 @@ export class CroquisScenes {
 
   clear() {
     const v = this.v;
-    for (const o of [...this.group.children]) { this.group.remove(o); o.geometry && o.geometry.dispose(); }
+    for (const o of [...this.group.children]) {
+      this.group.remove(o);
+      if (o.userData.keep) { if (this.head && this.head.parent === o) o.remove(this.head); continue; }   // 胸像のスキャンは使い回す
+      o.geometry && o.geometry.dispose();
+    }
     this.group.visible = false;
     v.props.clearAuto();
     v.props.setLook(null);

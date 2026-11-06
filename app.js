@@ -11,7 +11,7 @@ import { poseThumbSVG, thumbFromViewer } from './poseThumbs.js';
 import { REGIONS } from './anatomy.js';
 import * as THREE from 'three';
 
-export const BUILD = '2026-11-06c';
+export const BUILD = '2026-11-06d';
 
 const SAMPLE_URL = 'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r169/examples/models/gltf/Xbot.glb';
 const SETTINGS_KEY = 'posit.settings.v1';
@@ -142,7 +142,17 @@ function showTab(name, expand = true) {
   if (window.__positRelayout) window.__positRelayout();
 }
 for (const b of document.querySelectorAll('#tabbar button')) {
-  b.addEventListener('click', () => showTab(b.dataset.tab));
+  b.addEventListener('click', () => {
+    // いま開いているタブをもう一度押したら、パネルを閉じる（クロッキーは画面いっぱいの設定を閉じる）
+    const name = b.dataset.tab;
+    const open = b.classList.contains('on') && (name === 'croquis' ? document.body.classList.contains('cqPage') : sheetStage > 0);
+    if (open) {
+      document.body.classList.remove('cqPage');
+      setSheetStage(0);
+      return;
+    }
+    showTab(name);
+  });
 }
 
 // ---- パネルの高さ（3 段）と、人形を見せる場所 ------------------------------
@@ -1917,6 +1927,9 @@ async function startCroquis() {
   // 描く物: 「同じ順番でもう一度」のときは前回と同じ物
   cqSubject = cqReplay && cqReplay.length && typeof cqReplay[0] === 'object' ? cqReplay[0].subject : cqReplay && cqReplay.length ? 'pose' : settings.cqSubject;
   if (cqSubject !== 'pose') {
+    // 数えている間も人形は出さない（1 枚目から小物・石膏像だけ）。胸像のスキャンはこの間に読み込む
+    viewer.setDollHidden(true);
+    if (cqSubject === 'plaster') cqScenes.preload();
     // 小物だけ・石膏像: 素体（胸像は石膏の質感）で、全身の見え方。面の線は出さない
     if (viewer.viewMode !== 'skin') viewer.applyViewMode('skin');
     viewer.setPartView('full', viewer.partSide);
@@ -2072,6 +2085,7 @@ function buildSelect(id, options, cur, onPick) {
 function buildCroquisChips() {
   const save = () => { saveSettings(); buildCroquisChips(); };
   buildSelect('cqSubject', CQ_SUBJECTS, settings.cqSubject, o => { settings.cqSubject = o.value; save(); });
+  if (settings.cqSubject === 'plaster' && $('sheet') && document.body.classList.contains('cqPage')) cqScenes.preload();
   const sub = settings.cqSubject, pose = sub === 'pose';
   $('cqPropModeRow').hidden = sub !== 'props';
   buildSelect('cqPropMode', CQ_PROP_MODES, settings.cqPropMode, o => { settings.cqPropMode = o.value; save(); });
@@ -2079,7 +2093,7 @@ function buildCroquisChips() {
   $('cqSubjectHint').textContent = sub === 'props'
     ? (settings.cqPropMode === 'single' ? '小物を 1 つずつ、置き方・大きさ・見る向き・ライトを毎回変えて出します。人形は隠します。'
       : '小物を 1〜4 個、台の上か床に静物のように並べて出します。人形は隠します。')
-    : '胸像（人形の頭〜胸を石膏にしたもの。顔の向き・表情を毎回変えます）と、幾何形体（立方体・円柱・円すい・球・六角柱など）を半々くらいで出します。ライトの向きも毎回変えます。';
+    : '胸像（実在の人の頭部を 3D スキャンした像を石膏の質感にしたもの。傾き・左右を毎回変えます）と、幾何形体（立方体・円柱・円すい・球・六角柱など）を半々くらいで出します。ライトの向きも毎回変えます。胸像の元: “Infinite, 3D Head Scan” by Lee Perry-Smith（CC BY 3.0）';
   // 人物のときだけの設定
   $('cqPoseOpts').hidden = !pose;
   for (const id of ['cqModelRow', 'cqFrameRow', 'cqWireRow']) $(id).hidden = !pose;
