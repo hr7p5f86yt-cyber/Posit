@@ -918,3 +918,11 @@ details.cqMulti > summary .lbl { font-weight: 400; }
 .credits b { color: var(--text); font-weight: 600; }
 
 #propPop .qpGrid button.statue { grid-column: span 2; font-size: 12px; line-height: 1.3; padding: 8px 6px; }
+
+/* 小物の帯: 2 体のときは 1 体目・2 体目のつなぎを行で分ける */
+#propBar .pbBreak { flex-basis: 100%; height: 0; }
+#propBar .pbBreak[hidden], #propBar .pbSep[hidden] { display: none; }
+#propBar .pbDollA { color: #4aa3ff; font-weight: 700; }
+#propBar .pbDollB { color: #ff9a3c; font-weight: 700; }
+#propBar .qb.on.dollA { background: #4aa3ff; color: #08121e; }
+#propBar .qb.on.dollB { background: #ff9a3c; color: #1e1206; }

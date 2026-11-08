@@ -35,6 +35,8 @@ function guard(label, fn) {
 }
 
 const DEG = Math.PI / 180;
+// 1 体目・2 体目の目印の色（足元の輪・頭の上の番号・小物の帯）
+export const DOLL_COLORS = { A: '#4aa3ff', B: '#ff9a3c' };
 
 const AX = new THREE.Vector3(1, 0, 0);
 const AY = new THREE.Vector3(0, 1, 0);
@@ -139,7 +141,7 @@ class Slot {
 
 export class Viewer {
   /** この viewer.js の版（app.js の BUILD と同じでなければ、古いファイルが混ざっている） */
-  static BUILD = '2026-11-08g';
+  static BUILD = '2026-11-08h';
 
   constructor(canvas) {
     this.canvas = canvas;
@@ -347,6 +349,7 @@ export class Viewer {
       try {
         this._followPart();
         this.controls.update();
+        this._updateDollMarks();
         this._syncBreasts();
         this._updateClipPlane();
         const bone = this.selected ? this._boneForJoint(this.selected) : null;
@@ -3417,6 +3420,18 @@ export class Viewer {
           }
         }
       }
+      // 2 体のとき: 止まっている方の人形を押したら、その人形を動かす人形に切り替える（入れ替えを押さなくてよい）
+      if (this.second && !this.dollHidden && !this.hideSecond) {
+        const dh1 = guard('関節の印', () => this.dots.hit(e.clientX, e.clientY, e.pointerType));
+        if (!(dh1 && dh1.d <= 10)) {
+          const d2 = guard('2体目の面', () => this._secondDistance(e.clientX, e.clientY));
+          const d1 = d2 != null ? guard('人形の面', () => this._dollDistance(e.clientX, e.clientY)) : null;
+          if (d2 != null && (d1 == null || d2 < d1)) {
+            guard('入れ替え', () => { this.swapSecond(); this.scene.updateMatrixWorld(true); this.dots.update && this.dots.update(); });
+            this.onSwap && this.onSwap();
+          }
+        }
+      }
       // 回転の輪を押したら、その軸だけで回す（関節の部分を押すより先に見る）
       let rh = this.selected ? guard('回転の輪', () => this.rings.hit(e.clientX, e.clientY, e.pointerType)) : null;
       // 関節の印: 輪より近ければ印を優先する（輪の上に別の関節の印があることがある）
@@ -3517,6 +3532,69 @@ export class Viewer {
   }
 
   /** 画面の点で、人形の面までの距離（当たらなければ null） */
+  /** 2 体目（止まっている方）の面までの距離（画面の点。なければ null） */
+  _secondDistance(clientX, clientY) {
+    const sd = this.second;
+    if (!sd || !sd.holder.visible) return null;
+    const rect = this.canvas.getBoundingClientRect();
+    const ndc = new THREE.Vector2(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1);
+    const ray = new THREE.Raycaster();
+    ray.setFromCamera(ndc, this.camera);
+    let hits = [];
+    // 写しの面は、ふだんは当たり判定を切っている（ほかの操作の邪魔をしないように）ので、ここだけ当てる
+    try {
+      sd.holder.traverse(o => {
+        if (o.isMesh && !o.isInstancedMesh && o.visible && o.geometry && o.geometry.attributes.position.count > 200) THREE.Mesh.prototype.raycast.call(o, ray, hits);
+      });
+      hits.sort((a, b) => a.distance - b.distance);
+    } catch (err) { hits = []; }
+    return hits.length ? hits[0].distance : null;
+  }
+
+  // ---- 1 体目・2 体目の目印（足元の輪と、頭の上の番号。1 体目は青、2 体目はオレンジ） ----
+  _updateDollMarks() {
+    const sd = this.second;
+    const show = !!sd && !this.dollHidden && !this.hideSecond && !!this.primarySlot;
+    if (!this._marks) {
+      if (!show) return;
+      this._marks = {};
+      for (const [id, col, num] of [['A', DOLL_COLORS.A, '1'], ['B', DOLL_COLORS.B, '2']]) {
+        const g = new THREE.Group();
+        const ring = new THREE.Mesh(new THREE.RingGeometry(0.26, 0.31, 56).rotateX(-Math.PI / 2),
+          new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: 0.85, depthWrite: false }));
+        ring.position.y = 0.004; ring.renderOrder = 2;
+        const cv = document.createElement('canvas'); cv.width = cv.height = 128;
+        const c = cv.getContext('2d');
+        c.fillStyle = col; c.beginPath(); c.arc(64, 64, 56, 0, Math.PI * 2); c.fill();
+        c.fillStyle = '#fff'; c.font = 'bold 76px system-ui, sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle';
+        c.fillText(num, 64, 69);
+        const tex = new THREE.CanvasTexture(cv); tex.colorSpace = THREE.SRGBColorSpace;
+        const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false, transparent: true }));
+        sp.scale.set(0.14, 0.14, 1); sp.renderOrder = 10;
+        g.add(ring, sp);
+        g.userData.ring = ring; g.userData.sprite = sp;
+        g.visible = false;
+        this.scene.add(g);
+        this._marks[id] = g;
+      }
+    }
+    if (!show) { this._marks.A.visible = this._marks.B.visible = false; return; }
+    const live = sd.firstActive ? 'A' : 'B', other = live === 'A' ? 'B' : 'A';
+    const bm = this.primarySlot.boneMap;
+    const lh = bm.hips.getWorldPosition(new THREE.Vector3()), lt = bm.head.getWorldPosition(new THREE.Vector3());
+    const oh = this.secondBonePos('hips'), ot = this.secondBonePos('head');
+    for (const [id, h, t] of [[live, lh, lt], [other, oh, ot]]) {
+      const g = this._marks[id];
+      if (!h || !t) { g.visible = false; continue; }
+      g.visible = true;
+      g.userData.ring.position.set(h.x, 0.004, h.z);
+      g.userData.sprite.position.set(t.x, t.y + 0.26, t.z);
+      // 動かしている方の人形の目印は、はっきり（止まっている方は薄く）
+      g.userData.ring.material.opacity = id === live ? 0.9 : 0.4;
+      g.userData.sprite.material.opacity = id === live ? 1 : 0.55;
+    }
+  }
+
   _dollDistance(clientX, clientY) {
     const targets = this._visibleTargets();
     if (!targets.length) return null;

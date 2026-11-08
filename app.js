@@ -11,7 +11,7 @@ import { poseThumbSVG, thumbFromViewer } from './poseThumbs.js';
 import { REGIONS } from './anatomy.js';
 import * as THREE from 'three';
 
-export const BUILD = '2026-11-08g';
+export const BUILD = '2026-11-08h';
 
 const SAMPLE_URL = 'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r169/examples/models/gltf/Xbot.glb';
 const SETTINGS_KEY = 'posit.settings.v1';
@@ -967,7 +967,7 @@ function syncPropBar() {
   $('actProp').classList.toggle('propOn', props.items.length > 0);
   $('propPopClear').hidden = !props.items.length;
   // 「持つ所を変える」は、つないでいる小物を選んでいる間だけ
-  const anyGrip = !!it && props.liveGrips(it).length > 0;
+  const anyGrip = !!it && it.grips.length > 0;
   if (!anyGrip && props.slideMode) props.slideMode = false;
   $('propBarSlide').hidden = !anyGrip;
   $('propBarSlide').classList.toggle('on', !!props.slideMode);
@@ -976,10 +976,17 @@ function syncPropBar() {
   $('propBarName').textContent = it.name;
   $('propBarAxis').textContent = PROP_AXES.find(a => a[0] === propAxis)[1];
   $('propBarSize').textContent = props.sizeLabel(it, propAxis);
-  for (const [key, id] of PROP_LIMBS) {
+  // 2 体のときは、1 体目・2 体目のつなぎを行で分けて出す（押すと、その人形を動かす人形にしてつなぐ）
+  const duo = viewer.hasSecond();
+  $('propBarRow1').textContent = duo ? '1体目' : 'つなぐ';
+  $('propBarRow1').classList.toggle('pbDollA', duo);
+  for (const id of ['propBarBreak1', 'propBarBreak2', 'propBarBreak3', 'propBarRow2']) $(id).hidden = !duo;
+  for (const [key, id, doll] of PROP_LIMB_BTNS) {
     const b = $(id);
-    b.classList.toggle('on', props.liveGrips(it).some(g => g.key === key));
-    b.hidden = /^foot/.test(key) && !it.grounded && it.type !== 'ball';
+    b.classList.toggle('on', it.grips.some(g => g.key === key && (g.doll || 'A') === doll));
+    b.classList.toggle('dollA', duo && doll === 'A');
+    b.classList.toggle('dollB', duo && doll === 'B');
+    b.hidden = (doll === 'B' && !duo) || (/^foot/.test(key) && !it.grounded && it.type !== 'ball');
   }
 }
 props.onSelect = () => syncPropBar();
@@ -1001,12 +1008,20 @@ $('propBarSmaller').addEventListener('click', () => { snapshot(); props.resize(-
 $('propBarBigger').addEventListener('click', () => { snapshot(); props.resize(1, props.selected, propAxis); });
 // 右手・左手・右足・左足（人形から見た左右）。押すとつなぎ、もう一度押すと離す
 const PROP_LIMBS = [['handR', 'propBarGripR'], ['handL', 'propBarGripL'], ['footR', 'propBarFootR'], ['footL', 'propBarFootL']];
+// [つなぐ所, ボタン, 人形（A: 1 体目 / B: 2 体目）]
+const PROP_LIMB_BTNS = [...PROP_LIMBS.map(([k, id]) => [k, id, 'A']),
+  ['handR', 'propBar2GripR', 'B'], ['handL', 'propBar2GripL', 'B'], ['footR', 'propBar2FootR', 'B'], ['footL', 'propBar2FootL', 'B']];
 const LIMB_NAME = { handR: '右手', handL: '左手', footR: '右足', footL: '左足' };
-for (const [key, id] of PROP_LIMBS) $(id).addEventListener('click', () => {
+for (const [key, id, doll] of PROP_LIMB_BTNS) $(id).addEventListener('click', () => {
   const it = props.selected; if (!it) return;
-  const nm = LIMB_NAME[key];
-  if (props.liveGrips(it).some(g => g.key === key)) { snapshot(); props.release(it, key); showToast(nm + 'を離しました'); syncPropBar(); return; }
-  const pre = takeState();   // つなげたときだけ「戻す」に積む（届かなかったときは何も変わらない）
+  const duo = viewer.hasSecond();
+  const nm = (duo ? (doll === 'A' ? '1体目の' : '2体目の') : '') + LIMB_NAME[key];
+  const pre = takeState();
+  // その人形を動かす人形にしてから（入れ替えを押さなくてよい）
+  const swapped = duo && props.liveDoll() !== doll;
+  if (swapped) { viewer.swapSecond(); syncSliders(); syncDuo(); }
+  if (props.liveGrips(it).some(g => g.key === key)) { snapshot(pre); props.release(it, key); showToast(nm + 'を離しました'); syncPropBar(); return; }
+  // つなげたときだけ「戻す」に積む（届かなかったときは何も変わらない）
   const r = props.grip(key, it);
   if (r && r !== 'far') snapshot(pre);
   if (r === 'far') { showToast(nm + 'が届きません。小物を' + nm + 'の近くへ動かしてから押してください'); return; }
@@ -1028,6 +1043,8 @@ $('propBarSlide').addEventListener('click', () => {
 props.onEditStart = () => snapshot();
 $('propBarClose').addEventListener('click', () => props.select(null));
 
+// 止まっている方の人形を押して、動かす人形が切り替わったとき
+viewer.onSwap = () => { syncSliders(); syncDuo(); showToast(viewer.secondActive() ? '2体目を動かします' : '1体目を動かします'); };
 $('actSwap').addEventListener('click', () => { snapshot(); viewer.swapSecond(); syncSliders(); syncDuo(); showToast(viewer.secondActive() ? '2体目を動かします' : '1体目を動かします'); });
 syncDuo();
 

@@ -1151,9 +1151,25 @@ export class Props {
           const b = slot.boneMap[g.key];
           const dp = b.getWorldPosition(V()).distanceTo(p);
           const dq = b.getWorldQuaternion(new THREE.Quaternion()).angleTo(q);
-          if (dp > 0.003 || dq > 0.05) { v.pull.solve(g.key, p, q); moved = true; }
+          if (dp > 0.003 || dq > 0.05) { v.pull.solve(g.key, p, q); moved = true; g._tp = p; }
         }
-        if (moved) v.applyAll();
+        if (moved) {
+          v.applyAll();
+          // 腕・脚が伸びきって届かなかった手足は、小物から離さずに、届いた所のいちばん近い面へ滑らせる
+          //   （手の向きも、その面に合わせて付け直す）
+          v.scene.updateMatrixWorld(true);
+          let slid = false;
+          for (const g of [...live]) {
+            if (!g._tp) continue;
+            const miss = slot.boneMap[g.key].getWorldPosition(V()).distanceTo(g._tp);
+            g._tp = null;
+            if (miss > 0.02) {
+              this._surface = true;
+              try { this.grip(g.key, it, true, 0.8); slid = true; } finally { this._surface = false; }
+            }
+          }
+          if (slid) v.applyAll();
+        }
       } finally { this._busy = false; }
     }
   }

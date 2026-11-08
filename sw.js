@@ -1,5 +1,5 @@
 // sw.js — オフライン動作用のキャッシュ
-const CACHE = 'posit-v84';
+const CACHE = 'posit-v85';
 
 const SHELL = [
   './',
