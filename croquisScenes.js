@@ -277,6 +277,7 @@ export class CroquisScenes {
     if (!st) return Promise.resolve(null);
     if (st.src === 'lee') return this.preload();
     this._statues = this._statues || new Map();
+    this._touch(key);
     if (this._statues.has(key)) return this._statues.get(key);
     const url = new URL('./models/statues/' + key + '.glb', import.meta.url).href;
     const p = new GLTFLoader().loadAsync(url).then(g => {
@@ -298,6 +299,30 @@ export class CroquisScenes {
     this._statues.set(key, p);
     p.then(m => { this._statueMesh = this._statueMesh || {}; this._statueMesh[key] = m; });
     return p;
+  }
+
+  /**
+   * 読み込んだ像は、新しい順に 5 体まで取っておく（iPhone・iPad のメモリを使い過ぎないように）。
+   * それより古い像は捨てる。ただし、いま出している像・次に出す像・小物として置いている像は捨てない
+   */
+  _touch(key) {
+    this._lru = (this._lru || []).filter(k => k !== key);
+    this._lru.push(key);
+    const KEEP = 5;
+    for (const k of [...this._lru]) {
+      if (this._lru.length <= KEEP) break;
+      if (k === key || k === this._prefetch || (this.active && this.active.key === k)) continue;
+      if (this.v.props.items.some(it => it.variant === k)) continue;
+      const m = this._statueMesh && this._statueMesh[k];
+      if (!m) continue;   // まだ読み込み中
+      m.removeFromParent();
+      m.geometry.dispose();
+      for (const t of ['normalMap', 'aoMap']) if (m.material[t]) m.material[t].dispose();
+      m.material.dispose();
+      delete this._statueMesh[k];
+      this._statues.delete(k);
+      this._lru = this._lru.filter(x => x !== k);
+    }
   }
 
   _showStatue(desc) {
