@@ -141,7 +141,7 @@ class Slot {
 
 export class Viewer {
   /** この viewer.js の版（app.js の BUILD と同じでなければ、古いファイルが混ざっている） */
-  static BUILD = '2026-11-08h';
+  static BUILD = '2026-11-08i';
 
   constructor(canvas) {
     this.canvas = canvas;
@@ -3458,6 +3458,18 @@ export class Viewer {
         return;
       }
       const key = guard('関節の判定', () => this._jointAt(e.clientX, e.clientY));
+      // 体の位置を動かしやすいように、腰の周りを広めに受け付ける:
+      //   腰（骨盤）・おなか（選んでいないとき）を押したとき、または腰の中心から画面で 56px 以内（股の間など、体の面の外でも）
+      const nearHips = !this.bodyMode && this.pull.enabled && this.selected !== 'hips' && !(key && key === this.selected)
+        && (key === 'hips' || (key === 'spine' && this.selected !== 'spine')
+          || (!this.pull.canPull(key) && guard('腰の近く', () => this._nearBone('hips', e.clientX, e.clientY, 56))));
+      if (nearHips && guard('体を動かす', () => this.beginBodyMove(e.clientX, e.clientY, 'pull'))) {
+        e.stopImmediatePropagation();
+        e.preventDefault();
+        try { el.setPointerCapture(e.pointerId); } catch (err) { /* 続行 */ }
+        this._jd = { id: e.pointerId, key: 'hips', x: e.clientX, y: e.clientY, moved: false, body: true };
+        return;
+      }
       // 体全体モード: 人形のどこを押しても体全体が滑る。腰（骨盤）を押したら、選んでいなくても腰を引っ張る
       if (key && (this.bodyMode || (key === 'hips' && this.pull.enabled))
         && guard('体を動かす', () => this.beginBodyMove(e.clientX, e.clientY, this.bodyMode ? 'slide' : 'pull'))) {
@@ -3532,6 +3544,17 @@ export class Viewer {
   }
 
   /** 画面の点で、人形の面までの距離（当たらなければ null） */
+  /** 関節（骨）の位置が、画面の点から px 以内か */
+  _nearBone(key, clientX, clientY, px) {
+    const b = this.primarySlot && this.primarySlot.boneMap[key];
+    if (!b) return false;
+    const rect = this.canvas.getBoundingClientRect();
+    const q = b.getWorldPosition(new THREE.Vector3()).project(this.camera);
+    if (q.z > 1) return false;
+    const x = rect.left + (q.x + 1) / 2 * rect.width, y = rect.top + (1 - q.y) / 2 * rect.height;
+    return Math.hypot(x - clientX, y - clientY) <= px;
+  }
+
   /** 2 体目（止まっている方）の面までの距離（画面の点。なければ null） */
   _secondDistance(clientX, clientY) {
     const sd = this.second;
