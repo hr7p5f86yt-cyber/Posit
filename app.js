@@ -11,7 +11,7 @@ import { poseThumbSVG, thumbFromViewer } from './poseThumbs.js';
 import { REGIONS } from './anatomy.js';
 import * as THREE from 'three';
 
-export const BUILD = '2026-11-08e';
+export const BUILD = '2026-11-08f';
 
 const SAMPLE_URL = 'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r169/examples/models/gltf/Xbot.glb';
 const SETTINGS_KEY = 'posit.settings.v1';
@@ -957,6 +957,11 @@ function syncPropBar() {
   $('propBar').hidden = !it;
   $('actProp').classList.toggle('propOn', props.items.length > 0);
   $('propPopClear').hidden = !props.items.length;
+  // 「持つ所を変える」は、つないでいる小物を選んでいる間だけ
+  const anyGrip = !!it && props.liveGrips(it).length > 0;
+  if (!anyGrip && props.slideMode) props.slideMode = false;
+  $('propBarSlide').hidden = !anyGrip;
+  $('propBarSlide').classList.toggle('on', !!props.slideMode);
   if (!it) return;
   $('selBar').hidden = true;
   $('propBarName').textContent = it.name;
@@ -1003,6 +1008,13 @@ for (const [key, id] of PROP_LIMBS) $(id).addEventListener('click', () => {
     : it.grounded ? 'に置きました（小物を動かすと手がついてきます。手を引っ張ると面の上で付け直します）' : 'に付けました（手を動かすと一緒に動きます）'));
 });
 $('propBarDel').addEventListener('click', () => { snapshot(); props.remove(); });
+$('propBarSlide').addEventListener('click', () => {
+  props.slideMode = !props.slideMode;
+  syncPropBar();
+  showToast(props.slideMode
+    ? '持つ所を変える: 小物を動かす・回すと、手足はそのままで持つ所が変わります。手足を動かすと、離した所で付け直します'
+    : '持つ所を変えるのをやめました');
+});
 // 小物を押したまま動かす・輪で回す: 動かし始めに「戻す」に積む
 props.onEditStart = () => snapshot();
 $('propBarClose').addEventListener('click', () => props.select(null));
@@ -2938,8 +2950,8 @@ $('btnResetJoint').addEventListener('click', () => { snapshot(); viewer.resetSel
 $('btnFrame').addEventListener('click', () => viewer.frameModel());
 
 // ---- すべての設定を初期値に戻す ---------------------------------------------
-//   ポーズ・履歴・読み込んだモデルはそのまま。見え方・体つき・ライト・カメラ・
-//   クロッキーの設定・パネルの高さを、はじめて開いたときの状態に戻す
+//   履歴・保存したポーズ・読み込んだモデルはそのまま。ポーズ・小物・2 体目・見え方・体つき・ライト・カメラ・
+//   クロッキーの設定・パネルの高さを、はじめて開いたときの状態に戻す（小物・2 体目は消す）
 
 function setCheck(id, on) {
   const el = $(id);
@@ -2948,9 +2960,13 @@ function setCheck(id, on) {
 }
 
 function resetAllSettings() {
-  if (!window.confirm('すべての設定とポーズを初期値に戻しますか？\n（履歴・保存したポーズ・読み込んだモデルはそのままです。ポーズは「1つ戻す」で戻せます）')) return;
-  // ポーズと手の形も戻す（写真から当てたポーズも含む）
+  if (!window.confirm('すべての設定とポーズを初期値に戻しますか？\n小物と 2 体目も消します。\n（履歴・保存したポーズ・読み込んだモデルはそのままです。ポーズ・小物・2 体目は「1つ戻す」で戻せます）')) return;
+  // ポーズと手の形も戻す（写真から当てたポーズも含む）。小物と 2 体目は消す
   snapshot();
+  props.slideMode = false;
+  props.clear();
+  if (viewer.hasSecond()) viewer.removeSecond();
+  syncDuo();
   viewer.resetToDefault();
   showPhotoOverlay(false); $('photoOverlayBar').hidden = true;
   // クロッキーとパネルの設定

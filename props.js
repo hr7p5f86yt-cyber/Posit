@@ -844,7 +844,8 @@ export class Props {
       it.group.position.copy(d.ctr).add(off);
     }
     it.group.updateWorldMatrix(true, true);
-    this._driveHands(it);
+    // 「持つ所を変える」のときは、手足はそのまま（小物だけ動かし、離したときに付け直す）
+    if (!this.slideMode) this._driveHands(it);
   }
 
   /** 床より下へは入れない。床に置く物は、床の近く（3cm）まで下ろしたら床にぴったり置く。手に持つ物は、いちばん下の所を床の上に */
@@ -868,7 +869,23 @@ export class Props {
     this.drag = null;
     if (!d) return;
     if (!d.moved && d.mode === 'move') this.select(d.it);
+    if (d.moved && this.slideMode) this._regrip(d.it);
     if (d.moved) this.onChange();
+  }
+
+  /**
+   * 「持つ所を変える」で小物を動かし終えた: いまの手足の所で付け直す。
+   * 手に持つ物は、手はそのままで小物の中の持つ所が変わる。床に置く物は、手足をいちばん近い面へ寄せ直す
+   */
+  _regrip(it) {
+    it.group.updateWorldMatrix(true, true);
+    for (const g of this.liveGrips(it)) {
+      if (it.grounded || /^foot/.test(g.key) || it.grips.some(x => !this.isLive(x))) {
+        this._surface = true;
+        try { this.grip(g.key, it, true, 0.3); } finally { this._surface = false; }
+      }
+      else g.rel = this._propRT(it).invert().multiply(this._limbRT(g.key));
+    }
   }
 
   // ---- 手で持つ・手足を置く ------------------------------------------------
@@ -917,7 +934,7 @@ export class Props {
     const sgn = side === 'L' ? 1 : -1;
     const PC = f.origin.clone().addScaledVector(f.along, L * 0.9).addScaledVector(f.palmar, 0.02);
     // 手に持つ物をまだだれも持っていなければ、小物の方を手の中へ動かす（手は今の形のまま）
-    if (!it.grounded && !it.grips.length) {
+    if (!it.grounded && !it.grips.length && !this._surface) {
       const H = HANDLES[it.type] || HANDLES.stick;
       const sc = it.group.scale;
       if (H.k === 'rod') {
@@ -1112,7 +1129,9 @@ export class Props {
       const live = this.liveGrips(it);
       if (!live.length || (this.drag && this.drag.it === it)) continue;
       let lead = null;
-      if (!it.grounded) {
+      // 止まっている方の人形も持っているときは、小物はそちらの手に止めておき、動かしている人形の手を小物へ寄せる（2 体で同時に持つ）
+      const heldByOther = it.grips.some(g => !this.isLive(g)) || (this.slideMode && live.some(g => g.key === dragKey));
+      if (!it.grounded && !heldByOther) {
         const hands = live.filter(g => /^hand/.test(g.key));
         lead = hands.find(g => g.key === dragKey) || hands[0] || null;
         if (lead) {
@@ -1143,7 +1162,14 @@ export class Props {
   handDragEnd(key) {
     if (!/^(hand|foot)[LR]$/.test(key || '')) return;
     const gp = this.gripOf(key);
-    if (gp && gp.it.grounded) this.grip(key, gp.it, true);
+    if (!gp) return;
+    const it = gp.it;
+    // 床に置く物・2 体で持っている物・「持つ所を変える」のとき: 手足を、離した所のいちばん近い面へ付け直す
+    if (it.grounded || it.grips.some(g => !this.isLive(g)) || this.slideMode) {
+      this._surface = true;
+      try { this.grip(key, it, true, 0.3); } finally { this._surface = false; }
+      this.onChange();
+    }
   }
 }
 // ===== props.js ここまで =====
