@@ -11,7 +11,7 @@ import { poseThumbSVG, thumbFromViewer } from './poseThumbs.js';
 import { REGIONS } from './anatomy.js';
 import * as THREE from 'three';
 
-export const BUILD = '2026-11-06e';
+export const BUILD = '2026-11-08a';
 
 const SAMPLE_URL = 'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r169/examples/models/gltf/Xbot.glb';
 const SETTINGS_KEY = 'posit.settings.v1';
@@ -48,6 +48,7 @@ function loadSettings() {
       cqHandShape: s.cqHandShape !== false,
       cqSubject: ['pose', 'props', 'plaster'].includes(s.cqSubject) ? s.cqSubject : 'pose',
       cqPropMode: s.cqPropMode === 'single' ? 'single' : 'combo',
+      cqPlasterKind: ['all', 'bust', 'full', 'solids'].includes(s.cqPlasterKind) ? s.cqPlasterKind : 'all',
       lightBall: s.lightBall !== false,
       sheetStage: [0, 1, 2].includes(s.sheetStage) ? s.sheetStage : 1,
       cqBeep: s.cqBeep !== false,
@@ -78,7 +79,7 @@ function loadSettings() {
 
 function defaultSettings() {
   return { seconds: 30, count: 10, cqCats: [], cqModel: 'skin', cqFrame: 'full', cqWire: true, cqAngle: 'random',
-    cqSide: 'random', cqBody: 'keep', cqHandShape: true, cqSubject: 'pose', cqPropMode: 'combo', lightBall: true, sheetStage: 1,
+    cqSide: 'random', cqBody: 'keep', cqHandShape: true, cqSubject: 'pose', cqPropMode: 'combo', cqPlasterKind: 'all', lightBall: true, sheetStage: 1,
     cqBeep: true, cqMirror: true, cqDefV66: true, guideHeads: false, guideCenter: false, guideTilt: false, musclePal: false, rings: true, wireW: 1, wireA: 0.85, shotShadow: false, shotCrop: true, pull: true, poseProps: true, wireMode: 'mesh', wireDensity: 1, dots: false, dotsUser: false };
 }
 function saveSettings() {
@@ -1712,7 +1713,8 @@ function croquisAngle() {
   const meta = [cqMeta.side, cqMeta.body].filter(Boolean);
   if (cqSubject !== 'pose') {
     // 小物だけ・石膏像: 向き・高さ・レンズを変え、ライトは見る向きから横へずらす（陰影がはっきり出るように）
-    const bust = cqScenes.active && cqScenes.active.kind === 'bust';
+    // 像（胸像・全身像）は前から横くらいを、目の高さ近くから見る
+    const bust = cqScenes.active && (cqScenes.active.kind === 'bust' || cqScenes.active.kind === 'statue');
     let az = settings.cqAngle === 'random' ? (bust ? rand(-130, 130) : rand(0, 360)) : (bust ? 0 : 30);
     if (settings.cqAngle === 'random' && lastAz !== null) for (let k = 0; k < 6 && Math.abs(((az - lastAz + 540) % 360) - 180) < 40; k++) az = bust ? rand(-130, 130) : rand(0, 360);
     lastAz = az;
@@ -1775,6 +1777,19 @@ const CQ_SUBJECTS = [
   { value: 'props', label: '小物だけ' },
   { value: 'plaster', label: '石膏像' },
 ];
+const CQ_PLASTER_KINDS = [
+  { value: 'all', label: 'すべて' },
+  { value: 'bust', label: '胸像・頭像' },
+  { value: 'full', label: '全身像' },
+  { value: 'solids', label: '幾何形体' },
+];
+// 像のスキャンを読み終えたら、カメラ・ライトを合わせ直して、記録の画像も撮り直す
+cqScenes.onReady = () => {
+  if (!croquis.running) return;
+  croquisAngle();
+  const k = cqLog.length - 1;
+  setTimeout(() => { if (cqShots[k] && croquis.running) cqShots[k].canvas = viewer.captureThumb(360); }, 150);
+};
 const CQ_PROP_MODES = [
   { value: 'combo', label: '組み合わせ（1〜4個）' },
   { value: 'single', label: '1つずつ' },
@@ -1929,7 +1944,7 @@ async function startCroquis() {
   if (cqSubject !== 'pose') {
     // 数えている間も人形は出さない（1 枚目から小物・石膏像だけ）。胸像のスキャンはこの間に読み込む
     viewer.setDollHidden(true);
-    if (cqSubject === 'plaster') cqScenes.preload();
+    if (cqSubject === 'plaster') cqScenes.warm(settings.cqPlasterKind);
     // 小物だけ・石膏像: 素体（胸像は石膏の質感）で、全身の見え方。面の線は出さない
     if (viewer.viewMode !== 'skin') viewer.applyViewMode('skin');
     viewer.setPartView('full', viewer.partSide);
@@ -1960,7 +1975,7 @@ async function startCroquis() {
     extra: myPoses,
     sequence,
     gen: cqSubject === 'props' ? () => cqScenes.genProps(settings.cqPropMode)
-      : cqSubject === 'plaster' ? () => cqScenes.genPlaster() : null,
+      : cqSubject === 'plaster' ? () => cqScenes.genPlaster(settings.cqPlasterKind) : null,
   }));
 }
 
@@ -2085,15 +2100,17 @@ function buildSelect(id, options, cur, onPick) {
 function buildCroquisChips() {
   const save = () => { saveSettings(); buildCroquisChips(); };
   buildSelect('cqSubject', CQ_SUBJECTS, settings.cqSubject, o => { settings.cqSubject = o.value; save(); });
-  if (settings.cqSubject === 'plaster' && $('sheet') && document.body.classList.contains('cqPage')) cqScenes.preload();
+
   const sub = settings.cqSubject, pose = sub === 'pose';
   $('cqPropModeRow').hidden = sub !== 'props';
   buildSelect('cqPropMode', CQ_PROP_MODES, settings.cqPropMode, o => { settings.cqPropMode = o.value; save(); });
+  $('cqPlasterKindRow').hidden = sub !== 'plaster';
+  buildSelect('cqPlasterKind', CQ_PLASTER_KINDS, settings.cqPlasterKind, o => { settings.cqPlasterKind = o.value; save(); });
   $('cqSubjectHint').hidden = pose;
   $('cqSubjectHint').textContent = sub === 'props'
     ? (settings.cqPropMode === 'single' ? '小物を 1 つずつ、置き方・大きさ・見る向き・ライトを毎回変えて出します。人形は隠します。'
       : '小物を 1〜4 個、台の上か床に静物のように並べて出します。人形は隠します。')
-    : '胸像（実在の人の頭部を 3D スキャンした像を石膏の質感にしたもの。傾き・左右を毎回変えます）と、幾何形体（立方体・円柱・円すい・球・六角柱など）を半々くらいで出します。ライトの向きも毎回変えます。胸像の元: “Infinite, 3D Head Scan” by Lee Perry-Smith（CC BY 3.0。色・質感を石膏風に変え、台座を付けて表示しています）。くわしくは 設定 › 体とモデル › クレジット・ライセンス';
+    : '古代ギリシャ・ローマ〜19 世紀の彫刻（プラトン・アテナ・ヘルメス・トルヴァルセン・カルポーなど 16 体）の 3D スキャンを、白くつやのない石膏の質感にして出します。胸像・頭像は台に載せ、全身像は床に置きます。幾何形体（立方体・円柱・円すい・球・六角柱など）も選べます。見る向き・ライトは毎回変えます。像の出どころ・ライセンスは 設定 › 体とモデル › クレジット・ライセンス';
   // 人物のときだけの設定
   $('cqPoseOpts').hidden = !pose;
   for (const id of ['cqModelRow', 'cqFrameRow', 'cqWireRow']) $(id).hidden = !pose;

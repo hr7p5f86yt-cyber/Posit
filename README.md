@@ -7,6 +7,7 @@
 Posit は次の第三者の作品を使っています。くわしい内容・ライセンスの全文は [CREDITS.md](CREDITS.md) にあります（アプリの中では「設定 › 体とモデル › クレジット・ライセンス」）。
 
 - **胸像**（クロッキーの石膏像）: “Infinite, 3D Head Scan” by Lee Perry-Smith — [CC BY 3.0](https://creativecommons.org/licenses/by/3.0/)。Based on a work at www.triplegangers.com。色・質感を石膏風に変え、大きさ・向きを変えて台座を付けて表示（改変あり）。`models/` に同梱し、元のライセンスの文も入れています
+- **石膏像（彫刻）**: Three D Scans（Oliver Laric、著作権なし）と Geoffrey Marchal さんのスキャン（[CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)）を Keijiro Takahashi さんが軽くしたもの（[keijiro/ThreeDScans](https://github.com/keijiro/ThreeDScans)・[keijiro/DanishStatues](https://github.com/keijiro/DanishStatues)）。GLB に変換し、画像を縮め、石膏の質感にして台に載せて表示（改変あり）。`models/statues/` に同梱
 - **人形**: three.js の例の Xbot.glb（元は Adobe Mixamo のキャラクター）。同梱せず、jsDelivr から読み込み
 - **three.js** r169 — MIT License, Copyright © 2010-2024 three.js authors
 - **fflate** 0.8.2 — MIT License, Copyright (c) 2023 Arjun Barrett
@@ -417,6 +418,17 @@ GLB の1ファイル、Mixamo から書き出した FBX は、そのまま1つ�
   手首と前腕のひねりで、指先・手のひらの向きを合わせます
 - ポーズごとに**手の形**も付けました（構える・殴る = グー、剣・バット・銃・傘 = 握る、床に手をつく = 平ら、など。`poses.js` の `POSE_HANDS`）
 - 履歴から呼び戻すときも、一覧にあるポーズなら直した形で出ます
+
+## 石膏像を実在の彫刻に（v78）
+
+- クロッキーの「石膏像」で、**古代ギリシャ・ローマ〜19 世紀の彫刻の 3D スキャン 15 体**（と、これまでの現代の頭部スキャン）を出すようにしました
+  - 胸像・頭像（台に載せる）: プラトン・エピクロスとメトロドロスの二重ヘルム・グーテンベルクの胸像・花冠をつけた男の胸像（1 世紀ローマ）・頭部（現代のスキャン）
+  - 全身像（床に置く）: アテナ（アレッツォのミネルヴァ）・ヘルメス・ニンフ・ペネロペ・イヴ・しゃがむ少年・眠る羊飼いの少年・ルネ・ド・シャロンのトランジ（リジェ・リシエ、ルネサンス）・踊る少女／マリア・バリャチンスカヤ（トルヴァルセン）・ウゴリーノと息子たち（カルポー）
+  - どれも白くつやのない石膏の質感で、凹凸とくぼみの陰の画像付き。見る向き（前〜横が多め）・ライトを毎回変えます。全部をひととおり出すまで同じ像は出しません
+- 「石膏像の種類」を選べるようにしました: すべて／胸像・頭像／全身像／幾何形体
+- 像のファイル（1 体 0.5〜1.2MB）は、出すときに読み込みます（1 度読み込んだら、通信がなくても出せます）。次に出す像は前もって読み込みます
+- 人形の頭〜胸を石膏にした胸像は、頭部スキャンが読み込めないときの代わりだけにしました
+- 像の出どころ・ライセンスを CREDITS.md・README・アプリの「クレジット・ライセンス」に書きました
 
 ## クレジット・ライセンスの表記（v77）
 

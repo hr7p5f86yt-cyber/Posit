@@ -1,7 +1,8 @@
 // croquisScenes.js — クロッキーの「小物だけ」「石膏像」の出題
 //
 // ・小物だけ … 組み合わせ（1〜4 個を台の上か床に静物のように置く）／ 1 つずつ（1 個を毎回ちがう置き方で）
-// ・石膏像 … 胸像（実在の人の頭部の 3D スキャンを石膏の質感で。台に載せ、傾き・左右・ライトを毎回変える）と、幾何形体（立方体・円柱・円すい・球・六角柱など）
+// ・石膏像 … 古代ギリシャ・ローマ〜19 世紀の彫刻の 3D スキャン（胸像・頭像は台に載せ、全身像は床に）・現代の頭部スキャン・幾何形体（立方体・円柱・円すい・球・六角柱など）
+//     どれも白くつやのない石膏の質感にし、見る向き・ライトを毎回変える。像のスキャンの出どころは STATUES と CREDITS.md
 //     胸像の元: "Infinite, 3D Head Scan" by Lee Perry-Smith（CC BY 3.0。www.triplegangers.com / www.ir-ltd.net）。読み込めないときは人形の頭〜胸で代わりにする
 // ・どれも人形は隠し、ライトの向きを毎回変える。出題の中身（desc）を残しておけば、同じ順番でもう一度出せる
 // ・クロッキーの間だけ使う（終わったら clear で消す）
@@ -36,6 +37,30 @@ const SOLIDS = [
   { key: 'octa', name: '八面体' },
 ];
 const SOLID_NAME = Object.fromEntries(SOLIDS.map(s => [s.key, s.name]));
+
+// 石膏像（実在の彫刻の 3D スキャン。models/statues/）。kind: 'bust'（胸像・頭像。台に載せる）| 'full'（全身像。床に置く）
+//   src: '3ds' … Three D Scans（著作権なし）を Keijiro Takahashi さんが軽くしたもの（github.com/keijiro/ThreeDScans）
+//        'dk'  … Geoffrey Marchal さんのスキャン（CC BY 4.0）を Keijiro Takahashi さんが軽くしたもの（github.com/keijiro/DanishStatues）
+//        'lee' … Lee Perry-Smith さんの頭部スキャン（CC BY 3.0。models/LeePerrySmith.glb）
+export const STATUES = [
+  { key: 'Plato', kind: 'bust', src: '3ds', name: 'プラトン（Plato）' },
+  { key: 'EpicMetro', kind: 'bust', src: '3ds', name: 'エピクロスとメトロドロスの二重ヘルム' },
+  { key: 'Gutenberg', kind: 'bust', src: '3ds', name: 'グーテンベルクの胸像' },
+  { key: 'BustManWreath', kind: 'bust', src: 'dk', name: '花冠をつけた男の胸像（1 世紀・ローマ）' },
+  { key: 'LeePerrySmith', kind: 'bust', src: 'lee', name: '頭部（現代のスキャン）' },
+  { key: 'Athena', kind: 'full', src: '3ds', name: 'アテナ（アレッツォのミネルヴァ）' },
+  { key: 'Hermes', kind: 'full', src: '3ds', name: 'ヘルメス（Hermes）' },
+  { key: 'Nymph', kind: 'full', src: '3ds', name: 'ニンフ（Nymph）' },
+  { key: 'Penelope', kind: 'full', src: '3ds', name: 'ペネロペ（Penelope）' },
+  { key: 'BootlegEve', kind: 'full', src: '3ds', name: 'イヴ（Bootleg Eve）' },
+  { key: 'MarblePlayer', kind: 'full', src: '3ds', name: 'しゃがむ少年（Marble Player）' },
+  { key: 'ShepherdBoy', kind: 'full', src: '3ds', name: '眠る羊飼いの少年' },
+  { key: 'DeChalon', kind: 'full', src: '3ds', name: 'ルネ・ド・シャロンのトランジ（リジェ・リシエ）' },
+  { key: 'DancingGirl', kind: 'full', src: 'dk', name: '踊る少女（トルヴァルセン）' },
+  { key: 'Maria', kind: 'full', src: 'dk', name: 'マリア・バリャチンスカヤ（トルヴァルセン）' },
+  { key: 'Ugolino', kind: 'full', src: 'dk', name: 'ウゴリーノと息子たち（カルポー）' },
+];
+const STATUE = Object.fromEntries(STATUES.map(s => [s.key, s]));
 
 function solidGeometry(key) {
   // どれも底が y = 0（八面体・球は中心を持ち上げる）
@@ -145,17 +170,26 @@ export class CroquisScenes {
     return it;
   }
 
-  /** 石膏像: 胸像か幾何形体（半々） */
-  genPlaster() {
+  /** 石膏像。kind: 'all'（全部）| 'bust'（胸像・頭像）| 'full'（全身像）| 'solids'（幾何形体） */
+  genPlaster(kind = 'all') {
     const id = 'cqs' + Date.now() + Math.random().toString(36).slice(2, 6);
-    if (Math.random() < 0.5) {
-      const face = pick(FACE_PRESETS.filter(f => f.id !== this._lastFace));
-      this._lastFace = face.id;
-      // 顔の向きに少しゆらぎを足す（同じ表情でも毎回ちがう角度に）
-      const j = { head: [R(-8, 8), R(-15, 15), R(-6, 6)], neck: [R(-6, 6), R(-12, 12), R(-5, 5)], chest: [R(-4, 4), R(-10, 10), R(-4, 4)] };
-      // 実物の胸像: 少し傾け、ときどき左右を入れ替える（同じ像でも毎回ちがって見えるように）
-      const real = { tx: +R(-7, 5).toFixed(1), tz: +R(-6, 6).toFixed(1), mirror: Math.random() < 0.5, stand: +R(0.95, 1.15).toFixed(2) };
-      return { subject: 'plaster', kind: 'bust', id, real, face: face.spec, jitter: j, light: this._light(), name: '胸像' };
+    const k = kind === 'all' ? (Math.random() < 0.3 ? 'solids' : 'statue') : kind === 'solids' ? 'solids' : 'statue';
+    if (k === 'statue') {
+      const key = this._nextStatue(kind === 'all' ? null : kind);
+      const st = STATUE[key];
+      // 次に出しそうな像を先に読み込んでおく
+      this._prefetch = this._nextStatue(kind === 'all' ? null : kind, true);
+      this.loadStatue(this._prefetch);
+      if (st.src === 'lee') {
+        // 頭部スキャン: 少し傾け、ときどき左右を入れ替える
+        const real = { tx: +R(-7, 5).toFixed(1), tz: +R(-6, 6).toFixed(1), mirror: Math.random() < 0.5, stand: +R(0.95, 1.15).toFixed(2) };
+        const face = pick(FACE_PRESETS);
+        const j = { head: [0, 0, 0], neck: [0, 0, 0], chest: [0, 0, 0] };
+        return { subject: 'plaster', kind: 'bust', id, real, face: face.spec, jitter: j, light: this._light(), name: st.name };
+      }
+      this.loadStatue(key);
+      return { subject: 'plaster', kind: 'statue', id, key, stand: st.kind === 'bust' ? +R(0.95, 1.15).toFixed(2) : +R(0, 0.12).toFixed(2),
+        light: this._light(), name: st.name };
     }
     const n = Math.random() < 0.35 ? 1 : Math.random() < 0.7 ? 2 : 3;
     const keys = [];
@@ -194,6 +228,8 @@ export class CroquisScenes {
       this._showProps(desc);
     } else if (desc.kind === 'bust') {
       this._showBust(desc);
+    } else if (desc.kind === 'statue') {
+      this._showStatue(desc);
     } else {
       v.setDollHidden(true);
       this._showSolids(desc);
@@ -210,6 +246,97 @@ export class CroquisScenes {
     }
     for (const it of desc.items) P.addStill(it.type, it.params, it.q, it.x, it.z, baseY);
     P.setLook('clay');
+  }
+
+  /** 次の像（同じ像が続かないよう、全部をひととおり出してから次の一巡へ）。peek: 決めるだけで使わない */
+  _nextStatue(kind, peek = false) {
+    const pool = STATUES.filter(s => !kind || s.kind === kind).map(s => s.key);
+    const bagKey = kind || 'all';
+    this._bags = this._bags || {};
+    let bag = this._bags[bagKey];
+    if (!bag || !bag.length) {
+      bag = pool.slice().sort(() => Math.random() - 0.5);
+      if (bag.length > 1 && bag[bag.length - 1] === this._lastStatue) bag.unshift(bag.pop());
+      this._bags[bagKey] = bag;
+    }
+    if (peek) return bag[bag.length - 1];
+    const key = bag.pop();
+    this._lastStatue = key;
+    return key;
+  }
+
+  /** はじめる前に、1 枚目に出しそうな像を読み込んでおく */
+  warm(kind = 'all') {
+    if (kind === 'solids') return;
+    this.loadStatue(this._nextStatue(kind === 'all' ? null : kind, true));
+  }
+
+  /** 像の 3D スキャンを読み込む（1 回だけ。読み込めなかったら null） */
+  loadStatue(key) {
+    const st = STATUE[key];
+    if (!st) return Promise.resolve(null);
+    if (st.src === 'lee') return this.preload();
+    this._statues = this._statues || new Map();
+    if (this._statues.has(key)) return this._statues.get(key);
+    const url = new URL('./models/statues/' + key + '.glb', import.meta.url).href;
+    const p = new GLTFLoader().loadAsync(url).then(g => {
+      let mesh = null;
+      g.scene.traverse(o => { if (o.isMesh && !mesh) mesh = o; });
+      if (!mesh) return null;
+      const old = mesh.material;
+      // 石膏: 白く、つやのない面。細かい凹凸は法線の画像、くぼみの陰は陰の画像で
+      mesh.material = new THREE.MeshStandardMaterial({ color: 0xf3f0ea, roughness: 0.93, metalness: 0,
+        normalMap: old.normalMap || null, aoMap: old.aoMap || null, aoMapIntensity: 1 });
+      old.dispose();
+      mesh.castShadow = true; mesh.receiveShadow = true;
+      mesh.geometry.computeBoundingBox();
+      mesh.userData.keep = true;
+      mesh.position.set(0, 0, 0); mesh.rotation.set(0, 0, 0); mesh.scale.set(1, 1, 1);
+      mesh.removeFromParent();
+      return mesh;
+    }).catch(() => null);
+    this._statues.set(key, p);
+    p.then(m => { this._statueMesh = this._statueMesh || {}; this._statueMesh[key] = m; });
+    return p;
+  }
+
+  _showStatue(desc) {
+    const v = this.v;
+    v.setDollHidden(true);
+    const m = this._statueMesh && this._statueMesh[desc.key];
+    if (!m) {
+      // まだ読み込み中: 読み終わったら、まだ同じ出題なら置き直す
+      this._waiting = desc;
+      this.loadStatue(desc.key).then(mm => {
+        if (this.active !== desc || this._waiting !== desc) return;
+        this._waiting = null;
+        if (!mm) return;
+        this.show(desc);
+        if (this.onReady) this.onReady(desc);
+      });
+      this._bust = { center: V(0, 1, 0), radius: 0.6 };
+      return;
+    }
+    const st = STATUE[desc.key];
+    const bb = m.geometry.boundingBox;
+    const top = desc.stand || 0;
+    if (top > 0.01) {
+      // 胸像は台の上に。全身像は低い台に
+      const w = Math.max(0.3, (bb.max.x - bb.min.x) * 1.05), d = Math.max(0.3, (bb.max.z - bb.min.z) * 1.05);
+      const stand = new THREE.Mesh(new THREE.BoxGeometry(st.kind === 'bust' ? Math.min(w, 0.5) : w + 0.1, top, st.kind === 'bust' ? Math.min(d, 0.45) : d + 0.1), this.plaster);
+      stand.position.set(0, top / 2, 0);
+      stand.castShadow = stand.receiveShadow = true; stand.userData.base = true;
+      this.group.add(stand);
+    }
+    const piv = new THREE.Group();
+    piv.position.set(0, top, 0);
+    piv.userData.keep = true;
+    piv.add(m);
+    this.group.add(piv);
+    this.group.visible = true;
+    const h = bb.max.y - bb.min.y;
+    const size = V().subVectors(bb.max, bb.min);
+    this._bust = { center: V(0, top + h * (st.kind === 'bust' ? 0.5 : 0.5), 0), radius: Math.max(0.28, size.length() * (st.kind === 'bust' ? 0.5 : 0.45)) };
   }
 
   /** 胸像の 3D スキャンを読み込む（1 回だけ。読み込めなかったら null） */
@@ -262,6 +389,18 @@ export class CroquisScenes {
 
   _showBust(desc) {
     if (desc.real && this.head) { this._showRealBust(desc); return; }
+    if (desc.real && !this._headFailed) {
+      // 頭部スキャンを読み込み中: 読み終わったら置き直す（読み込めなければ人形の胸像で代わりにする）
+      this.v.setDollHidden(true);
+      this.preload().then(m => {
+        if (this.active !== desc) return;
+        if (!m) this._headFailed = true;
+        this.show(desc);
+        if (this.onReady) this.onReady(desc);
+      });
+      this._bust = { center: V(0, 1.2, 0), radius: 0.4 };
+      return;
+    }
     const v = this.v;
     v.setDollHidden(false);
     if (v.second && v.second.holder) v.second.holder.visible = false;   // 2 体目は出さない
@@ -336,7 +475,7 @@ export class CroquisScenes {
   _frame(desc) {
     const v = this.v;
     let center, radius;
-    if (desc.kind === 'bust' && this._bust) ({ center, radius } = this._bust);
+    if ((desc.kind === 'bust' || desc.kind === 'statue') && this._bust) ({ center, radius } = this._bust);
     else {
       const box = new THREE.Box3();
       this.group.updateWorldMatrix(true, true);
@@ -360,7 +499,7 @@ export class CroquisScenes {
     const v = this.v;
     for (const o of [...this.group.children]) {
       this.group.remove(o);
-      if (o.userData.keep) { if (this.head && this.head.parent === o) o.remove(this.head); continue; }   // 胸像のスキャンは使い回す
+      if (o.userData.keep) { for (const c of [...o.children]) if (c.userData.keep) o.remove(c); continue; }   // 像のスキャンは使い回す
       o.geometry && o.geometry.dispose();
     }
     this.group.visible = false;
