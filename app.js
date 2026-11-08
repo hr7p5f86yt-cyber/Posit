@@ -5,13 +5,13 @@ import { POSE_CATEGORIES, POSE_PRESETS, POSE_HANDS, HAND_SHAPES, FACE_PRESETS, t
 import { PoseHistory, relativeTime, HISTORY_LIMIT } from './history.js';
 import { CroquisSession, CROQUIS_SECONDS, CROQUIS_COUNTS } from './croquis.js';
 import { PROP_TYPES } from './props.js';
-import { CroquisScenes } from './croquisScenes.js';
+import { CroquisScenes, STATUES } from './croquisScenes.js';
 import { LightBall } from './lightBall.js';
 import { poseThumbSVG, thumbFromViewer } from './poseThumbs.js';
 import { REGIONS } from './anatomy.js';
 import * as THREE from 'three';
 
-export const BUILD = '2026-11-08a';
+export const BUILD = '2026-11-08b';
 
 const SAMPLE_URL = 'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r169/examples/models/gltf/Xbot.glb';
 const SETTINGS_KEY = 'posit.settings.v1';
@@ -868,6 +868,7 @@ props.onHandShape = (sd, id) => {
 };
 let propGroupShown = null;
 for (const t of PROP_TYPES) {
+  if (t.list === false) continue;
   if (propGroupShown !== t.grounded) {
     propGroupShown = t.grounded;
     const h = document.createElement('div');
@@ -884,6 +885,25 @@ for (const t of PROP_TYPES) {
     if (it) showToast(t.grounded ? `${t.name}を置きました（押したまま動かす・輪で回す）` : `${t.name}を出しました（「右手」「左手」で手に持たせます）`);
   });
   $('propPopGrid').appendChild(b);
+}
+// 石膏像（彫刻の 3D スキャン）: 像ごとに並べる
+{
+  const h = document.createElement('div');
+  h.className = 'qpSub';
+  h.textContent = '石膏像（胸像・頭像 → 全身像）';
+  $('propPopGrid').appendChild(h);
+  for (const st of STATUES) {
+    const b = document.createElement('button');
+    b.className = 'ghost statue';
+    b.textContent = st.name.replace(/（.*$/, '');
+    b.title = st.name;
+    b.addEventListener('click', () => {
+      $('propPop').hidden = true;
+      const it = props.add('statue', { variant: st.key, name: st.name.replace(/（.*$/, '') });
+      if (it) showToast(`${st.name}を置きました（読み込みに少しかかります）`);
+    });
+    $('propPopGrid').appendChild(b);
+  }
 }
 function syncPropBar() {
   const it = props.selected;
@@ -1771,6 +1791,9 @@ let lastBeepSec = null;
 
 // 小物だけ・石膏像（クロッキーの間だけ出す）
 const cqScenes = new CroquisScenes(viewer);
+// 小物の石膏像も、クロッキーと同じ読み込み（1 度読んだ形は使い回す）
+props.statueLoader = key => cqScenes.loadStatue(key);
+props.statueScale = { LeePerrySmith: 0.045 };
 let cqSubject = 'pose';
 const CQ_SUBJECTS = [
   { value: 'pose', label: '人物（ポーズ）' },

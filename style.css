@@ -916,3 +916,5 @@ details.cqMulti > summary .lbl { font-weight: 400; }
 .credits p { margin: 0 0 6px; }
 .credits a { color: var(--accent); word-break: break-all; }
 .credits b { color: var(--text); font-weight: 600; }
+
+#propPop .qpGrid button.statue { grid-column: span 2; font-size: 12px; line-height: 1.3; padding: 8px 6px; }

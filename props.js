@@ -1,5 +1,5 @@
 // props.js — 小物
-//   置く物: 椅子・スツール・ベンチ・ソファ・台・箱・円柱台・階段・鉄棒・壁
+//   置く物: 椅子・スツール・ベンチ・ソファ・台・箱・円柱台・階段・鉄棒・壁・石膏像（彫刻の 3D スキャン 16 体）
 //   手に持つ物: 棒・ボール・本・コップ・傘・剣・かばん・ダンベル
 //
 // ・置く: 種類を選ぶと、人形の近くに置く（椅子・スツール・ベンチ・ソファは、座っている人形ならお尻の下へ、座面の高さも合わせる）
@@ -37,6 +37,8 @@ export const PROP_TYPES = [
   { key: 'sword', name: '剣', grounded: false },
   { key: 'bag', name: 'かばん', grounded: false },
   { key: 'dumbbell', name: 'ダンベル', grounded: false },
+  // 石膏像（彫刻の 3D スキャン）。一覧には像ごとに並べる（opts.variant で像を選ぶ）
+  { key: 'statue', name: '石膏像', grounded: true, list: false },
 ];
 const TYPE = Object.fromEntries(PROP_TYPES.map(t => [t.key, t]));
 // 座面・天板などの高さ（h）を持つ物。「縦」で大きさを変えるときは、この高さを変える
@@ -111,6 +113,11 @@ function shapesOf(type, p) {
         { k: 'rod', c: [0, h, 0], r: 0.017, h: w + 0.044, ax: 'x' }];
     }
     case 'wall': return [{ k: 'box', c: [0, 1.2 * s, 0], s: [2.0 * s, 2.4 * s, 0.06] }];
+    case 'statue': {
+      // 当たり・持つ所は、像を囲む箱（読み込む前は仮の大きさ）
+      const b = p.bb || [0.35, 0.7, 0.35];
+      return [{ k: 'box', c: [0, b[1] / 2, 0], s: b }];
+    }
     case 'stick': return [{ k: 'rod', c: [0, 0, 0], r: 0.016, h: 1.2 * s }];
     case 'ball': return [{ k: 'sph', c: [0, 0, 0], r: 0.11 * s }];
     case 'book': return [{ k: 'box', c: [0, 0, 0], s: [0.17, 0.03, 0.24] }];
@@ -232,7 +239,8 @@ export class Props {
     const slot = this.v.primarySlot;
     const group = new THREE.Group();
     group.userData.prop = true;
-    const it = { id: ++this._seq, type, name: T.name, grounded: T.grounded, params: { size: 1, h: H_TYPES[type] || 0.45, sx: 1, sy: 1, sz: 1 }, group, meshes: [], grips: [] };
+    const it = { id: ++this._seq, type, name: opts.name || T.name, grounded: T.grounded, params: { size: 1, h: H_TYPES[type] || 0.45, sx: 1, sy: 1, sz: 1 }, group, meshes: [], grips: [] };
+    if (type === 'statue') { it.variant = opts.variant; this._loadStatue(it); }
     // 置く場所: 人形の前（腰の向き）
     const hips = slot && slot.boneMap.hips;
     const hp = hips ? hips.getWorldPosition(V()) : V(0, 0.9, 0);
@@ -262,7 +270,7 @@ export class Props {
     } else if (type === 'bar') {
       group.position.copy(hp).addScaledVector(fwd, 0.45); group.position.y = 0;
     } else {
-      group.position.copy(hp).addScaledVector(fwd, type === 'table' ? 0.55 : type === 'stairs' ? 0.75 : 0.6); group.position.y = 0;
+      group.position.copy(hp).addScaledVector(fwd, type === 'table' ? 0.55 : type === 'stairs' ? 0.75 : type === 'statue' ? 1.0 : 0.6); group.position.y = 0;
     }
     this.v.scene.add(group);
     this.items.push(it);
@@ -310,6 +318,7 @@ export class Props {
     this.release(it);
     it.group.parent && it.group.parent.remove(it.group);
     for (const m of it.meshes) m.geometry.dispose();
+    if (it.statueMesh) it.statueMesh.material.dispose();
     this.items = this.items.filter(x => x !== it);
     if (this.selected === it) this.select(null);
     this.onChange();
@@ -517,6 +526,43 @@ export class Props {
       it.group.add(m); it.meshes.push(m);
     }
     it.radius = this._radius(it);
+    if (it.type === 'statue') {
+      // 箱は見せずに当たりだけに使い、像を出す（読み込む前は箱をうっすら出す）
+      for (const m of it.meshes) m.visible = !it.statueMesh;
+      if (it.statueMesh && it.statueMesh.parent !== it.group) it.group.add(it.statueMesh);
+    }
+  }
+
+  /** 石膏像の形を読み込んで、像を出す（loader は app.js が渡す: key → 型の Mesh） */
+  _loadStatue(it) {
+    if (!this.statueLoader) return;
+    Promise.resolve(this.statueLoader(it.variant)).then(tpl => {
+      if (!tpl || !this.items.includes(it)) return;
+      const g = tpl.geometry;
+      if (!g.boundingBox) g.computeBoundingBox();
+      const S = (this.statueScale && this.statueScale[it.variant]) || 1;
+      const b = g.boundingBox;
+      const mat = tpl.material.clone();
+      const m = new THREE.Mesh(g, mat);
+      m.scale.setScalar(S);
+      m.position.set(-(b.min.x + b.max.x) / 2 * S, -b.min.y * S, -(b.min.z + b.max.z) / 2 * S);
+      m.castShadow = true; m.receiveShadow = true;
+      m.userData.propItem = it;
+      m.userData.shared = true;   // 形は croquisScenes と共有（消さない）
+      it.statueMesh = m;
+      it.params.bb = [(b.max.x - b.min.x) * S, (b.max.y - b.min.y) * S, (b.max.z - b.min.z) * S].map(x => +x.toFixed(3));
+      this._build(it);
+      this._tint(it);
+      // 手足をつないでいたら、新しい大きさに付け直す
+      for (const gr of [...it.grips]) this.grip(gr.key, it, true);
+      this.onChange();
+    });
+  }
+
+  /** 石膏像は石膏の色のまま、選んでいるときだけ少し青く光らせる */
+  _tint(it) {
+    if (!it || !it.statueMesh) return;
+    it.statueMesh.material.emissive.setHex(this.selected === it && !this.look ? 0x0b2a40 : 0x000000);
   }
 
   _radius(it) {
@@ -575,7 +621,7 @@ export class Props {
     if (this.selected === it) { this._syncRings(); return; }
     const prev = this.selected;
     this.selected = it;
-    for (const x of [prev, it]) if (x) for (const m of x.meshes) m.material = this._matOf(x);
+    for (const x of [prev, it]) if (x) { for (const m of x.meshes) m.material = this._matOf(x); this._tint(x); }
     if (it && this.v.selected) { this._selecting = true; try { this.v.select(null); } finally { this._selecting = false; } }
     this._syncRings();
     this.onSelect(it);
@@ -648,7 +694,8 @@ export class Props {
   pick(x, y) {
     const ray = new THREE.Raycaster();
     ray.setFromCamera(this._ndc(x, y), this.v.camera);
-    const ms = this.items.filter(it => it.group.visible).flatMap(it => it.meshes);
+    // 石膏像は像の形そのもので選ぶ（囲む箱ではなく）
+    const ms = this.items.filter(it => it.group.visible).flatMap(it => it.statueMesh ? [it.statueMesh] : it.meshes);
     if (!ms.length) return null;
     const h = ray.intersectObjects(ms, false)[0];
     return h ? { it: h.object.userData.propItem, dist: h.distance, point: h.point } : null;
