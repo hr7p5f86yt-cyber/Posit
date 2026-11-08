@@ -11,7 +11,7 @@ import { poseThumbSVG, thumbFromViewer } from './poseThumbs.js';
 import { REGIONS } from './anatomy.js';
 import * as THREE from 'three';
 
-export const BUILD = '2026-11-08b';
+export const BUILD = '2026-11-08c';
 
 const SAMPLE_URL = 'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r169/examples/models/gltf/Xbot.glb';
 const SETTINGS_KEY = 'posit.settings.v1';
@@ -94,15 +94,31 @@ function syncUndoButtons() {
   $('btnUndo').disabled = !undoStack.length;
   $('btnRedo').disabled = !redoStack.length;
 }
-/** 変える前に呼ぶ（いまの角度を「戻す」に積み、「やり直す」は空にする） */
-// 戻す・やり直す: 関節の角度と、手の形（指）を一緒に残す
-const takeState = () => ({ ...viewer.allAngles(), _hands: { ...viewer.handShape } });
+/** 変える前に呼ぶ（いまの形を「戻す」に積み、「やり直す」は空にする） */
+// 戻す・やり直す: 人形と小物への操作をまとめて残す（メニューの開け閉め・見え方・ライト・カメラは残さない）
+//   関節の角度・体全体の位置・手の形（指）・2 体目・小物（種類・大きさ・場所・向き・手足のつなぎ）・体型・頭身
+const takeState = () => ({
+  ...viewer.allAngles(), _hands: { ...viewer.handShape },
+  _second: viewer.secondState(),
+  _props: viewer.props.serialize(),
+  _body: { type: viewer.bodyType, head: viewer.baseHeadRatio },
+});
 function putState(st) {
+  if (!st) return;
+  // 体型・頭身（ほかを戻す前に。2 体目の焼き直しも、この体で）
+  let rebuild = false;
+  if (st._body) {
+    if (st._body.type && st._body.type !== viewer.bodyType) { viewer.setBodyType(st._body.type); buildBodyChips(); rebuild = true; }
+    if (st._body.head != null && Math.abs(st._body.head - viewer.baseHeadRatio) > 1e-6) { viewer.setHeadRatio(st._body.head); syncHeadRatio(); rebuild = true; }
+  }
   viewer.setAngles(st);
-  if (st && st._hands) for (const sd of ['L', 'R']) if (st._hands[sd] !== undefined && st._hands[sd] !== viewer.handShape[sd]) viewer.applyHandShape(sd, st._hands[sd] || '');
+  if (st._hands) for (const sd of ['L', 'R']) if (st._hands[sd] !== undefined && st._hands[sd] !== viewer.handShape[sd]) viewer.applyHandShape(sd, st._hands[sd] || '');
+  if ('_second' in st) { viewer.restoreSecond(st._second); syncDuo(); }
+  if (st._props) viewer.props.restore(st._props);
+  if (rebuild) viewer.rebuildBoneViews();
 }
-function snapshot() {
-  undoStack.push(takeState());
+function snapshot(pre) {
+  undoStack.push(pre || takeState());
   if (undoStack.length > 50) undoStack.shift();
   redoStack.length = 0;
   syncUndoButtons();
@@ -856,7 +872,7 @@ function syncDuo() {
 }
 $('actDuo').addEventListener('click', () => {
   if (viewer.hasSecond()) { snapshot(); viewer.removeSecond(); showToast('2体目を消しました（1体目は残ります）'); }
-  else if (viewer.addSecond()) { snapshot(); showToast('2体目を出しました（いま動かすのは右の人形）'); }
+  else { const pre = takeState(); if (!viewer.addSecond()) return; snapshot(pre); showToast('2体目を出しました（いま動かすのは右の人形）'); }
   syncDuo(); syncSliders();
 });
 // ---- 小物 --------------------------------------------------------------------
@@ -881,6 +897,7 @@ for (const t of PROP_TYPES) {
   b.textContent = t.name;
   b.addEventListener('click', () => {
     $('propPop').hidden = true;
+    snapshot();
     const it = props.add(t.key);
     if (it) showToast(t.grounded ? `${t.name}を置きました（押したまま動かす・輪で回す）` : `${t.name}を出しました（「右手」「左手」で手に持たせます）`);
   });
@@ -899,6 +916,7 @@ for (const t of PROP_TYPES) {
     b.title = st.name;
     b.addEventListener('click', () => {
       $('propPop').hidden = true;
+      snapshot();
       const it = props.add('statue', { variant: st.key, name: st.name.replace(/（.*$/, '') });
       if (it) showToast(`${st.name}を置きました（読み込みに少しかかります）`);
     });
@@ -927,7 +945,7 @@ $('actProp').addEventListener('click', e => { e.stopPropagation(); $('propPop').
 document.addEventListener('pointerdown', e => {
   if (!$('propPop').hidden && !e.target.closest('#propPop, #actProp')) $('propPop').hidden = true;
 }, { capture: true });
-$('propPopClear').addEventListener('click', () => { props.clear(); $('propPop').hidden = true; showToast('小物をすべて消しました'); });
+$('propPopClear').addEventListener('click', () => { snapshot(); props.clear(); $('propPop').hidden = true; showToast('小物をすべて消しました'); });
 // 大きさを変える向き（全体 → 縦 → 横 → 奥行き の順に切り替え）
 const PROP_AXES = [['all', '全体'], ['y', '縦'], ['x', '横'], ['z', '奥行き']];
 let propAxis = 'all';
@@ -936,17 +954,18 @@ $('propBarAxis').addEventListener('click', () => {
   propAxis = PROP_AXES[(i + 1) % PROP_AXES.length][0];
   syncPropBar();
 });
-$('propBarSmaller').addEventListener('click', () => props.resize(-1, props.selected, propAxis));
-$('propBarBigger').addEventListener('click', () => props.resize(1, props.selected, propAxis));
+$('propBarSmaller').addEventListener('click', () => { snapshot(); props.resize(-1, props.selected, propAxis); });
+$('propBarBigger').addEventListener('click', () => { snapshot(); props.resize(1, props.selected, propAxis); });
 // 右手・左手・右足・左足（人形から見た左右）。押すとつなぎ、もう一度押すと離す
 const PROP_LIMBS = [['handR', 'propBarGripR'], ['handL', 'propBarGripL'], ['footR', 'propBarFootR'], ['footL', 'propBarFootL']];
 const LIMB_NAME = { handR: '右手', handL: '左手', footR: '右足', footL: '左足' };
 for (const [key, id] of PROP_LIMBS) $(id).addEventListener('click', () => {
   const it = props.selected; if (!it) return;
   const nm = LIMB_NAME[key];
-  if (it.grips.some(g => g.key === key)) { props.release(it, key); showToast(nm + 'を離しました'); syncPropBar(); return; }
-  snapshot();
+  if (it.grips.some(g => g.key === key)) { snapshot(); props.release(it, key); showToast(nm + 'を離しました'); syncPropBar(); return; }
+  const pre = takeState();   // つなげたときだけ「戻す」に積む（届かなかったときは何も変わらない）
   const r = props.grip(key, it);
+  if (r && r !== 'far') snapshot(pre);
   if (r === 'far') { showToast(nm + 'が届きません。小物を' + nm + 'の近くへ動かしてから押してください'); return; }
   if (!r) return;
   syncSliders();
@@ -954,7 +973,9 @@ for (const [key, id] of PROP_LIMBS) $(id).addEventListener('click', () => {
   showToast(nm + 'を' + it.name + (foot ? 'の上に置きました（いちばん近い上の面）'
     : it.grounded ? 'に置きました（小物を動かすと手がついてきます。手を引っ張ると面の上で付け直します）' : 'に付けました（手を動かすと一緒に動きます）'));
 });
-$('propBarDel').addEventListener('click', () => props.remove());
+$('propBarDel').addEventListener('click', () => { snapshot(); props.remove(); });
+// 小物を押したまま動かす・輪で回す: 動かし始めに「戻す」に積む
+props.onEditStart = () => snapshot();
 $('propBarClose').addEventListener('click', () => props.select(null));
 
 $('actSwap').addEventListener('click', () => { snapshot(); viewer.swapSecond(); syncSliders(); showToast(viewer.secondActive() ? '2体目を動かします' : '1体目を動かします'); });
@@ -1326,6 +1347,7 @@ function buildHandList() {
     const b = document.createElement('button');
     b.textContent = h.name;
     b.addEventListener('click', () => {
+      snapshot();
       viewer.applyHandShape(handTarget, h.spec);
       showToast(h.name);
     });
@@ -2753,7 +2775,7 @@ const BODY_TYPES = [
 ];
 function buildBodyChips() {
   buildChips('bodyChips', BODY_TYPES, b => b.key === viewer.bodyType,
-    b => { viewer.setBodyType(b.key); buildBodyChips(); viewer.rebuildBoneViews(); });
+    b => { if (b.key !== viewer.bodyType) snapshot(); viewer.setBodyType(b.key); buildBodyChips(); viewer.rebuildBoneViews(); });
 }
 
 function syncHeadRatio() {
@@ -2762,13 +2784,16 @@ function syncHeadRatio() {
   el.value = Math.max(3, Math.min(9, base)).toFixed(1);
   $('outHead').textContent = (+el.value).toFixed(1);
 }
+let headEditing = false;   // 頭身のつまみを動かしている間（動かし始めに 1 回だけ「戻す」に積む）
 $('headRatio').addEventListener('input', e => {
+  if (!headEditing) { headEditing = true; snapshot(); }
   const r = parseFloat(e.target.value);
   $('outHead').textContent = r.toFixed(1);
   viewer.setHeadRatio(r);
 });
-$('headRatio').addEventListener('change', () => viewer.rebuildBoneViews());
+$('headRatio').addEventListener('change', () => { headEditing = false; viewer.rebuildBoneViews(); });
 $('btnHeadReset').addEventListener('click', () => {
+  snapshot();
   viewer.resetHeadRatio();
   syncHeadRatio();
   viewer.rebuildBoneViews();

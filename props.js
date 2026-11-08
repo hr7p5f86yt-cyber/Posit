@@ -326,6 +326,54 @@ export class Props {
 
   clear() { for (const it of [...this.items]) this.remove(it); }
 
+  /** 戻す・やり直す用: 小物の中身（種類・大きさ・場所・向き・手足のつなぎ） */
+  serialize() {
+    return {
+      sel: this.selected ? this.selected.id : null,
+      items: this.items.map(it => ({
+        id: it.id, type: it.type, variant: it.variant, name: it.name, auto: !!it.auto, holdAt: it.holdAt,
+        params: JSON.parse(JSON.stringify(it.params)),
+        pos: it.group.position.toArray(), quat: it.group.quaternion.toArray(),
+        grips: it.grips.map(g => ({ key: g.key, rel: g.rel.elements.slice() })),
+      })),
+    };
+  }
+
+  /** 戻す・やり直す用: serialize の中身のとおりにする（同じ小物は作り直さずに直す） */
+  restore(st) {
+    const list = (st && st.items) || [];
+    const ids = new Set(list.map(e => e.id));
+    for (const it of [...this.items]) if (!ids.has(it.id)) {
+      it.group.parent && it.group.parent.remove(it.group);
+      for (const m of it.meshes) m.geometry.dispose();
+      if (it.statueMesh) it.statueMesh.material.dispose();
+      this.items = this.items.filter(x => x !== it);
+      if (this.selected === it) this.select(null);
+    }
+    for (const e of list) {
+      let it = this.items.find(x => x.id === e.id);
+      if (!it) {
+        it = this.add(e.type, { select: false, variant: e.variant, name: e.name, restoring: true });
+        if (!it) continue;
+        it.id = e.id;
+        this._seq = Math.max(this._seq, e.id);
+        it.params = {};
+      }
+      const same = JSON.stringify(it.params) === JSON.stringify(e.params);
+      it.params = JSON.parse(JSON.stringify(e.params));
+      it.auto = e.auto; it.holdAt = e.holdAt;
+      it.group.position.fromArray(e.pos);
+      it.group.quaternion.fromArray(e.quat);
+      if (!same) this._build(it);
+      it.grips = e.grips.map(g => ({ key: g.key, rel: new THREE.Matrix4().fromArray(g.rel) }));
+      it.group.visible = !this.hidden || it.auto;
+      it.group.updateWorldMatrix(true, true);
+    }
+    const sel = st && st.sel != null ? this.items.find(x => x.id === st.sel) : null;
+    if (this.selected !== (sel || null)) this.select(sel || null);
+    this.onChange();
+  }
+
   /** 自分で置いた小物を隠す（クロッキーの間）。ポーズに付いた小物（auto）はそのまま */
   setHidden(on) {
     this.hidden = !!on;
@@ -550,11 +598,12 @@ export class Props {
       m.userData.propItem = it;
       m.userData.shared = true;   // 形は croquisScenes と共有（消さない）
       it.statueMesh = m;
+      const had = !!it.params.bb;
       it.params.bb = [(b.max.x - b.min.x) * S, (b.max.y - b.min.y) * S, (b.max.z - b.min.z) * S].map(x => +x.toFixed(3));
       this._build(it);
       this._tint(it);
-      // 手足をつないでいたら、新しい大きさに付け直す
-      for (const gr of [...it.grips]) this.grip(gr.key, it, true);
+      // 手足をつないでいたら、新しい大きさに付け直す（戻すで作り直したときは、大きさが同じなのでそのまま）
+      if (!had) for (const gr of [...it.grips]) this.grip(gr.key, it, true);
       this.onChange();
     });
   }
@@ -730,6 +779,8 @@ export class Props {
   pointerMove(e) {
     const d = this.drag;
     if (!d) return;
+    // 動かし始め: 「戻す」に積む（app.js）
+    if (!d.moved && this.onEditStart) this.onEditStart();
     d.moved = true;
     const it = d.it;
     if (d.mode === 'move') {

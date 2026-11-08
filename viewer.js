@@ -139,7 +139,7 @@ class Slot {
 
 export class Viewer {
   /** この viewer.js の版（app.js の BUILD と同じでなければ、古いファイルが混ざっている） */
-  static BUILD = '2026-11-08b';
+  static BUILD = '2026-11-08c';
 
   constructor(canvas) {
     this.canvas = canvas;
@@ -2590,6 +2590,31 @@ export class Viewer {
     this.bodyShift.x += dx;
     this.applyAll();
     return true;
+  }
+
+  /** 戻す・やり直す用: 2 体目（写し）の中身。なければ null */
+  secondState() {
+    const sd = this.second;
+    return sd ? { stored: JSON.parse(JSON.stringify(sd.stored)), hands: { ...sd.hands }, firstActive: sd.firstActive } : null;
+  }
+
+  /** 戻す・やり直す用: 2 体目を st のとおりにする（動かす人形の形を先に戻してから呼ぶ） */
+  restoreSecond(st) {
+    if (!st) { if (this.second) this.dropSecond(); return; }
+    let sd = this.second;
+    if (!sd) {
+      const holder = new THREE.Group();
+      holder.matrixAutoUpdate = false;
+      holder.userData.secondDoll = true;
+      this.scene.add(holder);
+      sd = this.second = { holder, bones: {}, stored: null, hands: null, firstActive: st.firstActive, dirty: false };
+    } else if (sd.firstActive === st.firstActive && JSON.stringify(sd.stored) === JSON.stringify(st.stored) && JSON.stringify(sd.hands) === JSON.stringify(st.hands)) {
+      return;   // 変わっていない
+    }
+    sd.stored = JSON.parse(JSON.stringify(st.stored));
+    sd.hands = { ...st.hands };
+    sd.firstActive = st.firstActive;
+    this._rebakeSecond();
   }
 
   /** 動かす人形と写しを入れ替える */
