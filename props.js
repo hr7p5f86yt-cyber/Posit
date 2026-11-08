@@ -1,6 +1,6 @@
 // props.js — 小物
 //   置く物: 椅子・スツール・ベンチ・ソファ・台・箱・円柱台・階段・鉄棒・壁・石膏像（彫刻の 3D スキャン 16 体）
-//   手に持つ物: 棒・ボール・本・コップ・傘・剣・かばん・ダンベル
+//   手に持つ物: 棒・ボール・本・コップ・傘・剣・かばん・ダンベル・拳銃・ライフル・刀・槍・弓・バット・ラケット・杖・盾・スマホ・ペン
 //
 // ・置く: 種類を選ぶと、人形の近くに置く（椅子・スツール・ベンチ・ソファは、座っている人形ならお尻の下へ、座面の高さも合わせる）
 // ・動かす: 小物を押したまま、画面の面の中で上下左右に動かす（床に置く物は床より下へは行かない）
@@ -37,6 +37,17 @@ export const PROP_TYPES = [
   { key: 'sword', name: '剣', grounded: false },
   { key: 'bag', name: 'かばん', grounded: false },
   { key: 'dumbbell', name: 'ダンベル', grounded: false },
+  { key: 'pistol', name: '拳銃', grounded: false },
+  { key: 'rifle', name: 'ライフル', grounded: false },
+  { key: 'katana', name: '刀', grounded: false },
+  { key: 'spear', name: '槍', grounded: false },
+  { key: 'bow', name: '弓', grounded: false },
+  { key: 'bat', name: 'バット', grounded: false },
+  { key: 'racket', name: 'ラケット', grounded: false },
+  { key: 'cane', name: '杖', grounded: false },
+  { key: 'shield', name: '盾', grounded: false },
+  { key: 'phone', name: 'スマホ', grounded: false },
+  { key: 'pen', name: 'ペン', grounded: false },
   // 石膏像（彫刻の 3D スキャン）。一覧には像ごとに並べる（opts.variant で像を選ぶ）
   { key: 'statue', name: '石膏像', grounded: true, list: false },
   // 幾何形体（石膏。立方体・円柱など。opts.variant で形を選ぶ）
@@ -61,6 +72,21 @@ const HANDLES = {
   sword: { k: 'rod', c: [0, 0.1, 0], ax: 'y', face: [0, 0, 1], shape: 'grip' },
   bag: { k: 'rod', c: [0, 0, 0], ax: 'x', down: [0, -1, 0], hang: true, shape: 'grip' },
   dumbbell: { k: 'rod', c: [0, 0, 0], ax: 'y', shape: 'grip' },
+  // 銃: 握り（縦）を握り、銃身（+z）を指の向き（前腕の先）へ
+  pistol: { k: 'rod', c: [0, 0, 0], ax: 'y', down: [0, 0, 1], shape: 'grip' },
+  rifle: { k: 'rod', c: [0, 0, 0], ax: 'y', down: [0, 0, 1], shape: 'grip' },
+  katana: { k: 'rod', c: [0, 0.2, 0], ax: 'y', face: [0, 0, 1], shape: 'grip' },
+  spear: { k: 'rod', c: [0, 0, 0], ax: 'y', shape: 'grip' },
+  // 弓: 握りを握り、弦（-z）を手首の側へ
+  bow: { k: 'rod', c: [0, 0, 0], ax: 'y', down: [0, 0, 1], shape: 'grip' },
+  bat: { k: 'rod', c: [0, 0.08, 0], ax: 'y', shape: 'grip' },
+  racket: { k: 'rod', c: [0, 0.07, 0], ax: 'y', face: [0, 0, 1], shape: 'grip' },
+  // 杖: 上の握り（前後）を握り、杖（-y）を真下へ（床につく向き）
+  cane: { k: 'rod', c: [0, 0.9, 0.03], ax: 'z', down: [0, -1, 0], hang: true, shape: 'grip' },
+  // 盾: 裏の取っ手を握り、盾（+z）を手の甲の側へ
+  shield: { k: 'rod', c: [0, 0, -0.06], ax: 'y', face: [0, 0, -1], shape: 'grip' },
+  phone: { k: 'palm', c: [0, 0, -0.004], n: [0, 0, -1], along: [0, 1, 0], shape: 'press' },
+  pen: { k: 'rod', c: [0, -0.02, 0], ax: 'y', shape: 'grip' },
 };
 const AXV = { x: [1, 0, 0], y: [0, 1, 0], z: [0, 0, 1] };
 
@@ -135,6 +161,38 @@ function shapesOf(type, p) {
       { k: 'box', c: [-0.06, -0.035, 0], s: [0.014, 0.07, 0.014] },
       { k: 'box', c: [0.06, -0.035, 0], s: [0.014, 0.07, 0.014] },
       { k: 'box', c: [0, -0.21, 0], s: [0.38, 0.28, 0.12] }];
+    case 'pistol': return [{ k: 'box', c: [0, 0, 0], s: [0.03, 0.11, 0.045] },
+      { k: 'box', c: [0, 0.072, 0.055], s: [0.03, 0.034, 0.2] },
+      { k: 'box', c: [0, 0.036, 0.035], s: [0.008, 0.026, 0.04] }];
+    case 'rifle': return [{ k: 'box', c: [0, 0, 0], s: [0.03, 0.1, 0.04] },
+      { k: 'box', c: [0, 0.075, 0.08], s: [0.05, 0.075, 0.48] },
+      { k: 'rod', c: [0, 0.085, 0.55], r: 0.011, h: 0.46, ax: 'z' },
+      { k: 'box', c: [0, 0.03, 0.14], s: [0.03, 0.13, 0.05] },
+      { k: 'box', c: [0, 0.05, -0.3], s: [0.04, 0.11, 0.3] }];
+    case 'katana': return [{ k: 'rod', c: [0, 0.14, 0], r: 0.015, h: 0.28 },
+      { k: 'cyl', c: [0, 0.29, 0], r: 0.04, h: 0.01 },
+      { k: 'box', c: [0, 0.66, 0.004], s: [0.03, 0.72, 0.007] }];
+    case 'spear': return [{ k: 'rod', c: [0, 0.3, 0], r: 0.014, h: 1.9 },
+      { k: 'cone', c: [0, 1.35, 0], r: 0.025, h: 0.2 }];
+    case 'bow': return [{ k: 'rod', c: [0, 0, 0], r: 0.017, h: 0.13 },
+      { k: 'rod', c: [0, 0.33, 0.03], r: 0.011, h: 0.55 },
+      { k: 'rod', c: [0, -0.33, 0.03], r: 0.011, h: 0.55 },
+      { k: 'rod', c: [0, 0, -0.11], r: 0.0025, h: 1.2 }];
+    case 'bat': return [{ k: 'rod', c: [0, 0.17, 0], r: 0.016, h: 0.34 },
+      { k: 'cyl', c: [0, 0.58, 0], r: 0.033, h: 0.5 },
+      { k: 'cyl', c: [0, 0, 0], r: 0.024, h: 0.015 }];
+    case 'racket': return [{ k: 'rod', c: [0, 0.1, 0], r: 0.014, h: 0.2 },
+      { k: 'rod', c: [0, 0.25, 0], r: 0.01, h: 0.12 },
+      { k: 'cyl', c: [0, 0.44, 0], r: 0.13, h: 0.02, ax: 'z' }];
+    case 'cane': return [{ k: 'rod', c: [0, 0.45, 0], r: 0.012, h: 0.9 },
+      { k: 'rod', c: [0, 0.9, 0.03], r: 0.014, h: 0.13, ax: 'z' }];
+    case 'shield': return [{ k: 'cyl', c: [0, 0, 0], r: 0.3, h: 0.03, ax: 'z' },
+      { k: 'rod', c: [0, 0, -0.06], r: 0.012, h: 0.12 },
+      { k: 'box', c: [0, 0.07, -0.035], s: [0.02, 0.02, 0.05] },
+      { k: 'box', c: [0, -0.07, -0.035], s: [0.02, 0.02, 0.05] }];
+    case 'phone': return [{ k: 'box', c: [0, 0, 0], s: [0.072, 0.15, 0.008] }];
+    case 'pen': return [{ k: 'rod', c: [0, 0, 0], r: 0.005, h: 0.14 },
+      { k: 'cone', c: [0, 0.08, 0], r: 0.005, h: 0.02 }];
     case 'dumbbell': return [{ k: 'rod', c: [0, 0, 0], r: 0.016, h: 0.38 },
       { k: 'cyl', c: [0, 0.12, 0], r: 0.075, h: 0.05 }, { k: 'cyl', c: [0, -0.12, 0], r: 0.075, h: 0.05 },
       { k: 'cyl', c: [0, 0.165, 0], r: 0.062, h: 0.035 }, { k: 'cyl', c: [0, -0.165, 0], r: 0.062, h: 0.035 }];
@@ -701,7 +759,7 @@ export class Props {
         const hh = cm(it.params.h * (it.params.sy || 1));
         return (SEAT_TYPES.has(it.type) ? '座面 ' : it.type === 'bar' ? '棒の高さ ' : '高さ ') + hh + 'cm';
       }
-      return (/^(stick|sword|umbrella|dumbbell)$/.test(it.type) ? '長さ ' : '高さ ') + cm(d.y) + 'cm';
+      return (/^(stick|sword|umbrella|dumbbell|katana|spear|bat|cane|pen|bow)$/.test(it.type) ? '長さ ' : '高さ ') + cm(d.y) + 'cm';
     }
     return `${cm(d.x)}×${cm(d.z)}×${cm(d.y)}cm`;
   }

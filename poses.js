@@ -439,7 +439,7 @@ export const POSE_PROPS = {
   pickUp: [{ type: 'box', between: ['handL', 'handR'], carry: true, grips: ['handL', 'handR'] }],
   batting: [{ type: 'stick', size: 0.75, grips: ['handL', 'handR'], aim: [-0.35, 1, -0.45], grip0: 0.05 }],
   stairs: [{ type: 'box', under: ['footL'], shift: [0, 0.03], grips: ['footL'] }],
-  swordStance: [{ type: 'stick', size: 0.8, grips: ['handR', 'handL'], holdAt: -0.36 }],
+  swordStance: [{ type: 'katana', grips: ['handR', 'handL'], holdAt: -0.05 }],
   basketShoot: [{ type: 'ball', size: 1.1, grips: ['handR'] }],
   throw: [{ type: 'ball', size: 0.35, grips: ['handR'] }],
   soccerKick: [{ type: 'ball', near: 'footR', off: [0, 0.10, 0.16] }],
@@ -461,6 +461,7 @@ export const POSE_PROPS = {
   ballDribble: [{ type: 'ball', near: 'handR', off: [0, -0.125, 0] }],
   stickOverhead: [{ type: 'stick', size: 1.2, grips: ['handL', 'handR'], center: true }],
   tableSit: [{ type: 'table', seat: true, shift: [0, -0.22], grips: ['handL', 'handR'] }],
+  aimGun: [{ type: 'pistol', grips: ['handR', 'handL'] }],
 };
 for (const p of POSE_PRESETS) if (POSE_PROPS[p.id]) p.props = POSE_PROPS[p.id];
 // ---- ポーズに付いた小物 ここまで
