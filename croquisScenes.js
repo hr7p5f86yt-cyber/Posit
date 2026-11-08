@@ -49,11 +49,11 @@ export const STATUES = [
   { key: 'BustManWreath', kind: 'bust', src: 'dk', name: '花冠をつけた男の胸像（1 世紀・ローマ）' },
   { key: 'LeePerrySmith', kind: 'bust', src: 'lee', name: '頭部（現代のスキャン）' },
   { key: 'Athena', kind: 'full', src: '3ds', name: 'アテナ（アレッツォのミネルヴァ）' },
-  { key: 'Hermes', kind: 'full', src: '3ds', name: 'ヘルメス（Hermes）' },
+  { key: 'Hermes', kind: 'full', src: '3ds', name: 'サンダルの紐を結ぶヘルメス' },
   { key: 'Nymph', kind: 'full', src: '3ds', name: 'ニンフ（Nymph）' },
   { key: 'Penelope', kind: 'full', src: '3ds', name: 'ペネロペ（Penelope）' },
   { key: 'BootlegEve', kind: 'full', src: '3ds', name: 'イヴ（Bootleg Eve）' },
-  { key: 'MarblePlayer', kind: 'full', src: '3ds', name: 'しゃがむ少年（Marble Player）' },
+  { key: 'MarblePlayer', kind: 'full', src: '3ds', name: 'ビー玉遊びをする少年（エラ・ローズ・カーティス）' },
   { key: 'ShepherdBoy', kind: 'full', src: '3ds', name: '眠る羊飼いの少年' },
   { key: 'DeChalon', kind: 'full', src: '3ds', name: 'ルネ・ド・シャロンのトランジ（リジェ・リシエ）' },
   { key: 'DancingGirl', kind: 'full', src: 'dk', name: '踊る少女（トルヴァルセン）' },
@@ -170,15 +170,15 @@ export class CroquisScenes {
     return it;
   }
 
-  /** 石膏像。kind: 'all'（全部）| 'bust'（胸像・頭像）| 'full'（全身像）| 'solids'（幾何形体） */
+  /** 石膏像。kind: 'all'（全部）| 'statues'（幾何形体以外: 胸像・頭像と全身像）| 'bust'（胸像・頭像）| 'full'（全身像）| 'solids'（幾何形体） */
   genPlaster(kind = 'all') {
     const id = 'cqs' + Date.now() + Math.random().toString(36).slice(2, 6);
     const k = kind === 'all' ? (Math.random() < 0.3 ? 'solids' : 'statue') : kind === 'solids' ? 'solids' : 'statue';
     if (k === 'statue') {
-      const key = this._nextStatue(kind === 'all' ? null : kind);
+      const key = this._nextStatue(kind === 'all' || kind === 'statues' ? null : kind);
       const st = STATUE[key];
       // 次に出しそうな像を先に読み込んでおく
-      this._prefetch = this._nextStatue(kind === 'all' ? null : kind, true);
+      this._prefetch = this._nextStatue(kind === 'all' || kind === 'statues' ? null : kind, true);
       this.loadStatue(this._prefetch);
       if (st.src === 'lee') {
         // 頭部スキャン: 少し傾け、ときどき左右を入れ替える
@@ -265,10 +265,21 @@ export class CroquisScenes {
     return key;
   }
 
+  /** 幾何形体の型（小物の「幾何形体」で使う。形は 1 つずつ作って使い回す） */
+  solidTemplate(key) {
+    this._solids = this._solids || {};
+    if (!this._solids[key]) {
+      const m = new THREE.Mesh(solidGeometry(key), this.plaster);
+      m.geometry.computeBoundingBox();
+      this._solids[key] = m;
+    }
+    return this._solids[key];
+  }
+
   /** はじめる前に、1 枚目に出しそうな像を読み込んでおく */
   warm(kind = 'all') {
     if (kind === 'solids') return;
-    this.loadStatue(this._nextStatue(kind === 'all' ? null : kind, true));
+    this.loadStatue(this._nextStatue(kind === 'all' || kind === 'statues' ? null : kind, true));
   }
 
   /** 像の 3D スキャンを読み込む（1 回だけ。読み込めなかったら null） */
@@ -528,7 +539,7 @@ export class CroquisScenes {
       o.geometry && o.geometry.dispose();
     }
     this.group.visible = false;
-    v.props.clearAuto();
+    v.props.clearAuto(true);   // クロッキーの前からあった小物（ポーズに付いた物も）は残す
     v.props.setLook(null);
     v.setBustCut(null);
     v.setDollHidden(false);
@@ -539,4 +550,5 @@ export class CroquisScenes {
 }
 
 export const SCENE_NAMES = { PROP_NAME, SOLID_NAME };
+export { SOLIDS };
 // ===== croquisScenes.js ここまで =====

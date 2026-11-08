@@ -46,11 +46,11 @@ Posit が表示・同梱・読み込みしている第三者の作品と、そ�
   - EpicMetro … エピクロスとメトロドロスの二重ヘルム（ウィーン大学 古典考古学研究所）
   - Gutenberg … グーテンベルクの胸像（フォトスカルプチャー。アルベルティーナ）
   - Athena … アテナ（アレッツォのミネルヴァ。フィレンツェ国立考古学博物館）
-  - Hermes … ヘルメス（Hermes）
+  - Hermes … サンダルの紐を結ぶヘルメス（Hermes Fastening his Sandal。ウィーン大学 古典考古学研究所の石膏像と思われます）
   - Nymph … ニンフ（Nymph）
   - Penelope … ペネロペ（Penelope）
   - BootlegEve … イヴ（Bootleg Eve）
-  - MarblePlayer … しゃがむ少年（Marble Player）
+  - MarblePlayer … ビー玉遊びをする少年（Marble Player, Ella Rose Curtois, 19 世紀。The Usher Gallery, Lincoln）
   - ShepherdBoy … 眠る羊飼いの少年（ウォーカー・アート・ギャラリー）
   - DeChalon … ルネ・ド・シャロンのトランジ（リジェ・リシエ）
 - 感謝のしるしとして、Three D Scans への寄付も歓迎されています（keijiro さんの README より）

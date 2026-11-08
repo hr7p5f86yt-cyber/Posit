@@ -139,7 +139,7 @@ class Slot {
 
 export class Viewer {
   /** この viewer.js の版（app.js の BUILD と同じでなければ、古いファイルが混ざっている） */
-  static BUILD = '2026-11-08d';
+  static BUILD = '2026-11-08e';
 
   constructor(canvas) {
     this.canvas = canvas;
@@ -2634,9 +2634,11 @@ export class Viewer {
   /** 2 体目（写し）を、形を戻さずにそのまま片付ける（二人のポーズを入れ替えるとき） */
   dropSecond() {
     const sd = this.second; if (!sd) return;
+    const keep = sd.firstActive ? 'A' : 'B';   // 残るのは、いま動かしている人形
     sd.holder.parent && sd.holder.parent.remove(sd.holder);
     sd.holder.traverse(o => { if (o.userData && o.userData.baked && o.geometry) o.geometry.dispose(); });
     this.second = null;
+    if (this.props) this.props.dollGone(keep);
   }
 
   /** 写しの骨（handR など）の世界での位置 */
@@ -2675,6 +2677,8 @@ export class Viewer {
     sd.holder.parent && sd.holder.parent.remove(sd.holder);
     sd.holder.traverse(o => { if (o.userData && o.userData.baked && o.geometry) o.geometry.dispose(); });
     this.second = null;
+    // 1 体目を残す（1 体目のつなぎだけ残る）
+    if (this.props) this.props.dollGone('A');
   }
 
   /** ポーズの一覧から当てたあと: 手・腕・脚が体の別の部分にめり込んでいたら外へ逃がす（contactFix.js） */

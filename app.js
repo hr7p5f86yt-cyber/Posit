@@ -5,13 +5,13 @@ import { POSE_CATEGORIES, POSE_PRESETS, POSE_HANDS, HAND_SHAPES, FACE_PRESETS, t
 import { PoseHistory, relativeTime, HISTORY_LIMIT } from './history.js';
 import { CroquisSession, CROQUIS_SECONDS, CROQUIS_COUNTS } from './croquis.js';
 import { PROP_TYPES } from './props.js';
-import { CroquisScenes, STATUES } from './croquisScenes.js';
+import { CroquisScenes, STATUES, SOLIDS } from './croquisScenes.js';
 import { LightBall } from './lightBall.js';
 import { poseThumbSVG, thumbFromViewer } from './poseThumbs.js';
 import { REGIONS } from './anatomy.js';
 import * as THREE from 'three';
 
-export const BUILD = '2026-11-08d';
+export const BUILD = '2026-11-08e';
 
 const SAMPLE_URL = 'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r169/examples/models/gltf/Xbot.glb';
 const SETTINGS_KEY = 'posit.settings.v1';
@@ -48,7 +48,7 @@ function loadSettings() {
       cqHandShape: s.cqHandShape !== false,
       cqSubject: ['pose', 'props', 'plaster'].includes(s.cqSubject) ? s.cqSubject : 'pose',
       cqPropMode: s.cqPropMode === 'single' ? 'single' : 'combo',
-      cqPlasterKind: ['all', 'bust', 'full', 'solids'].includes(s.cqPlasterKind) ? s.cqPlasterKind : 'all',
+      cqPlasterKind: ['all', 'statues', 'bust', 'full', 'solids'].includes(s.cqPlasterKind) ? s.cqPlasterKind : 'all',
       lightBall: s.lightBall !== false,
       sheetStage: [0, 1, 2].includes(s.sheetStage) ? s.sheetStage : 1,
       cqBeep: s.cqBeep !== false,
@@ -550,7 +550,16 @@ function cleanMyPose(o) {
   if (!o || typeof o.spec !== 'string') return null;
   const hands = o.hands && typeof o.hands === 'object' ? { L: String(o.hands.L || ''), R: String(o.hands.R || '') } : { L: '', R: '' };
   return { id: typeof o.id === 'string' && /^my/.test(o.id) ? o.id : 'my' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
-    name: String(o.name || 'マイポーズ').slice(0, 40), spec: o.spec, hands, thumb: typeof o.thumb === 'string' ? o.thumb : '', category: 'mine', created: o.created || Date.now() };
+    name: String(o.name || 'マイポーズ').slice(0, 40), spec: o.spec, hands, thumb: typeof o.thumb === 'string' ? o.thumb : '', category: 'mine', created: o.created || Date.now(),
+    // 小物と 2 体目も一緒に残す（scene = { props, second }。なければ人形 1 体のポーズだけ）
+    scene: cleanScene(o.scene) };
+}
+function cleanScene(sc) {
+  if (!sc || typeof sc !== 'object') return null;
+  const props = sc.props && Array.isArray(sc.props.items) ? { sel: null, items: sc.props.items.filter(e => e && typeof e.type === 'string' && Array.isArray(e.pos) && Array.isArray(e.quat)).map(e => ({ ...e, grips: Array.isArray(e.grips) ? e.grips.filter(g => g && typeof g.key === 'string' && Array.isArray(g.rel) && g.rel.length === 16) : [] })) } : null;
+  const second = sc.second && sc.second.stored && typeof sc.second.stored === 'object' ? { stored: sc.second.stored, hands: sc.second.hands || {}, firstActive: sc.second.firstActive !== false } : null;
+  const shift = Array.isArray(sc.shift) && sc.shift.length === 3 && sc.shift.every(Number.isFinite) ? sc.shift : null;
+  return props && props.items.length || second ? { props, second, shift } : null;
 }
 try { myPoses = (JSON.parse(localStorage.getItem(MY_KEY) || '[]') || []).map(cleanMyPose).filter(Boolean); } catch (e) { myPoses = []; }
 function saveMyPoses() {
@@ -558,7 +567,10 @@ function saveMyPoses() {
   try { localStorage.setItem(MY_KEY, JSON.stringify(myPoses)); return true; } catch (e) { showToast('この端末に保存できませんでした（空き容量・プライベートブラウズを確かめてください）'); return false; }
 }
 function addMyPose(name) {
-  const p = cleanMyPose({ name: name || `マイポーズ ${myPoses.length + 1}`, spec: toSpec(viewer.allAngles()), hands: { ...viewer.handShape }, thumb: thumbFromViewer(viewer, THREE) });
+  const props = viewer.props.serialize();
+  props.items = props.items.map(e => ({ ...e, auto: false }));   // マイポーズの小物は、自分で置いた小物として戻す
+  const p = cleanMyPose({ name: name || `マイポーズ ${myPoses.length + 1}`, spec: toSpec(viewer.allAngles()), hands: { ...viewer.handShape }, thumb: thumbFromViewer(viewer, THREE),
+    scene: { props, second: viewer.secondState(), shift: viewer.bodyShift.toArray() } });
   myPoses.unshift(p);
   saveMyPoses();
   return p;
@@ -577,7 +589,7 @@ function importMyPoses(list) {
 const b64e = str => btoa(unescape(encodeURIComponent(str))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 const b64d = str => decodeURIComponent(escape(atob(str.replace(/-/g, '+').replace(/_/g, '/'))));
 function poseURL(p) {
-  const data = b64e(JSON.stringify({ n: p.name, s: p.spec, h: p.hands, t: p.thumb }));
+  const data = b64e(JSON.stringify({ n: p.name, s: p.spec, h: p.hands, t: p.thumb, sc: p.scene || undefined }));
   return location.origin + location.pathname + '#pose=' + data;
 }
 async function shareMyPose(p) {
@@ -590,7 +602,7 @@ async function shareMyPose(p) {
 }
 async function exportMyPoses() {
   if (!myPoses.length) { showToast('マイポーズがまだありません'); return; }
-  const json = JSON.stringify({ app: 'Posit', kind: 'myPoses', version: 1, poses: myPoses.map(({ name, spec, hands, thumb, created }) => ({ name, spec, hands, thumb, created })) }, null, 1);
+  const json = JSON.stringify({ app: 'Posit', kind: 'myPoses', version: 1, poses: myPoses.map(({ name, spec, hands, thumb, created, scene }) => ({ name, spec, hands, thumb, created, scene: scene || undefined })) }, null, 1);
   const d = new Date(), pad = x => String(x).padStart(2, '0');
   const fname = `posit-poses-${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}.json`;
   const blob = new Blob([json], { type: 'application/json' });
@@ -622,7 +634,7 @@ function takePoseFromURL() {
   if (!m) return;
   try {
     const o = JSON.parse(b64d(m[1]));
-    const n = importMyPoses([{ name: o.n, spec: o.s, hands: o.h, thumb: o.t }]);
+    const n = importMyPoses([{ name: o.n, spec: o.s, hands: o.h, thumb: o.t, scene: o.sc }]);
     const p = myPoses.find(q => q.spec === o.s && q.name === String(o.n || 'マイポーズ').slice(0, 40));
     if (p) { applyPose(p); showToast(`「${p.name}」を${n ? 'マイポーズに入れました' : '開きました（もうマイポーズにあります）'}`); }
   } catch (e) { showToast('URL のポーズを読めませんでした'); }
@@ -922,6 +934,23 @@ for (const t of PROP_TYPES) {
     });
     $('propPopGrid').appendChild(b);
   }
+  // 幾何形体（石膏）
+  const h2 = document.createElement('div');
+  h2.className = 'qpSub';
+  h2.textContent = '幾何形体（石膏）';
+  $('propPopGrid').appendChild(h2);
+  for (const so of SOLIDS) {
+    const b = document.createElement('button');
+    b.className = 'ghost';
+    b.textContent = so.name;
+    b.addEventListener('click', () => {
+      $('propPop').hidden = true;
+      snapshot();
+      const it = props.add('solid', { variant: so.key, name: so.name });
+      if (it) showToast(`${so.name}を置きました`);
+    });
+    $('propPopGrid').appendChild(b);
+  }
 }
 function syncPropBar() {
   const it = props.selected;
@@ -935,7 +964,7 @@ function syncPropBar() {
   $('propBarSize').textContent = props.sizeLabel(it, propAxis);
   for (const [key, id] of PROP_LIMBS) {
     const b = $(id);
-    b.classList.toggle('on', it.grips.some(g => g.key === key));
+    b.classList.toggle('on', props.liveGrips(it).some(g => g.key === key));
     b.hidden = /^foot/.test(key) && !it.grounded && it.type !== 'ball';
   }
 }
@@ -962,7 +991,7 @@ const LIMB_NAME = { handR: '右手', handL: '左手', footR: '右足', footL: '�
 for (const [key, id] of PROP_LIMBS) $(id).addEventListener('click', () => {
   const it = props.selected; if (!it) return;
   const nm = LIMB_NAME[key];
-  if (it.grips.some(g => g.key === key)) { snapshot(); props.release(it, key); showToast(nm + 'を離しました'); syncPropBar(); return; }
+  if (props.liveGrips(it).some(g => g.key === key)) { snapshot(); props.release(it, key); showToast(nm + 'を離しました'); syncPropBar(); return; }
   const pre = takeState();   // つなげたときだけ「戻す」に積む（届かなかったときは何も変わらない）
   const r = props.grip(key, it);
   if (r && r !== 'far') snapshot(pre);
@@ -1284,7 +1313,13 @@ function applyPose(pose) {
     viewer.applyPose(pose.spec);
     applyPoseHands(pose);
   }
-  applyPoseProps(pose);
+  if (pose.scene) {
+    // マイポーズ: 保存したときの立ち位置・2 体目・小物に戻す
+    if (pose.scene.shift) { viewer.bodyShift.fromArray(pose.scene.shift); viewer.applyAll(); }
+    viewer.restoreSecond(pose.scene.second);
+    syncDuo();
+    viewer.props.restore(pose.scene.props || { items: [] });
+  } else applyPoseProps(pose);
   history.add({ poseId: pose.id, name: pose.name, spec: pose.spec });
   buildHistory();
   syncSliders();
@@ -1292,6 +1327,7 @@ function applyPose(pose) {
 }
 
 // 確かめ用（ポーズを名前で当てる）
+window.__posit.my = { add: n => addMyPose(n), apply: i => applyPose(myPoses[i]), list: () => myPoses };
 window.__posit.applyPoseById = id => { const p = POSE_PRESETS.find(x => x.id === id); if (p) applyPose(p); return !!p; };
 
 $('btnRandomPose').addEventListener('click', () => {
@@ -1814,7 +1850,7 @@ let lastBeepSec = null;
 // 小物だけ・石膏像（クロッキーの間だけ出す）
 const cqScenes = new CroquisScenes(viewer);
 // 小物の石膏像も、クロッキーと同じ読み込み（1 度読んだ形は使い回す）
-props.statueLoader = key => cqScenes.loadStatue(key);
+props.statueLoader = key => (key.startsWith('solid:') ? cqScenes.solidTemplate(key.slice(6)) : cqScenes.loadStatue(key));
 props.statueScale = { LeePerrySmith: 0.045 };
 let cqSubject = 'pose';
 const CQ_SUBJECTS = [
@@ -1824,6 +1860,7 @@ const CQ_SUBJECTS = [
 ];
 const CQ_PLASTER_KINDS = [
   { value: 'all', label: 'すべて' },
+  { value: 'statues', label: '幾何形体以外（胸像・頭像と全身像）' },
   { value: 'bust', label: '胸像・頭像' },
   { value: 'full', label: '全身像' },
   { value: 'solids', label: '幾何形体' },
@@ -1905,13 +1942,16 @@ function buildCqLog() {
   el.innerHTML = '';
   lastCqLog.forEach((id, i) => {
     if (id && typeof id === 'object') {
-      // 小物だけ・石膏像は名前だけ（「同じ順番でもう一度」で同じ物を出せる）
+      // 小物だけ・石膏像: 押すと、人形の前に小物として置く（「同じ順番でもう一度」で同じ物を出せる）
       const row = document.createElement('div');
       row.className = 'clRow';
-      const sp = document.createElement('span');
-      sp.className = 'clName';
-      sp.textContent = `${i + 1}. ${id.name}`;
-      row.appendChild(sp);
+      const b = document.createElement('button');
+      b.className = 'clPick ghost';
+      b.innerHTML = '<span></span>';
+      b.querySelector('span').textContent = `${i + 1}. ${id.name}`;
+      b.title = '画面に呼び出す（人形の横に小物として置きます）';
+      b.addEventListener('click', () => { $('cqDone').hidden = true; recallScene(id); });
+      row.appendChild(b);
       el.appendChild(row);
       return;
     }
@@ -1924,6 +1964,77 @@ function buildCqLog() {
   $('cqAgain').hidden = !lastCqLog.length;
   $('cqSaveImg').hidden = !lastCqShots.some(x => x && x.canvas);
 }
+/**
+ * クロッキーの記録から、小物だけ・石膏像の出題を呼び出す: 人形の横に、前をカメラへ向けて、自分で置いた小物として並べる。
+ * いまある小物は片付ける（戻すで元に戻せる）
+ */
+async function recallScene(desc) {
+  if (desc.kind === 'bust' && !desc.real) { showToast('この胸像は呼び出せません'); return; }
+  snapshot();
+  props.clear();
+  const v = viewer, hips = v.primarySlot.boneMap.hips.getWorldPosition(new THREE.Vector3());
+  // 人形の横（カメラから見て右）に、前（+z）をカメラへ向けて置く（人形と並べて見えるように）
+  const cdir = v.camera.position.clone().sub(hips); cdir.y = 0;
+  if (cdir.lengthSq() < 1e-6) cdir.set(0, 0, 1);
+  cdir.normalize();
+  const side = new THREE.Vector3().crossVectors(cdir, new THREE.Vector3(0, 1, 0)).negate();
+  const O = hips.clone().addScaledVector(side, 1.1); O.y = 0;
+  const yaw = Math.atan2(cdir.x, cdir.z);
+  const R = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw);
+  const at = (x, z) => new THREE.Vector3(x, 0, z).applyQuaternion(R).add(O);
+  const put = (type, params, q, x, z, baseY, opts = {}) => {
+    const p = at(x, z);
+    const qq = R.clone().multiply(new THREE.Quaternion(...q));
+    return props.addStill(type, params, qq.toArray(), p.x, p.z, baseY, { auto: false, ...opts });
+  };
+  const yq = deg => new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), deg * Math.PI / 180);
+  const zq = deg => new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), deg * Math.PI / 180);
+  if (desc.subject === 'props') {
+    let baseY = 0;
+    if (desc.base) { put('table', { h: desc.base.h }, [0, 0, 0, 1], 0, 0, 0); baseY = desc.base.h; }
+    for (const it of desc.items) put(it.type, it.params, it.q, it.x, it.z, baseY);
+  } else if (desc.kind === 'solids') {
+    if (desc.plinth) put('box', { size: 1, sx: 0.95 / 0.4, sy: desc.plinth / 0.4, sz: 0.7 / 0.4 }, [0, 0, 0, 1], 0, 0, 0);
+    for (const so of desc.list) {
+      const q = yq(so.yaw); if (so.lie) q.multiply(zq(90));
+      put('solid', { sx: so.s, sy: so.s, sz: so.s }, q.toArray(), so.x, so.z, desc.plinth || 0, { variant: so.key, name: (SOLIDS.find(x => x.key === so.key) || {}).name });
+    }
+  } else {
+    // 石膏像: 胸像・頭像は台に載せる
+    const key = desc.kind === 'statue' ? desc.key : 'LeePerrySmith';
+    const st = STATUES.find(x => x.key === key);
+    const stand = desc.kind === 'statue' ? (st && st.kind === 'bust' ? desc.stand : 0) : desc.real.stand;
+    await cqScenes.loadStatue(key);   // 大きさが分かってから並べる
+    if (stand > 0.01) put('box', { size: 1, sx: 1, sy: stand / 0.4, sz: 0.9 }, [0, 0, 0, 1], 0, 0, 0);
+    put('statue', {}, [0, 0, 0, 1], 0, 0, stand, { variant: key, name: st ? st.name.replace(/（.*$/, '') : '石膏像' });
+  }
+  props.select(null);
+  // 石膏像の形ができるのを待つ（読み込み済みなら、すぐ）
+  for (let k = 0; k < 20 && props.items.some(it => it.type === 'statue' && !it.statueMesh); k++) await new Promise(r => setTimeout(r, 50));
+  // 呼び出した物の、人形に近い端が、人形の横の端（伸ばした手の先など）から 30cm 離れるように横へずらす
+  v.scene.updateMatrixWorld(true);
+  const dollExt = Math.max(0.25, ...Object.values(v.primarySlot.boneMap).map(b => b.getWorldPosition(new THREE.Vector3()).sub(hips).setY(0).dot(side))) + 0.08;
+  const box = new THREE.Box3();
+  for (const it of props.items) { it.group.updateWorldMatrix(true, true); box.expandByObject(it.group); }
+  if (!box.isEmpty()) {
+    const corners = [box.min, box.max].flatMap(a => [box.min, box.max].map(b => new THREE.Vector3(a.x, 0, b.z)));
+    const near = Math.min(...corners.map(p => p.clone().sub(hips.clone().setY(0)).dot(side)));
+    const shift = side.clone().multiplyScalar(dollExt + 0.3 - near);
+    for (const it of props.items) { it.group.position.add(shift); it.group.updateWorldMatrix(true, true); }
+    box.translate(shift);
+  }
+  // カメラ: 人形と呼び出した物が両方入るように
+  const all = box.clone();
+  // 人形の広がり: 骨の位置から（頭の上・手先まで少し足す）
+  v.scene.updateMatrixWorld(true);
+  for (const b of Object.values(v.primarySlot.boneMap)) all.expandByPoint(b.getWorldPosition(new THREE.Vector3()));
+  all.max.y += 0.15; all.min.y = Math.min(all.min.y, 0);
+  v.frameOverride = { center: all.getCenter(new THREE.Vector3()), radius: Math.max(0.8, all.getSize(new THREE.Vector3()).length() * 0.5 * 1.3) };
+  v.viewFromAngle(yaw * 180 / Math.PI, 10, 50);
+  v.frameOverride = null;
+  showToast(`${desc.name}を呼び出しました（戻すで元に戻せます）`);
+}
+
 /** 描いたポーズを並べた 1 枚の画像（日付・秒数・枚数の見出し付き） */
 function cqLogImage() {
   const shots = lastCqShots.filter(x => x && x.canvas);
@@ -2062,7 +2173,8 @@ function cqBeginNow() {
 function stopCroquis() {
   cqCancelCount();
   cqScenes.clear();
-  viewer.props.clearAuto();
+  // 小物だけ・石膏像のときは人形のポーズを戻すので、その前からあった小物（ポーズに付いた物も）は残す
+  viewer.props.clearAuto(cqSubject !== 'pose');
   viewer.props.setHidden(false);
   document.body.classList.remove('croquis');
   updateInsets();
