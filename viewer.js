@@ -139,7 +139,7 @@ class Slot {
 
 export class Viewer {
   /** この viewer.js の版（app.js の BUILD と同じでなければ、古いファイルが混ざっている） */
-  static BUILD = '2026-11-08f';
+  static BUILD = '2026-11-08g';
 
   constructor(canvas) {
     this.canvas = canvas;
@@ -1642,7 +1642,13 @@ export class Viewer {
   setDollHidden(on) {
     this.dollHidden = !!on;
     this.container.visible = !on;
-    if (this.second && this.second.holder) this.second.holder.visible = !on;
+    if (this.second && this.second.holder) this.second.holder.visible = !on && !this.hideSecond;
+  }
+
+  /** 2 体目だけを隠す（クロッキーの間） */
+  setSecondHidden(on) {
+    this.hideSecond = !!on;
+    if (this.second && this.second.holder) this.second.holder.visible = !on && !this.dollHidden;
   }
 
   get _partOn() { return this.partView === 'hand' || this.partView === 'foot'; }

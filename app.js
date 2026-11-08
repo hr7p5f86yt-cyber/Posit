@@ -11,7 +11,7 @@ import { poseThumbSVG, thumbFromViewer } from './poseThumbs.js';
 import { REGIONS } from './anatomy.js';
 import * as THREE from 'three';
 
-export const BUILD = '2026-11-08f';
+export const BUILD = '2026-11-08g';
 
 const SAMPLE_URL = 'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r169/examples/models/gltf/Xbot.glb';
 const SETTINGS_KEY = 'posit.settings.v1';
@@ -392,6 +392,13 @@ function showToast(msg) {
   const el = $('toast');
   el.textContent = msg;
   el.hidden = false;
+  // 上に出ている帯（小物の帯・関節の帯）に重ならないように、その下に出す
+  let top = 0;
+  for (const id of ['propBar', 'selBar']) {
+    const b = $(id);
+    if (b && !b.hidden) top = Math.max(top, b.getBoundingClientRect().bottom + 8);
+  }
+  el.style.top = top ? `${Math.round(top)}px` : '';
   requestAnimationFrame(() => el.classList.add('show'));
   if (toastTimer) clearTimeout(toastTimer);
   toastTimer = setTimeout(() => {
@@ -881,6 +888,8 @@ function syncDuo() {
   $('actDuo').textContent = on ? '2体目を消す' : '＋2体目';
   $('actDuo').classList.toggle('duoOn', on);
   $('actSwap').hidden = !on;
+  // 小物の帯の「右手」「左手」などは、いま動かしている人形のつなぎを出す
+  syncPropBar();
 }
 $('actDuo').addEventListener('click', () => {
   if (viewer.hasSecond()) { snapshot(); viewer.removeSecond(); showToast('2体目を消しました（1体目は残ります）'); }
@@ -1012,14 +1021,14 @@ $('propBarSlide').addEventListener('click', () => {
   props.slideMode = !props.slideMode;
   syncPropBar();
   showToast(props.slideMode
-    ? '持つ所を変える: 小物を動かす・回すと、手足はそのままで持つ所が変わります。手足を動かすと、離した所で付け直します'
+    ? '持つ所を変える: 小物を動かすと持つ所が変わり、手足を動かすと離した所で付け直します'
     : '持つ所を変えるのをやめました');
 });
 // 小物を押したまま動かす・輪で回す: 動かし始めに「戻す」に積む
 props.onEditStart = () => snapshot();
 $('propBarClose').addEventListener('click', () => props.select(null));
 
-$('actSwap').addEventListener('click', () => { snapshot(); viewer.swapSecond(); syncSliders(); showToast(viewer.secondActive() ? '2体目を動かします' : '1体目を動かします'); });
+$('actSwap').addEventListener('click', () => { snapshot(); viewer.swapSecond(); syncSliders(); syncDuo(); showToast(viewer.secondActive() ? '2体目を動かします' : '1体目を動かします'); });
 syncDuo();
 
 // ---- 単純化の形 -----------------------------------------------------------
@@ -2107,6 +2116,8 @@ async function startCroquis() {
   lastAz = null;
   lastHandShape = null;
   $('lightPop').hidden = true;
+  // 2 体目はクロッキーの間は出さない（終わったら戻す）
+  viewer.setSecondHidden(true);
   // 描く物: 「同じ順番でもう一度」のときは前回と同じ物
   cqSubject = cqReplay && cqReplay.length && typeof cqReplay[0] === 'object' ? cqReplay[0].subject : cqReplay && cqReplay.length ? 'pose' : settings.cqSubject;
   if (cqSubject !== 'pose') {
@@ -2185,6 +2196,7 @@ function cqBeginNow() {
 function stopCroquis() {
   cqCancelCount();
   cqScenes.clear();
+  viewer.setSecondHidden(false);
   // 小物だけ・石膏像のときは人形のポーズを戻すので、その前からあった小物（ポーズに付いた物も）は残す
   viewer.props.clearAuto(cqSubject !== 'pose');
   viewer.props.setHidden(false);
