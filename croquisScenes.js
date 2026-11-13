@@ -22,7 +22,8 @@ const PROP_NAME = {
   chair: '椅子', stool: 'スツール', bench: 'ベンチ', sofa: 'ソファ', table: '台', box: '箱', pedestal: '円柱台',
   stairs: '階段', bar: '鉄棒', stick: '棒', ball: 'ボール', book: '本', cup: 'コップ', umbrella: '傘', sword: '剣',
   bag: 'かばん', dumbbell: 'ダンベル', pistol: '拳銃', rifle: 'ライフル', katana: '刀', spear: '槍', bow: '弓', bat: 'バット',
-  racket: 'ラケット', cane: '杖', shield: '盾', phone: 'スマホ', pen: 'ペン',
+  racket: 'テニスラケット', pingpong: '卓球ラケット', lacrosse: 'ラクロスのスティック', fieldhockey: 'ホッケーのスティック',
+  icehockey: 'アイスホッケーのスティック', cane: '杖', shield: '盾', phone: 'スマホ', pen: 'ペン',
 };
 
 // 幾何形体（石膏）。s: 大きさ（m）
@@ -108,7 +109,7 @@ export class CroquisScenes {
     const items = [];
     if (mode === 'single') {
       const types = ['chair', 'stool', 'bench', 'sofa', 'table', 'box', 'pedestal', 'stairs', 'bar', 'stick', 'ball', 'book', 'cup', 'umbrella', 'sword', 'bag', 'dumbbell',
-        'pistol', 'rifle', 'katana', 'bow', 'bat', 'racket', 'shield', 'phone'];
+        'pistol', 'rifle', 'katana', 'bow', 'bat', 'racket', 'shield', 'phone', 'pingpong', 'lacrosse', 'fieldhockey', 'icehockey'];
       const t = pick(types.filter(x => x !== this._lastSingle));
       this._lastSingle = t;
       items.push(this._propItem(t, false));
@@ -118,9 +119,9 @@ export class CroquisScenes {
     }
     const onTable = Math.random() < 0.6;
     const n = 1 + Math.floor(Math.random() * 4);
-    const pool = ['ball', 'cup', 'book', 'bag', 'dumbbell', 'sword', 'stick', 'box', 'pedestal', 'cup', 'book', 'ball', 'box', 'pistol', 'phone', 'pen', 'racket'];
-    if (!onTable) pool.push('umbrella', 'chair', 'stool', 'rifle', 'katana', 'bat', 'shield');
-    const once = new Set(['umbrella', 'chair', 'stool', 'sword', 'stick', 'bag', 'dumbbell', 'rifle', 'katana', 'bat', 'shield', 'racket', 'pistol']);   // 大きい物は 1 つまで
+    const pool = ['ball', 'cup', 'book', 'bag', 'dumbbell', 'sword', 'stick', 'box', 'pedestal', 'cup', 'book', 'ball', 'box', 'pistol', 'phone', 'pen', 'racket', 'pingpong'];
+    if (!onTable) pool.push('umbrella', 'chair', 'stool', 'rifle', 'katana', 'bat', 'shield', 'lacrosse', 'fieldhockey', 'icehockey');
+    const once = new Set(['umbrella', 'chair', 'stool', 'sword', 'stick', 'bag', 'dumbbell', 'rifle', 'katana', 'bat', 'shield', 'racket', 'pistol', 'pingpong', 'lacrosse', 'fieldhockey', 'icehockey']);   // 大きい物は 1 つまで
     for (let i = 0; i < n; i++) {
       const t = pick(pool.filter(x => !(once.has(x) && items.some(it => it.type === x))));
       items.push(this._propItem(t, onTable));
@@ -168,8 +169,9 @@ export class CroquisScenes {
       // 手に持つ物は、寝かせて置く
       case 'pistol': q = yaw.clone().multiply(qFrom(V(0, 0, 1), 90)); it.r = 0.13; break;
       case 'phone': case 'pen': q = yaw.clone().multiply(qFrom(V(1, 0, 0), 90)); it.r = 0.09; break;
-      case 'racket': case 'shield': q = yaw.clone().multiply(qFrom(V(1, 0, 0), 90)); it.r = type === 'shield' ? 0.32 : 0.3; break;
-      case 'rifle': case 'katana': case 'bat': case 'bow': q = lie(); it.r = type === 'rifle' ? 0.55 : 0.48; break;
+      case 'racket': case 'shield': case 'pingpong': q = yaw.clone().multiply(qFrom(V(1, 0, 0), 90)); it.r = type === 'shield' ? 0.32 : type === 'pingpong' ? 0.15 : 0.36; break;
+      case 'rifle': case 'katana': case 'bat': case 'bow': case 'lacrosse': case 'fieldhockey': case 'icehockey':
+        q = lie(); it.r = type === 'icehockey' ? 0.78 : type === 'rifle' || type === 'lacrosse' ? 0.55 : 0.48; break;
       case 'chair': case 'stool': it.r = 0.3; break;
       default: it.r = 0.6;
     }

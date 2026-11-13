@@ -1,6 +1,6 @@
 // props.js — 小物
 //   置く物: 椅子・スツール・ベンチ・ソファ・台・箱・円柱台・階段・鉄棒・壁・石膏像（彫刻の 3D スキャン 16 体）
-//   手に持つ物: 棒・ボール・本・コップ・傘・剣・かばん・ダンベル・拳銃・ライフル・刀・槍・弓・バット・ラケット・杖・盾・スマホ・ペン
+//   手に持つ物: 棒・ボール・本・コップ・傘・剣・かばん・ダンベル・拳銃・ライフル・刀・槍・弓・バット・テニスラケット・卓球ラケット・ラクロスのスティック・ホッケーのスティック・アイスホッケーのスティック・杖・盾・スマホ・ペン
 //
 // ・置く: 種類を選ぶと、人形の近くに置く（椅子・スツール・ベンチ・ソファは、座っている人形ならお尻の下へ、座面の高さも合わせる）
 // ・動かす: 小物を押したまま、画面の面の中で上下左右に動かす（床に置く物は床より下へは行かない）
@@ -12,6 +12,7 @@
 //   2 体のときは、いま動かしている人形につなぐ（入れ替えると、もう一方の人形のつなぎが生きる）
 
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
 const V = (x = 0, y = 0, z = 0) => new THREE.Vector3(x, y, z);
 // 棒を握る所: 手首から指の付け根までの長さに対する割合（指の向き）と、手のひらからの深さ（m）
@@ -43,7 +44,11 @@ export const PROP_TYPES = [
   { key: 'spear', name: '槍', grounded: false },
   { key: 'bow', name: '弓', grounded: false },
   { key: 'bat', name: 'バット', grounded: false },
-  { key: 'racket', name: 'ラケット', grounded: false },
+  { key: 'racket', name: 'テニスラケット', grounded: false },
+  { key: 'pingpong', name: '卓球ラケット', grounded: false },
+  { key: 'lacrosse', name: 'ラクロスのスティック', grounded: false },
+  { key: 'fieldhockey', name: 'ホッケーのスティック', grounded: false },
+  { key: 'icehockey', name: 'アイスホッケーのスティック', grounded: false },
   { key: 'cane', name: '杖', grounded: false },
   { key: 'shield', name: '盾', grounded: false },
   { key: 'phone', name: 'スマホ', grounded: false },
@@ -80,7 +85,13 @@ const HANDLES = {
   // 弓: 握りを握り、弦（-z）を手首の側へ
   bow: { k: 'rod', c: [0, 0, 0], ax: 'y', down: [0, 0, 1], shape: 'grip' },
   bat: { k: 'rod', c: [0, 0.08, 0], ax: 'y', shape: 'grip' },
-  racket: { k: 'rod', c: [0, 0.07, 0], ax: 'y', face: [0, 0, 1], shape: 'grip' },
+  // テニス・卓球: 柄を握り、面（の向き +z）を手のひらの向きへ（握手するように持つ）
+  racket: { k: 'rod', c: [0, 0.1, 0], ax: 'y', face: [0, 0, 1], shape: 'grip' },
+  pingpong: { k: 'rod', c: [0, 0.045, 0], ax: 'y', face: [0, 0, 1], shape: 'grip' },
+  // ラクロス・ホッケー: 下の手（ラクロス）・上の手（ホッケー）で柄を握る。もう一方の手は柄の近い所を持つ
+  lacrosse: { k: 'rod', c: [0, 0.12, 0], ax: 'y', face: [0, 0, 1], shape: 'grip' },
+  fieldhockey: { k: 'rod', c: [0, 0.84, 0], ax: 'y', face: [0, 0, 1], shape: 'grip' },
+  icehockey: { k: 'rod', c: [0, 1.42, 0], ax: 'y', face: [1, 0, 0], shape: 'grip' },
   // 杖: 上の握り（前後）を握り、杖（-y）を真下へ（床につく向き）
   cane: { k: 'rod', c: [0, 0.9, 0.03], ax: 'z', down: [0, -1, 0], hang: true, shape: 'grip' },
   // 盾: 裏の取っ手を握り、盾（+z）を手の甲の側へ
@@ -181,9 +192,35 @@ function shapesOf(type, p) {
     case 'bat': return [{ k: 'rod', c: [0, 0.17, 0], r: 0.016, h: 0.34 },
       { k: 'cyl', c: [0, 0.58, 0], r: 0.033, h: 0.5 },
       { k: 'cyl', c: [0, 0, 0], r: 0.024, h: 0.015 }];
-    case 'racket': return [{ k: 'rod', c: [0, 0.1, 0], r: 0.014, h: 0.2 },
-      { k: 'rod', c: [0, 0.25, 0], r: 0.01, h: 0.12 },
-      { k: 'cyl', c: [0, 0.44, 0], r: 0.13, h: 0.02, ax: 'z' }];
+    // テニスラケット（全長 68.6cm・面 約 34×27cm・フレームの厚さ 23mm・グリップ 4 1/4 の八角）
+    case 'racket': return [
+      { k: 'rod', c: [0, 0.097, 0], r: 0.0172, h: 0.19, seg: 8, color: 0x26282c },
+      { k: 'cyl', c: [0, 0.006, 0], r: 0.0195, h: 0.012, seg: 8, color: 0x26282c },
+      { k: 'geo', g: 'tennisFrame', c: [0, 0, 0], color: 0x2457b8 },
+      { k: 'geo', g: 'tennisStrings', c: [0, 0, 0], color: 0xece9e0 }];
+    // 卓球ラケット（シェークハンド。ブレード 約 15.0×15.7cm・厚さ 6mm、ラバーは赤と黒・柄 10cm）
+    case 'pingpong': return [
+      { k: 'geo', g: 'ppBlade', c: [0, 0, 0], color: 0xcaa274 },
+      { k: 'geo', g: 'ppRubberF', c: [0, 0, 0], color: 0xc4262e },
+      { k: 'geo', g: 'ppRubberB', c: [0, 0, 0], color: 0x1b1b1d },
+      { k: 'geo', g: 'ppHandle', c: [0, 0, 0], color: 0xb48654 }];
+    // ラクロスのスティック（男子・アタック。全長 約 104cm・ヘッド 長さ 25cm・幅 最大 17cm・シャフト 八角 1 インチ）
+    case 'lacrosse': return [
+      { k: 'rod', c: [0, 0.395, 0], r: 0.0127, h: 0.79, seg: 8, color: 0xa7b0ba },
+      { k: 'cyl', c: [0, 0.006, 0], r: 0.0145, h: 0.012, seg: 8, color: 0x26282c },
+      { k: 'geo', g: 'laxHead', c: [0, 0, 0], color: 0xf1f1ef },
+      { k: 'geo', g: 'laxPocket', c: [0, 0, 0], color: 0xdedcd4, wire: true }];
+    // フィールドホッケーのスティック（全長 約 93cm・直径 51mm の輪を通る太さ・先が J の形で左側が平ら）
+    case 'fieldhockey': return [
+      { k: 'rod', c: [0, 0.535, 0], r: 0.0215, h: 0.79, color: 0x1f6fd1 },
+      { k: 'rod', c: [0, 0.79, 0], r: 0.0232, h: 0.28, color: 0x202226 },
+      { k: 'geo', g: 'fhHead', c: [0, 0, 0], color: 0x1f6fd1 }];
+    // アイスホッケーのスティック（一般。全長 約 152cm・ブレード 長さ 31cm・高さ 6.5cm・シャフト 3.2×1.9cm・ライ 約 135°）
+    case 'icehockey': return [
+      { k: 'rod', c: [0, 0.75, 0], r: 0.0186, h: 1.46, seg: 4, flat: [0.019, 0.032], color: 0x1b1c1f },
+      { k: 'rod', c: [0, 1.42, 0], r: 0.0205, h: 0.16, seg: 4, flat: [0.021, 0.034], color: 0xf0efe9 },
+      { k: 'geo', g: 'ihBlade', c: [0, 0, 0], color: 0x1b1c1f },
+      { k: 'geo', g: 'ihTape', c: [0, 0, 0], color: 0xf0efe9 }];
     case 'cane': return [{ k: 'rod', c: [0, 0.45, 0], r: 0.012, h: 0.9 },
       { k: 'rod', c: [0, 0.9, 0.03], r: 0.014, h: 0.13, ax: 'z' }];
     case 'shield': return [{ k: 'cyl', c: [0, 0, 0], r: 0.3, h: 0.03, ax: 'z' },
@@ -200,12 +237,151 @@ function shapesOf(type, p) {
   return [];
 }
 
+// ---- スポーツの道具の形（実物の大きさ。柄は y、面の向きは z。原点は柄の端） ----
+const _gear = {};
+function gearGeo(key) {
+  if (_gear[key]) return _gear[key];
+  const g = GEAR_BUILD[key]();
+  g.computeVertexNormals();
+  g.computeBoundingBox();
+  return (_gear[key] = g);
+}
+// 楕円の上の点（中心 cx・cy、半径 a・b、角度 t）
+const ell = (cx, cy, a, b, t) => V(cx + a * Math.cos(t), cy + b * Math.sin(t), 0);
+// テニス: 面の中心と大きさ（フレームの中心線）
+const TEN = { cy: 0.522, a: 0.128, b: 0.162 };
+const GEAR_BUILD = {
+  tennisFrame() {
+    const { cy, a, b } = TEN;
+    // 面の輪（断面は 厚さ 23mm × 幅 13mm くらい）
+    const ring = new THREE.TubeGeometry(new THREE.CatmullRomCurve3(
+      Array.from({ length: 48 }, (_, i) => ell(0, cy, a, b, i / 48 * Math.PI * 2)), true), 120, 0.0072, 10, true);
+    ring.scale(1, 1, 1.6);
+    // のど（開いた Y の形）: 柄の先から、面の下の左右へ
+    const arm = sx => {
+      const t = -Math.PI / 2 + sx * 0.62;
+      const e = ell(0, cy, a, b, t);
+      const tube = new THREE.TubeGeometry(new THREE.CatmullRomCurve3([
+        V(sx * 0.009, 0.18, 0), V(sx * 0.016, 0.235, 0), V(sx * 0.034, 0.3, 0), V(e.x, e.y + 0.004, 0)]), 24, 0.0078, 10, false);
+      tube.scale(1, 1, 1.55);
+      return tube;
+    };
+    return mergeGeometries([ring, arm(1), arm(-1)].map(x => x.toNonIndexed()));
+  },
+  tennisStrings() {
+    // 縦糸 16 本・横糸 19 本（太さ 1.3mm）。面の内側だけ
+    const { cy, a, b } = TEN, ia = a - 0.011, ib = b - 0.011, parts = [];
+    for (let i = 0; i < 16; i++) {
+      const x = -ia + (i + 0.5) * (2 * ia / 16);
+      const h = 2 * ib * Math.sqrt(Math.max(0, 1 - (x / ia) ** 2));
+      parts.push(new THREE.BoxGeometry(0.0013, h, 0.0013).translate(x, cy, 0));
+    }
+    for (let j = 0; j < 19; j++) {
+      const y = -ib + (j + 0.5) * (2 * ib / 19);
+      const w = 2 * ia * Math.sqrt(Math.max(0, 1 - (y / ib) ** 2));
+      parts.push(new THREE.BoxGeometry(w, 0.0013, 0.0013).translate(0, cy + y, 0));
+    }
+    return mergeGeometries(parts.map(x => x.toNonIndexed()));
+  },
+  // 卓球: ブレードは丸に近い形（下の肩が少し平ら）
+  ppOutline(scale = 1) {
+    const sh = new THREE.Shape(), cx = 0, cy = 0.177, a = 0.075 * scale, b = 0.0785 * scale;
+    for (let i = 0; i <= 64; i++) {
+      const t = i / 64 * Math.PI * 2;
+      let y = Math.sin(t);
+      if (y < -0.82) y = -0.82 - (y + 0.82) * 0.35;   // 柄の付け根の肩を平らに
+      const px = cx + a * Math.cos(t), py = cy + b * y;
+      i ? sh.lineTo(px, py) : sh.moveTo(px, py);
+    }
+    return sh;
+  },
+  ppBlade() { return new THREE.ExtrudeGeometry(GEAR_BUILD.ppOutline(), { depth: 0.0058, bevelEnabled: false, curveSegments: 4 }).translate(0, 0, -0.0029); },
+  ppRubberF() { return new THREE.ExtrudeGeometry(GEAR_BUILD.ppOutline(0.995), { depth: 0.0021, bevelEnabled: false, curveSegments: 4 }).translate(0, 0, 0.0029); },
+  ppRubberB() { return new THREE.ExtrudeGeometry(GEAR_BUILD.ppOutline(0.995), { depth: 0.0021, bevelEnabled: false, curveSegments: 4 }).translate(0, 0, -0.005); },
+  ppHandle() {
+    // フレア（握りの端が広がる）。長さ 10cm・幅 2.5〜3.4cm・厚さ 2.3cm
+    const s = new THREE.Shape();
+    const pts = [[0.017, 0], [0.0145, 0.025], [0.0125, 0.06], [0.0128, 0.085], [0.017, 0.107]];
+    s.moveTo(-pts[0][0], 0);
+    for (const [x, y] of pts) s.lineTo(x, y);
+    for (const [x, y] of [...pts].reverse()) s.lineTo(-x, y);
+    const g = new THREE.ExtrudeGeometry(s, { depth: 0.017, bevelEnabled: true, bevelThickness: 0.003, bevelSize: 0.003, bevelSegments: 3, curveSegments: 4 });
+    return g.translate(0, 0, -0.0085);
+  },
+  // ラクロス: ヘッドの縁（のどから広がり、上のすくい（スクープ）は少し前へ反る）
+  laxRim(z = 0) {
+    const half = [[0.016, 0.79], [0.03, 0.82], [0.05, 0.87], [0.07, 0.93], [0.083, 0.985], [0.08, 1.015], [0.06, 1.035], [0.03, 1.043]];
+    const pts = [...half.map(([x, y]) => V(x, y, z)), V(0, 1.045, z + 0.018), ...[...half].reverse().map(([x, y]) => V(-x, y, z))];
+    return pts.map(p => (p.y > 1.0 ? p.setZ(p.z + (p.y - 1.0) * 0.4) : p));
+  },
+  laxHead() {
+    const rim = new THREE.TubeGeometry(new THREE.CatmullRomCurve3(GEAR_BUILD.laxRim(), true), 96, 0.0055, 8, true);
+    rim.scale(1, 1, 2.6);   // 横の壁（高さ 約 3cm）
+    const throat = new THREE.CylinderGeometry(0.016, 0.0135, 0.05, 12).translate(0, 0.79, 0);
+    return mergeGeometries([rim.toNonIndexed(), throat.toNonIndexed()]);
+  },
+  laxPocket() {
+    // 網のポケット（後ろ -z へたるむ。いちばん深い所は ヘッドの下から 4 割の所）
+    const half = [[0.016, 0.79], [0.03, 0.82], [0.05, 0.87], [0.07, 0.93], [0.083, 0.985], [0.08, 1.015], [0.06, 1.035], [0.03, 1.043]];
+    const wAt = y => { for (let i = 1; i < half.length; i++) if (y <= half[i][1]) { const [x0, y0] = half[i - 1], [x1, y1] = half[i]; return x0 + (x1 - x0) * (y - y0) / (y1 - y0); } return 0.03; };
+    const g = new THREE.PlaneGeometry(1, 1, 10, 18), p = g.attributes.position;
+    for (let i = 0; i < p.count; i++) {
+      const u = p.getX(i) + 0.5, v = p.getY(i) + 0.5;
+      const y = 0.8 + v * 0.24, w = wAt(y) - 0.004;
+      const depth = 0.042 * Math.sin(Math.PI * u) * Math.sin(Math.PI * Math.min(1, v / 0.85));
+      p.setXYZ(i, (u - 0.5) * 2 * w, y, -depth);
+    }
+    return g;
+  },
+  // フィールドホッケー: J の形の先（左側が平ら）
+  fhHead() {
+    const curve = new THREE.CatmullRomCurve3([V(0, 0.16, 0), V(0, 0.07, 0.002), V(0, 0.022, 0.018), V(0, 0.006, 0.05), V(0, 0.016, 0.085), V(0, 0.048, 0.103), V(0, 0.072, 0.104)]);
+    const g = new THREE.TubeGeometry(curve, 48, 0.0215, 12, false);
+    // 左（+x）の面を平らに
+    const p = g.attributes.position;
+    for (let i = 0; i < p.count; i++) if (p.getX(i) > 0.004) p.setX(i, 0.004 + (p.getX(i) - 0.004) * 0.15);
+    return g;
+  },
+  // アイスホッケー: ブレード（ヒールから前下へ 135°、先が少し曲がる）
+  ihFrame() { const d = V(0, -Math.SQRT1_2, Math.SQRT1_2), h = V(0, Math.SQRT1_2, Math.SQRT1_2); return { d, h }; },
+  ihBlade() {
+    const { d, h } = GEAR_BUILD.ihFrame(), L = 0.315, H = 0.066, T = 0.012;
+    const g = new THREE.BoxGeometry(T, H, L, 1, 4, 16), p = g.attributes.position;
+    for (let i = 0; i < p.count; i++) {
+      const x = p.getX(i), yy = p.getY(i), zz = p.getZ(i) + L / 2;   // zz: ヒールから 0〜L
+      const toeR = Math.max(0, (zz - L * 0.45) / (L * 0.55));
+      const hh = (yy + H / 2) * (1 - 0.25 * toeR * toeR) - 0.008;        // 先は少し丸く低く
+      const bend = 0.016 * toeR * toeR;                                   // 先の反り（-x へ）
+      const q = d.clone().multiplyScalar(zz - 0.02).addScaledVector(h, hh);
+      p.setXYZ(i, x - bend, q.y + 0.02, q.z);
+    }
+    return g;
+  },
+  ihTape() {
+    // ブレードの真ん中に白いテープ
+    const { d, h } = GEAR_BUILD.ihFrame();
+    const g = new THREE.BoxGeometry(0.0138, 0.05, 0.13), m = new THREE.Matrix4().makeBasis(V(1, 0, 0), h, d);
+    g.applyMatrix4(m);
+    const c = d.clone().multiplyScalar(0.16).addScaledVector(h, 0.024);
+    const bendAt = 0.016 * ((0.18 - 0.142) / 0.173) ** 2;
+    return g.translate(-bendAt, c.y + 0.02 - 0.008, c.z);
+  },
+};
+
 function geometryOf(sh) {
   let g;
+  if (sh.k === 'geo') return gearGeo(sh.g).clone();
   if (sh.k === 'box') return new THREE.BoxGeometry(...sh.s);
   if (sh.k === 'sph') return new THREE.SphereGeometry(sh.r, 32, 20);
   if (sh.k === 'cone') g = new THREE.ConeGeometry(sh.r, sh.h, 40);
-  else g = new THREE.CylinderGeometry(sh.r, sh.r, sh.h, sh.k === 'rod' ? 16 : 32);
+  else {
+    g = new THREE.CylinderGeometry(sh.r, sh.r, sh.h, sh.seg || (sh.k === 'rod' ? 16 : 32));
+    if (sh.flat) {
+      // 四角い柄（アイスホッケー）: 四角すいの柱を 45° 回して、幅・厚さに合わせる
+      g.rotateY(Math.PI / 4);
+      g.scale(sh.flat[0] / (sh.r * Math.SQRT2), 1, sh.flat[1] / (sh.r * Math.SQRT2));
+    }
+  }
   if (sh.ax === 'x') g.rotateZ(-Math.PI / 2);
   else if (sh.ax === 'z') g.rotateX(Math.PI / 2);
   return g;
@@ -216,6 +392,10 @@ const swapAx = (ax, v) => (ax === 'x' ? V(v.y, v.x, v.z) : ax === 'z' ? V(v.x, v
 
 // 形の表面でいちばん近い点と、外向きの向き（小物の座標で）
 function closestOn(sh, q) {
+  if (sh.k === 'geo') {
+    const r = closestOnMesh({ geometry: gearGeo(sh.g), position: V(...sh.c), scale: V(1, 1, 1) }, q);
+    return r || { p: V(...sh.c), n: V(0, 1, 0) };
+  }
   if (sh.ax && sh.ax !== 'y' && sh.k !== 'box' && sh.k !== 'sph') {
     const r = closestOn({ ...sh, ax: null, c: swapAx(sh.ax, V(...sh.c)).toArray() }, swapAx(sh.ax, q));
     return { p: swapAx(sh.ax, r.p), n: swapAx(sh.ax, r.n) };
@@ -552,9 +732,22 @@ export class Props {
       clay: new THREE.MeshStandardMaterial({ color: 0xd6cec2, roughness: 0.72, metalness: 0 }),
       plaster: new THREE.MeshStandardMaterial({ color: 0xf1eee8, roughness: 0.92, metalness: 0 }),
     };
-    for (const it of this.items) for (const m of it.meshes) m.material = this._matOf(it);
+    for (const it of this.items) for (const m of it.meshes) m.material = this._matOf(it, m.userData.sh);
   }
-  _matOf(it) { return this.look ? this._looks[this.look] : this.selected === it ? this.matSel : this.mat; }
+  _matOf(it, sh) {
+    if (this.look) return this._looks[this.look];
+    const sel = this.selected === it;
+    // 色の付いた所（スポーツの道具など）・網（ワイヤー）は、その色の材質（選んでいるときは少し青く光らせる）
+    if (sh && (sh.color != null || sh.wire)) {
+      const key = (sh.color != null ? sh.color : 'd') + (sh.wire ? 'w' : '') + (sel ? 's' : '');
+      this._colMats = this._colMats || {};
+      if (!this._colMats[key]) this._colMats[key] = new THREE.MeshStandardMaterial({
+        color: sh.color != null ? sh.color : 0x8e9bb0, roughness: 0.55, metalness: 0.0, wireframe: !!sh.wire,
+        emissive: sel ? 0x1d3a66 : 0x000000, emissiveIntensity: sel ? 0.5 : 0, side: sh.wire ? THREE.DoubleSide : THREE.FrontSide });
+      return this._colMats[key];
+    }
+    return sel ? this.matSel : this.mat;
+  }
 
   applyPoseProps(defs, mirror = false) {
     this.clearAuto();
@@ -663,7 +856,8 @@ export class Props {
     const p = it.params;
     it.group.scale.set(p.sx || 1, p.sy || 1, p.sz || 1);
     for (const sh of it.shapes) {
-      const m = new THREE.Mesh(geometryOf(sh), this._matOf(it));
+      const m = new THREE.Mesh(geometryOf(sh), this._matOf(it, sh));
+      m.userData.sh = sh;
       m.position.set(...sh.c);
       m.castShadow = true; m.receiveShadow = true;
       m.userData.propItem = it;
@@ -717,6 +911,7 @@ export class Props {
     const b = new THREE.Box3();
     for (const sh of it.shapes) {
       const c = V(...sh.c);
+      if (sh.k === 'geo') { const gb = gearGeo(sh.g).boundingBox; b.expandByPoint(gb.min.clone().add(c)); b.expandByPoint(gb.max.clone().add(c)); continue; }
       const e = sh.k === 'box' ? V(...sh.s).multiplyScalar(0.5) : sh.k === 'sph' ? V(sh.r, sh.r, sh.r) : swapAx(sh.ax, V(sh.r, sh.h / 2, sh.r));
       b.expandByPoint(c.clone().sub(e)); b.expandByPoint(c.clone().add(e));
     }
@@ -759,7 +954,7 @@ export class Props {
         const hh = cm(it.params.h * (it.params.sy || 1));
         return (SEAT_TYPES.has(it.type) ? '座面 ' : it.type === 'bar' ? '棒の高さ ' : '高さ ') + hh + 'cm';
       }
-      return (/^(stick|sword|umbrella|dumbbell|katana|spear|bat|cane|pen|bow)$/.test(it.type) ? '長さ ' : '高さ ') + cm(d.y) + 'cm';
+      return (/^(stick|sword|umbrella|dumbbell|katana|spear|bat|cane|pen|bow|racket|pingpong|lacrosse|fieldhockey|icehockey)$/.test(it.type) ? '長さ ' : '高さ ') + cm(d.y) + 'cm';
     }
     return `${cm(d.x)}×${cm(d.z)}×${cm(d.y)}cm`;
   }
@@ -769,7 +964,7 @@ export class Props {
     if (this.selected === it) { this._syncRings(); return; }
     const prev = this.selected;
     this.selected = it;
-    for (const x of [prev, it]) if (x) { for (const m of x.meshes) m.material = this._matOf(x); this._tint(x); }
+    for (const x of [prev, it]) if (x) { for (const m of x.meshes) m.material = this._matOf(x, m.userData.sh); this._tint(x); }
     if (it && this.v.selected) { this._selecting = true; try { this.v.select(null); } finally { this._selecting = false; } }
     this._syncRings();
     this.onSelect(it);
@@ -1115,7 +1310,7 @@ export class Props {
       }
     }
     for (const sh of (it.statueMesh ? [] : it.shapes)) {
-      if (sh.k === 'rod' || sh.k === 'cone' || (sh.ax && sh.ax !== 'y')) continue;
+      if (sh.k === 'rod' || sh.k === 'cone' || sh.k === 'geo' || (sh.ax && sh.ax !== 'y')) continue;
       // 上の面の上で、足の裏の真ん中にいちばん近い点
       const c = V(...sh.c);
       let pW;
