@@ -6,12 +6,13 @@ import { PoseHistory, relativeTime, HISTORY_LIMIT } from './history.js';
 import { CroquisSession, CROQUIS_SECONDS, CROQUIS_COUNTS } from './croquis.js';
 import { PROP_TYPES } from './props.js';
 import { CroquisScenes, STATUES, SOLIDS } from './croquisScenes.js';
+import { Outfit, OUTFIT_TOPS, OUTFIT_BOTTOMS, OUTFIT_HAIRS } from './outfit.js';
 import { LightBall } from './lightBall.js';
 import { poseThumbSVG, thumbFromViewer } from './poseThumbs.js';
 import { REGIONS } from './anatomy.js';
 import * as THREE from 'three';
 
-export const BUILD = '2026-11-13a';
+export const BUILD = '2026-11-14a';
 
 const SAMPLE_URL = 'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r169/examples/models/gltf/Xbot.glb';
 const SETTINGS_KEY = 'posit.settings.v1';
@@ -57,6 +58,11 @@ function loadSettings() {
       guideHeads: !!s.guideHeads,
       guideCenter: !!s.guideCenter,
       guideTilt: !!s.guideTilt,
+      guidePersp: !!s.guidePersp,
+      drawMode: ['normal', 'value', 'silhouette'].includes(s.drawMode) ? s.drawMode : 'normal',
+      drawSteps: [2, 3, 4].includes(s.drawSteps) ? s.drawSteps : 3,
+      outfit: s.outfit && typeof s.outfit === 'object' ? { top: s.outfit.top || 'none', bottom: s.outfit.bottom || 'none', hair: s.outfit.hair || 'none' } : { top: 'none', bottom: 'none', hair: 'none' },
+      drawBias: Number.isFinite(s.drawBias) ? Math.max(-0.3, Math.min(0.3, s.drawBias)) : 0,
       musclePal: !!s.musclePal,
       rings: s.rings !== false,
       wireW: Number.isFinite(s.wireW) ? s.wireW : 1,
@@ -80,7 +86,7 @@ function loadSettings() {
 function defaultSettings() {
   return { seconds: 30, count: 10, cqCats: [], cqModel: 'skin', cqFrame: 'full', cqWire: true, cqAngle: 'random',
     cqSide: 'random', cqBody: 'keep', cqHandShape: true, cqSubject: 'pose', cqPropMode: 'combo', cqPlasterKind: 'all', lightBall: true, sheetStage: 1,
-    cqBeep: true, cqMirror: true, cqDefV66: true, guideHeads: false, guideCenter: false, guideTilt: false, musclePal: false, rings: true, wireW: 1, wireA: 0.85, shotShadow: false, shotCrop: true, pull: true, poseProps: true, wireMode: 'mesh', wireDensity: 1, dots: false, dotsUser: false };
+    cqBeep: true, cqMirror: true, cqDefV66: true, guideHeads: false, guideCenter: false, guideTilt: false, guidePersp: false, drawMode: 'normal', drawSteps: 3, drawBias: 0, outfit: { top: 'none', bottom: 'none', hair: 'none' }, musclePal: false, rings: true, wireW: 1, wireA: 0.85, shotShadow: false, shotCrop: true, pull: true, poseProps: true, wireMode: 'mesh', wireDensity: 1, dots: false, dotsUser: false };
 }
 function saveSettings() {
   try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch (e) { /* 続行 */ }
@@ -1387,7 +1393,7 @@ $('btnPoseSearch').addEventListener('click', () => setPoseSearch($('poseSearchRo
 $('poseSearch').addEventListener('input', e => { poseQuery = e.target.value.trim(); buildPoseList(); });
 $('poseSearch').addEventListener('keydown', e => { if (e.key === 'Enter') e.target.blur(); if (e.key === 'Escape') setPoseSearch(false); });
 
-const SEG_WRAPS = { preset: 'presetWrap', hand: 'handWrap', face: 'faceWrap', history: 'historyWrap', saved: 'savedWrap' };
+const SEG_WRAPS = { preset: 'presetWrap', hand: 'handWrap', face: 'faceWrap', history: 'historyWrap', saved: 'savedWrap', motion: 'motionWrap' };
 
 function showSeg(seg) {
   for (const k of Object.keys(SEG_WRAPS)) {
@@ -1404,6 +1410,87 @@ function showSeg(seg) {
 for (const b of document.querySelectorAll('#poseSeg button')) {
   b.addEventListener('click', () => showSeg(b.dataset.seg));
 }
+
+// ---- 動き: 始め・終わりの 2 つのポーズの間を再生する ----------------------------------------
+//   関節の角度・体の位置・指の角度を、なめらか（ゆっくり始まり・ゆっくり終わる）につなぐ
+const motion = { a: null, b: null, t: 0, playing: false, dir: 1, speed: 1, last: 0 };
+const MOTION_SPEEDS = [{ value: 0.5, label: 'ゆっくり' }, { value: 1, label: 'ふつう' }, { value: 2, label: '速い' }];
+const takeMotionState = () => ({ angles: JSON.parse(JSON.stringify(viewer.allAngles())), hands: { ...viewer.handShape } });
+// 指の形（'index1:2,0,-3 …'）を数に
+const parseHand = spec => {
+  const m = {};
+  for (const tok of String(spec || '').split(/\s+/).filter(Boolean)) {
+    const [k, v] = tok.split(':'); if (!v) continue;
+    m[k] = v.split(',').map(Number);
+  }
+  return m;
+};
+function motionPose(t) {
+  const A = motion.a, B = motion.b;
+  if (!A || !B) return;
+  const e = t * t * (3 - 2 * t);   // ゆっくり始まり・ゆっくり終わる
+  const out = {};
+  const keys = new Set([...Object.keys(A.angles), ...Object.keys(B.angles)]);
+  for (const k of keys) {
+    const a = A.angles[k] || { x: 0, y: 0, z: 0 }, b = B.angles[k] || { x: 0, y: 0, z: 0 };
+    // 角度は近い方へ回る（-170° → 170° は 20° だけ回す）
+    const lerpA = (p, q) => { let d = ((q - p + 540) % 360) - 180; if (k === 'bodyPos') d = q - p; return p + d * e; };
+    out[k] = { x: lerpA(a.x || 0, b.x || 0), y: lerpA(a.y || 0, b.y || 0), z: lerpA(a.z || 0, b.z || 0) };
+  }
+  if (!out.bodyPos) out.bodyPos = { x: 0, y: 0, z: 0 };
+  viewer.setAngles(out);
+  for (const sd of ['L', 'R']) {
+    const ha = parseHand(A.hands[sd]), hb = parseHand(B.hands[sd]);
+    const ks = new Set([...Object.keys(ha), ...Object.keys(hb)]);
+    if (!ks.size) continue;
+    const spec = [...ks].map(k => {
+      const p = ha[k] || [0, 0, 0], q = hb[k] || [0, 0, 0];
+      return `${k}:${p.map((x, i) => +(x + (q[i] - x) * e).toFixed(1)).join(',')}`;
+    }).join(' ');
+    viewer.applyHandShape(sd, spec);
+  }
+  viewer.props.update();
+}
+function syncMotion() {
+  const ok = !!(motion.a && motion.b);
+  $('motionT').disabled = !ok;
+  $('btnMotionPlay').disabled = !ok;
+  $('btnMotionSwap').disabled = !ok;
+  $('btnMotionPlay').textContent = motion.playing ? '■ 止める' : '▶ 再生';
+  $('motionT').value = motion.t;
+  $('outMotionT').textContent = Math.round(motion.t * 100) + '%';
+  $('motionState').textContent = `始め: ${motion.a ? '決めました' : 'まだ'}　終わり: ${motion.b ? '決めました' : 'まだ'}`
+    + (ok ? '' : '（ポーズを作ってから、上のボタンで決めます）');
+  buildChips('motionSpeed', MOTION_SPEEDS, o => o.value === motion.speed, o => { motion.speed = o.value; syncMotion(); });
+}
+function stopMotion() { if (!motion.playing) return; motion.playing = false; syncMotion(); }
+$('btnMotionA').addEventListener('click', () => { stopMotion(); motion.a = takeMotionState(); motion.t = 0; syncMotion(); showToast('いまの形を「始め」にしました'); });
+$('btnMotionB').addEventListener('click', () => { stopMotion(); motion.b = takeMotionState(); motion.t = 1; syncMotion(); showToast('いまの形を「終わり」にしました'); });
+$('btnMotionSwap').addEventListener('click', () => { [motion.a, motion.b] = [motion.b, motion.a]; motion.t = 1 - motion.t; syncMotion(); });
+$('motionT').addEventListener('pointerdown', () => { stopMotion(); snapshot(); });
+$('motionT').addEventListener('input', e => { motion.t = parseFloat(e.target.value) || 0; $('outMotionT').textContent = Math.round(motion.t * 100) + '%'; motionPose(motion.t); });
+$('btnMotionPlay').addEventListener('click', () => {
+  if (motion.playing) { stopMotion(); return; }
+  snapshot();
+  motion.playing = true; motion.last = performance.now();
+  if (motion.t >= 1 && !$('motionPingPong').checked) motion.t = 0;
+  syncMotion();
+  requestAnimationFrame(function step(now) {
+    if (!motion.playing) return;
+    const dt = Math.min(0.1, (now - motion.last) / 1000); motion.last = now;
+    // 片道 2 秒（ふつう）
+    motion.t += motion.dir * dt * motion.speed / 2;
+    if (motion.t >= 1) { motion.t = 1; if ($('motionPingPong').checked) motion.dir = -1; else motion.t = 0; }
+    if (motion.t <= 0) { motion.t = 0; motion.dir = 1; }
+    motionPose(motion.t);
+    $('motionT').value = motion.t;
+    $('outMotionT').textContent = Math.round(motion.t * 100) + '%';
+    requestAnimationFrame(step);
+  });
+});
+// 人形を触ったら止める（形はそのまま）
+$('view').addEventListener('pointerdown', stopMotion, true);
+syncMotion();
 
 // ---- 手の形 ---------------------------------------------------------------
 
@@ -2420,6 +2507,54 @@ function buildViewChips() {
   }
 }
 
+// ---- 服と髪 ----
+const outfit = new Outfit(viewer);
+viewer.outfit = outfit;
+function buildOutfitSelects() {
+  const o = settings.outfit;
+  for (const [id, list, key] of [['outTop', OUTFIT_TOPS, 'top'], ['outBottom', OUTFIT_BOTTOMS, 'bottom'], ['outHair', OUTFIT_HAIRS, 'hair']]) {
+    buildSelect(id, list.map(x => ({ value: x.key, label: x.name })), o[key], v => {
+      settings.outfit = { ...settings.outfit, [key]: v.value };
+      saveSettings();
+      outfit.set(settings.outfit);
+    });
+  }
+}
+// 素体を読み込み終えたら着せる（読み込み直したときも）
+(function outfitWatch() {
+  const slot = viewer.slots && viewer.slots.skin;
+  const root = slot && slot.loaded ? slot.root : null;
+  if (root && root !== outfitWatch.root) {
+    outfitWatch.root = root;
+    const o = settings.outfit;
+    if (o.top !== 'none' || o.bottom !== 'none' || o.hair !== 'none') outfit.set(o);
+  }
+  requestAnimationFrame(outfitWatch);
+})();
+
+// ---- 絵の確認: 明暗の段階・シルエット ----
+const DRAW_MODES = [
+  { value: 'normal', label: 'ふつう' },
+  { value: 'value', label: '明暗の段階' },
+  { value: 'silhouette', label: 'シルエット' },
+];
+function applyDrawMode() {
+  viewer.setDrawMode(settings.drawMode, { steps: settings.drawSteps, bias: settings.drawBias });
+  buildChips('drawChips', DRAW_MODES, o => o.value === settings.drawMode,
+    o => { settings.drawMode = o.value; saveSettings(); applyDrawMode(); });
+  $('drawValueRow').hidden = settings.drawMode !== 'value';
+  buildChips('drawStepChips', [2, 3, 4].map(n => ({ value: n, label: `${n}段` })), o => o.value === settings.drawSteps,
+    o => { settings.drawSteps = o.value; saveSettings(); applyDrawMode(); });
+  $('drawBias').value = settings.drawBias;
+  $('outDrawBias').textContent = (settings.drawBias > 0 ? '+' : '') + Math.round(settings.drawBias * 100);
+}
+$('drawBias').addEventListener('input', e => {
+  settings.drawBias = parseFloat(e.target.value) || 0;
+  saveSettings();
+  viewer.setDrawMode(settings.drawMode, { bias: settings.drawBias });
+  $('outDrawBias').textContent = (settings.drawBias > 0 ? '+' : '') + Math.round(settings.drawBias * 100);
+});
+
 function buildMaterialChips() {
   buildChips('matChips',
     MATERIAL_MODES.map(m => ({ ...m, label: m.name })),
@@ -2646,9 +2781,115 @@ for (const b of document.querySelectorAll('#anatKind button')) {
 //   正中線   … 腰〜胸〜首〜頭をつなぐ体の中心の線（ポーズに付いてくる）
 //   肩と腰の傾き … 左右の肩・左右の股関節を結んだ線を左右へ延ばす
 
+// ---- パースの補助線: アイレベル（目の高さ）・消失点・床の遠近の格子 ----
+//   人形の向き（腰の前と横）にそろえた 2 点透視。見上げ・見下ろしが強いときは、上下の消失点（3 点目）も出す
+function drawPerspective(g, cam, rect, hips, p) {
+  cam.updateMatrixWorld();
+  const inv = cam.matrixWorldInverse, near = cam.near * 1.5;
+  const toScr = w => { const q = w.clone().project(cam); return { x: rect.left + (q.x + 1) / 2 * rect.width, y: rect.top + (1 - q.y) / 2 * rect.height }; };
+  // 世界の線分を、カメラの前にある部分だけにして描く
+  const seg = (a, b) => {
+    const ca = a.clone().applyMatrix4(inv), cb = b.clone().applyMatrix4(inv);
+    if (ca.z > -near && cb.z > -near) return null;
+    if (ca.z > -near) { const t = (-near - ca.z) / (cb.z - ca.z); a = a.clone().lerp(b, t); }
+    else if (cb.z > -near) { const t = (-near - cb.z) / (ca.z - cb.z); b = b.clone().lerp(a, t); }
+    return [toScr(a), toScr(b)];
+  };
+  // 無限に遠い向き d の消失点（カメラの前にあるときだけ）
+  const vp = d => {
+    const dc = d.clone().transformDirection(inv);
+    if (dc.z > -1e-3) return null;
+    return toScr(cam.position.clone().addScaledVector(d, 1e5));
+  };
+  // 人形の向き（水平）
+  const q = p.boneMap.hips.getWorldQuaternion(new THREE.Quaternion());
+  const fz = new THREE.Vector3(0, 0, 1).applyQuaternion(q); fz.y = 0;
+  if (fz.lengthSq() < 1e-6) fz.set(0, 0, 1);
+  fz.normalize();
+  const fx = new THREE.Vector3(fz.z, 0, -fz.x);
+  // 床の格子（50cm ごと、人形のまわり ±3m）
+  g.setLineDash([]);
+  g.lineWidth = 1;
+  g.strokeStyle = 'rgba(120,200,255,0.28)';
+  const O = new THREE.Vector3(hips.x, 0, hips.z), R = 3, step = 0.5;
+  g.beginPath();
+  for (let k = -R; k <= R + 1e-6; k += step) {
+    for (const [u, v] of [[fx, fz], [fz, fx]]) {
+      const a = O.clone().addScaledVector(u, k).addScaledVector(v, -R), b = O.clone().addScaledVector(u, k).addScaledVector(v, R);
+      const sg = seg(a, b);
+      if (sg) { g.moveTo(sg[0].x, sg[0].y); g.lineTo(sg[1].x, sg[1].y); }
+    }
+  }
+  g.stroke();
+  // アイレベル（カメラの高さの水平面が遠くで見える線）
+  const fw = new THREE.Vector3(); cam.getWorldDirection(fw); fw.y = 0;
+  if (fw.lengthSq() > 1e-6) {
+    fw.normalize();
+    const side = new THREE.Vector3(fw.z, 0, -fw.x);
+    const a = toScr(cam.position.clone().addScaledVector(fw, 1e4).addScaledVector(side, 1e4));
+    const b = toScr(cam.position.clone().addScaledVector(fw, 1e4).addScaledVector(side, -1e4));
+    const dx = b.x - a.x, dy = b.y - a.y, L = Math.hypot(dx, dy) || 1;
+    const W = rect.width * 3;
+    const m = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+    g.strokeStyle = 'rgba(255,170,60,0.95)'; g.lineWidth = 1.6;
+    g.beginPath(); g.moveTo(m.x - dx / L * W, m.y - dy / L * W); g.lineTo(m.x + dx / L * W, m.y + dy / L * W); g.stroke();
+    g.font = '600 12px -apple-system, sans-serif';
+    g.fillStyle = 'rgba(255,170,60,0.95)';
+    const lx = rect.left + 12, ly = m.y + (lx - m.x) * dy / (dx || 1e-6);
+    if (ly > rect.top + 14 && ly < rect.bottom - 4) g.fillText('アイレベル', lx, ly - 6);
+  }
+  // 消失点（人形の前後・左右の向き。画面の外でも、近ければ縁に矢印で知らせる）
+  const mark = (pt, label, col) => {
+    if (!pt) return;
+    const inX = pt.x > rect.left - 2 && pt.x < rect.right + 2, inY = pt.y > rect.top - 2 && pt.y < rect.bottom + 2;
+    g.fillStyle = col; g.strokeStyle = col;
+    if (inX && inY) {
+      g.beginPath(); g.arc(pt.x, pt.y, 5, 0, Math.PI * 2); g.fill();
+      g.font = '600 11px -apple-system, sans-serif';
+      g.fillText(label, pt.x + 8, pt.y - 7);
+      return;
+    }
+    // 画面の外: 中心から消失点の向きの縁に、小さな三角
+    const cx = rect.left + rect.width / 2, cy = rect.top + rect.height / 2;
+    const dx = pt.x - cx, dy = pt.y - cy;
+    const k = Math.min((rect.width / 2 - 14) / Math.abs(dx || 1e-6), (rect.height / 2 - 14) / Math.abs(dy || 1e-6));
+    const ex = cx + dx * k, ey = cy + dy * k, an = Math.atan2(dy, dx);
+    g.beginPath();
+    g.moveTo(ex + Math.cos(an) * 8, ey + Math.sin(an) * 8);
+    g.lineTo(ex + Math.cos(an + 2.5) * 8, ey + Math.sin(an + 2.5) * 8);
+    g.lineTo(ex + Math.cos(an - 2.5) * 8, ey + Math.sin(an - 2.5) * 8);
+    g.fill();
+  };
+  // 人形を囲む箱の角から消失点へ向かう線（透視の向きが分かるように）
+  const box = [];
+  const hw = 0.3, top = (viewer.visibleHeadHeight() * (viewer.headRatio || viewer.baseHeadRatio || 7.5));
+  for (const sx of [-1, 1]) for (const sz of [-1, 1]) for (const y of [0, top]) box.push(O.clone().addScaledVector(fx, sx * hw).addScaledVector(fz, sz * hw).setY(y));
+  g.strokeStyle = 'rgba(255,170,60,0.35)'; g.lineWidth = 1; g.setLineDash([4, 5]);
+  for (const [d, col] of [[fx, 'rgba(255,170,60,0.95)'], [fx.clone().negate(), 'rgba(255,170,60,0.95)'], [fz, 'rgba(255,120,200,0.95)'], [fz.clone().negate(), 'rgba(255,120,200,0.95)']]) {
+    const v = vp(d);
+    if (!v) continue;
+    for (const c of box) {
+      const sg = seg(c, c.clone().addScaledVector(d, 40));
+      if (sg) { g.beginPath(); g.moveTo(sg[0].x, sg[0].y); g.lineTo(sg[1].x, sg[1].y); g.stroke(); }
+    }
+  }
+  g.setLineDash([]);
+  mark(vp(fx), '消失点（横）', 'rgba(255,170,60,0.95)');
+  mark(vp(fx.clone().negate()), '消失点（横）', 'rgba(255,170,60,0.95)');
+  mark(vp(fz), '消失点（前）', 'rgba(255,120,200,0.95)');
+  mark(vp(fz.clone().negate()), '消失点（後ろ）', 'rgba(255,120,200,0.95)');
+  // 見上げ・見下ろしが強いとき（15° 以上）は、上下の消失点も
+  const el = Math.asin(Math.max(-1, Math.min(1, -fwdY(cam))));
+  if (Math.abs(el) > 15 * Math.PI / 180) {
+    const d = new THREE.Vector3(0, el > 0 ? 1 : -1, 0);
+    mark(vp(d), el > 0 ? '消失点（上）' : '消失点（下）', 'rgba(140,230,140,0.95)');
+  }
+}
+function fwdY(cam) { const d = new THREE.Vector3(); cam.getWorldDirection(d); return -d.y; }
+
 function drawGuides() {
   const cv = $('guides');
-  const any = settings.guideHeads || settings.guideCenter || settings.guideTilt;
+  const any = settings.guideHeads || settings.guideCenter || settings.guideTilt || settings.guidePersp;
   cv.hidden = !any || document.body.classList.contains('croquis') && !any;
   if (!any) return;
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -2675,6 +2916,7 @@ function drawGuides() {
     return [{ x: a.x - dx * k, y: a.y - dy * k, ok: true }, { x: b.x + dx * k, y: b.y + dy * k, ok: true }];
   };
   const hips = pos('hips');
+  if (settings.guidePersp && hips) drawPerspective(g, cam, rect, hips, p);
   if (settings.guideHeads && hips) {
     const hh = viewer.visibleHeadHeight();
     const ratio = viewer.headRatio || viewer.baseHeadRatio || 7.5;
@@ -2736,10 +2978,10 @@ function drawGuides() {
 }
 (function guideLoop() {
   requestAnimationFrame(guideLoop);
-  if (settings.guideHeads || settings.guideCenter || settings.guideTilt) drawGuides();
+  if (settings.guideHeads || settings.guideCenter || settings.guideTilt || settings.guidePersp) drawGuides();
   else if (!$('guides').hidden) $('guides').hidden = true;
 })();
-for (const id of ['guideHeads', 'guideCenter', 'guideTilt']) {
+for (const id of ['guideHeads', 'guideCenter', 'guideTilt', 'guidePersp']) {
   $(id).checked = settings[id];
   $(id).addEventListener('change', e => { settings[id] = e.target.checked; saveSettings(); drawGuides(); });
 }
@@ -3003,7 +3245,9 @@ function resetAllSettings() {
   saveSettings();
   setSheetStage(0);
   setAnatomyMode(false);
-  for (const id of ['guideHeads', 'guideCenter', 'guideTilt']) $(id).checked = false;
+  for (const id of ['guideHeads', 'guideCenter', 'guideTilt', 'guidePersp']) $(id).checked = false;
+  applyDrawMode();
+  outfit.set(settings.outfit); buildOutfitSelects();
   // 体つき
   viewer.setBodyType('neutral');
   viewer.resetHeadRatio();
@@ -3088,6 +3332,8 @@ async function showDiagnostics() {
 
 buildJointList();
 buildMaterialChips();
+applyDrawMode();
+buildOutfitSelects();
 buildViewChips();
 buildSlotRows();
 buildPoseCats();

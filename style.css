@@ -926,3 +926,7 @@ details.cqMulti > summary .lbl { font-weight: 400; }
 #propBar .pbDollB { color: #ff9a3c; font-weight: 700; }
 #propBar .qb.on.dollA { background: #4aa3ff; color: #08121e; }
 #propBar .qb.on.dollB { background: #ff9a3c; color: #1e1206; }
+
+/* 設定の中のプルダウンの行（服と髪） */
+.plainRow { border-bottom: 1px solid var(--line-soft); }
+.plainRow:last-of-type { border-bottom: 0; }

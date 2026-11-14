@@ -261,6 +261,7 @@
       <button data-seg="face">顔</button>
       <button data-seg="history">履歴</button>
       <button data-seg="saved">保存</button>
+      <button data-seg="motion">動き</button>
     </div>
 
     <div class="swap" id="poseSwap">
@@ -297,6 +298,25 @@
       <section class="pane" id="historyWrap">
         <div id="historyList"></div>
         <button id="btnClearHistory" class="ghost wide">履歴を消す</button>
+      </section>
+      <section class="pane" id="motionWrap">
+        <div class="twoBtn">
+          <button id="btnMotionA" class="ghost">いまの形を「始め」に</button>
+          <button id="btnMotionB" class="ghost">いまの形を「終わり」に</button>
+        </div>
+        <p class="hint" id="motionState">始め・終わりの 2 つのポーズを決めると、その間の動きを再生できます</p>
+        <label class="row"><span class="lbl">途中</span>
+          <input type="range" id="motionT" min="0" max="1" step="0.005" value="0" disabled><output id="outMotionT">0%</output></label>
+        <div class="twoBtn">
+          <button id="btnMotionPlay" class="primary" disabled>▶ 再生</button>
+          <button id="btnMotionSwap" class="ghost" disabled>始めと終わりを入れ替える</button>
+        </div>
+        <div class="sub">速さ</div>
+        <div class="scroller" id="motionSpeed"></div>
+        <label class="row toggle"><span class="lbl">行ったり来たりする</span>
+          <input type="checkbox" id="motionPingPong" checked></label>
+        <p class="hint tiny">「途中」のつまみを動かすと、始めと終わりの間の形になります（止めた形のまま、関節を直したり、画像に書き出したり、クロッキーの記録のように描いたりできます）。
+          再生中に人形を触ると止まります。手の形（指）も一緒に変わります。小物・2 体目はそのままです</p>
       </section>
       <section class="pane" id="savedWrap">
         <button id="btnSavePose" class="primary wide">いまのポーズを保存</button>
@@ -434,6 +454,14 @@
       </div>
       <div class="sub">素体の質感</div>
       <div class="scroller" id="matChips"></div>
+      <div class="sub">絵の確認<span class="dim">（明暗のかたまり・形の読みやすさを見る）</span></div>
+      <div class="scroller" id="drawChips"></div>
+      <div id="drawValueRow" hidden>
+        <div class="scroller" id="drawStepChips"></div>
+        <label class="row"><span class="lbl">明るさの区切り</span>
+          <input type="range" id="drawBias" min="-0.3" max="0.3" step="0.01" value="0"><output id="outDrawBias">0</output></label>
+      </div>
+      <p class="hint tiny">明暗の段階: 明るさを 2〜4 段の灰色に分けて出します（光と影のかたまりをつかむ）。区切りを右へ動かすと明るい側が広がります。シルエット: 人形と小物を黒い形だけにします（ポーズが形で伝わるかを見る）。画像に書き出すときもこの見え方になります</p>
       <label class="row"><span class="lbl">素体の透明</span>
         <input type="range" id="skinOpacity" min="0.08" max="1" step="0.01" value="1"><output id="outOpacity">100%</output></label>
       <label class="row toggle"><span class="lbl">面の線を出す</span>
@@ -466,6 +494,11 @@
       <label class="row"><span class="lbl">頭身</span>
         <input type="range" id="headRatio" min="2" max="9" step="0.1" value="7.5"><output id="outHead">7.5</output></label>
       <button id="btnHeadReset" class="wide ghost">このモデル本来の頭身に戻す</button>
+      <div class="sub">服と髪<span class="dim">（素体に着せる簡単な形）</span></div>
+      <label class="cqRow plainRow"><span class="lbl">上の服</span><select id="outTop"></select></label>
+      <label class="cqRow plainRow"><span class="lbl">下の服</span><select id="outBottom"></select></label>
+      <label class="cqRow plainRow"><span class="lbl">髪</span><select id="outHair"></select></label>
+      <p class="hint tiny">服は素体の形に沿って少しふくらませた形で、ポーズ・体型と一緒に動きます（しわやたるみは出ません。スカートは腰と一緒に動きます）。髪は頭と一緒に動く固い形です。素体（1 体目）に着せます（2 体目を出すと、そのときの服と髪が写ります）。顔の表情は、この人形には顔が無いので出せません（口の開きと首・頭の向きは「顔」で変えられます）</p>
       <div class="sub">読み込んだモデル</div>
       <div id="slotRows"></div>
       <button id="btnSample" class="wide ghost">サンプル素体を読み込む</button>
@@ -556,6 +589,8 @@
         <input type="checkbox" id="guideCenter"></label>
       <label class="row toggle"><span class="lbl">肩と腰の傾き</span>
         <input type="checkbox" id="guideTilt"></label>
+      <label class="row toggle"><span class="lbl">パース<span class="dim">（アイレベル・消失点・床の遠近）</span></span>
+        <input type="checkbox" id="guidePersp"></label>
       <label class="row toggle"><span class="lbl">床グリッド</span>
         <input type="checkbox" id="gridOn" checked></label>
       <button id="btnFrame" class="wide ghost">全体を表示</button>

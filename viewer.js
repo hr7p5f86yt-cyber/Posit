@@ -141,7 +141,7 @@ class Slot {
 
 export class Viewer {
   /** この viewer.js の版（app.js の BUILD と同じでなければ、古いファイルが混ざっている） */
-  static BUILD = '2026-11-13a';
+  static BUILD = '2026-11-14a';
 
   constructor(canvas) {
     this.canvas = canvas;
@@ -358,7 +358,7 @@ export class Viewer {
         this.props.update();
         this.rings.update();
         this.dots.update();
-        this.renderer.render(this.scene, this.camera);
+        this._render();
         if (!this._firstFrame) { this._firstFrame = true; if (window.__positMark) window.__positMark('初回描画'); }
       } catch (err) {
         if (!reported) {
@@ -389,7 +389,8 @@ export class Viewer {
       if (fat && !this._fatMat) {
         this._fatMat = new THREE.MeshStandardMaterial({ color: 0xe9d48c, roughness: 0.6, metalness: 0 });
       }
-      const want = fat && !b.shell.visible ? this._fatMat : b.shell.material;
+      // 上の服を着せているときは、乳房も服の色に（服と髪 outfit.js）
+      const want = fat && !b.shell.visible ? this._fatMat : (this.breastCover && slot.key === 'skin' && !fat ? this.breastCover : b.shell.material);
       for (const p of b.parts) {
         p.visible = on;
         if (p.material !== want) p.material = want;
@@ -1359,7 +1360,7 @@ export class Viewer {
       if (slot.skullGroup) slot.skullGroup.scale.setScalar(1 / hide);
 
       // 表面の変形（男性・女性）
-      for (const m of [...slot.meshes, ...slot.wireMeshes]) {
+      for (const m of [...slot.meshes, ...slot.wireMeshes, ...(slot.clothes || [])]) {
         if (m.morphTargetInfluences && m.geometry && m.geometry.userData.bodyMorph) {
           m.morphTargetInfluences[0] = bt.morph[0];
           m.morphTargetInfluences[1] = bt.morph[1];
@@ -3910,6 +3911,98 @@ export class Viewer {
   setFillIntensity(v) { this.fillLight.intensity = v; }
   setShadowSoftness(v) { this.keyLight.shadow.radius = v; }
   setExposure(v) { this.renderer.toneMappingExposure = v; }
+
+  // ---- 絵の確認: 明暗の段階（2〜4 段）・シルエット ----------------------------------------
+  //   画面をいったん別の絵に描き、明るさを段に分けて（またはシルエットにして）出す。
+  //   回転の輪・選んだ印・光の矢印・2 体の目印は、そのあと上に重ねて出す（ふだんどおり見える）
+  setDrawMode(mode = 'normal', opts = {}) {
+    this.drawMode = mode;
+    if (opts.steps) this.drawSteps = opts.steps;
+    if (opts.bias != null) this.drawBias = opts.bias;
+  }
+
+  _render() {
+    if (!this.drawMode || this.drawMode === 'normal') { this.renderer.render(this.scene, this.camera); return; }
+    const r = this.renderer;
+    const size = r.getDrawingBufferSize(new THREE.Vector2());
+    if (!this._post) {
+      const rt = new THREE.WebGLRenderTarget(size.x, size.y, { type: THREE.HalfFloatType, samples: 4 });
+      const mat = new THREE.ShaderMaterial({
+        uniforms: { tDiffuse: { value: rt.texture }, bg: { value: new THREE.Color() }, mode: { value: 1 }, steps: { value: 3 }, bias: { value: 0 },
+          silCol: { value: new THREE.Vector3(0.07, 0.075, 0.085) } },
+        vertexShader: 'varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
+        fragmentShader: `
+          uniform sampler2D tDiffuse; uniform vec3 bg; uniform int mode; uniform float steps; uniform float bias; uniform vec3 silCol;
+          varying vec2 vUv;
+          void main() {
+            vec4 t = texture2D(tDiffuse, vUv);
+            float a = clamp(t.a, 0.0, 1.0);
+            vec3 bgOut = linearToOutputTexel(vec4(bg, 1.0)).rgb;
+            if (mode == 2) {
+              // シルエット: 明るい地に黒い形
+              gl_FragColor = vec4(mix(vec3(0.9, 0.9, 0.88), silCol, smoothstep(0.02, 0.6, a)), 1.0);
+              return;
+            }
+            vec3 lin = t.rgb + bg * (1.0 - a);
+            vec3 tm = lin;
+            #ifdef TONE_MAPPING
+            tm = toneMapping(lin);
+            #endif
+            vec3 disp = linearToOutputTexel(vec4(tm, 1.0)).rgb;
+            // 人形の明るさはおよそ 0.35〜0.95 に集まるので、そこを広げてから段に分ける
+            float l = clamp((dot(disp, vec3(0.299, 0.587, 0.114)) - 0.35) / 0.6 + bias, 0.0, 0.9999);
+            float k = floor(l * steps);
+            float g = mix(0.13, 0.95, k / max(1.0, steps - 1.0));
+            gl_FragColor = vec4(mix(bgOut, vec3(g), smoothstep(0.01, 0.12, a)), 1.0);
+          }`,
+        depthTest: false, depthWrite: false,
+      });
+      const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), mat);
+      quad.frustumCulled = false;
+      const sc = new THREE.Scene(); sc.add(quad);
+      this._post = { rt, mat, scene: sc, cam: new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1) };
+    }
+    const P = this._post;
+    if (P.rt.width !== size.x || P.rt.height !== size.y) P.rt.setSize(size.x, size.y);
+    // 上に重ねて出す物（ふだんどおりの色で）
+    const helpers = [this.marker, this.rings && this.rings.group, this.props && this.props.ringGroup, this.lightArrow,
+      this._marks && this._marks.A, this._marks && this._marks.B].filter(Boolean);
+    const hv = helpers.map(o => o.visible);
+    helpers.forEach(o => { o.visible = false; });
+    const sil = this.drawMode === 'silhouette';
+    const keepGrid = this.grid.visible, keepShadow = this.shadowPlane ? this.shadowPlane.visible : false;
+    if (sil) { this.grid.visible = false; if (this.shadowPlane) this.shadowPlane.visible = false; }
+    const bg = this.scene.background;
+    const cc = r.getClearColor(new THREE.Color()), ca = r.getClearAlpha();
+    this.scene.background = null;
+    r.setClearColor(0x000000, 0);
+    r.setRenderTarget(P.rt);
+    r.clear();
+    r.render(this.scene, this.camera);
+    r.setRenderTarget(null);
+    r.setClearColor(cc, ca);
+    this.scene.background = bg;
+    this.grid.visible = keepGrid; if (this.shadowPlane) this.shadowPlane.visible = keepShadow;
+    const u = P.mat.uniforms;
+    u.bg.value.copy(bg && bg.isColor ? bg : new THREE.Color(0x15181d));
+    u.mode.value = sil ? 2 : 1;
+    u.steps.value = this.drawSteps || 3;
+    u.bias.value = this.drawBias || 0;
+    r.render(P.scene, P.cam);
+    // 上に重ねる物だけをもう一度描く
+    helpers.forEach((o, i) => { o.visible = hv[i]; });
+    if (hv.some(Boolean)) {
+      const kids = this.scene.children.map(o => o.visible);
+      this.scene.children.forEach(o => { if (!helpers.includes(o)) o.visible = false; });
+      const ac = r.autoClear;
+      r.autoClear = false;
+      this.scene.background = null;
+      r.render(this.scene, this.camera);
+      this.scene.background = bg;
+      r.autoClear = ac;
+      this.scene.children.forEach((o, i) => { o.visible = kids[i]; });
+    }
+  }
   setEnvIntensity(v) { if ('environmentIntensity' in this.scene) this.scene.environmentIntensity = v; }
   setGridVisible(on) { this.grid.visible = on; }
 
@@ -3956,7 +4049,7 @@ export class Viewer {
     const c = document.createElement('canvas');
     c.width = w; c.height = Math.round(w * 4 / 3);
     try {
-      this.renderer.render(this.scene, this.camera);
+      this._render();
       const g = c.getContext('2d');
       g.fillStyle = '#15181d'; g.fillRect(0, 0, c.width, c.height);
       const k = Math.min(c.width / W, c.height / H), dw = W * k, dh = H * k;
@@ -3984,7 +4077,7 @@ export class Viewer {
     c.width = W; c.height = H;
     let g = c.getContext('2d', { willReadFrequently: tr });
     // 描いた直後（同じ処理の中）なら、画面の中身をそのまま写せる
-    const shot = () => { this.renderer.render(this.scene, this.camera); g.clearRect(0, 0, W, H); g.drawImage(src, 0, 0); };
+    const shot = () => { this._render(); g.clearRect(0, 0, W, H); g.drawImage(src, 0, 0); };
     if (tr) {
       this.grid.visible = false;
       if (this.shadowPlane) this.shadowPlane.visible = !!opts.shadow;
@@ -4017,7 +4110,7 @@ export class Viewer {
       this.scene.background = keep.bg;
       this.grid.visible = keep.grid;
       if (this.shadowPlane) this.shadowPlane.visible = keep.shadow;
-      this.renderer.render(this.scene, this.camera);
+      this._render();
     }
     if (tr && opts.crop) {
       const box = Viewer._alphaBox(g, W, H);
